@@ -571,9 +571,15 @@ impl App {
 
     fn handle_issue_detail_key(&mut self, key: KeyEvent) {
         if let Some(item) = self.current_detail_issue().cloned() {
+            if keys::is_down(&key) {
+                self.issue_detail_state.scroll_down();
+                return;
+            }
+            if keys::is_up(&key) {
+                self.issue_detail_state.scroll_up();
+                return;
+            }
             match key.code {
-                KeyCode::Char('j') => self.issue_detail_state.scroll_down(),
-                KeyCode::Char('k') => self.issue_detail_state.scroll_up(),
                 KeyCode::Char('c') => {
                     self.comment_input = crate::ui::components::input::InputState::default();
                     self.overlay = Overlay::CommentInput;
@@ -610,9 +616,15 @@ impl App {
 
     fn handle_mr_detail_key(&mut self, key: KeyEvent) {
         if let Some(item) = self.current_detail_mr().cloned() {
+            if keys::is_down(&key) {
+                self.mr_detail_state.scroll_down();
+                return;
+            }
+            if keys::is_up(&key) {
+                self.mr_detail_state.scroll_up();
+                return;
+            }
             match key.code {
-                KeyCode::Char('j') => self.mr_detail_state.scroll_down(),
-                KeyCode::Char('k') => self.mr_detail_state.scroll_up(),
                 KeyCode::Char('c') => {
                     self.comment_input = crate::ui::components::input::InputState::default();
                     self.overlay = Overlay::CommentInput;

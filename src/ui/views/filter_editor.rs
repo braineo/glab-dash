@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::filter::{Field, FilterCondition, Op};
-use crate::ui::styles;
+use crate::ui::{keys, styles};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditorStep {
@@ -63,6 +63,19 @@ impl FilterEditorState {
 
     fn handle_field_key(&mut self, key: &KeyEvent) -> FilterEditorAction {
         let fields = Field::all();
+        if keys::is_up(key) {
+            if let Some(sel) = self.field_list.selected() {
+                self.field_list.select(Some(sel.saturating_sub(1)));
+            }
+            return FilterEditorAction::Continue;
+        }
+        if keys::is_down(key) {
+            if let Some(sel) = self.field_list.selected() {
+                self.field_list
+                    .select(Some((sel + 1).min(fields.len() - 1)));
+            }
+            return FilterEditorAction::Continue;
+        }
         match key.code {
             KeyCode::Esc => FilterEditorAction::Cancel,
             KeyCode::Enter => {
@@ -72,25 +85,24 @@ impl FilterEditorState {
                 }
                 FilterEditorAction::Continue
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(sel) = self.field_list.selected() {
-                    self.field_list.select(Some(sel.saturating_sub(1)));
-                }
-                FilterEditorAction::Continue
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(sel) = self.field_list.selected() {
-                    self.field_list
-                        .select(Some((sel + 1).min(fields.len() - 1)));
-                }
-                FilterEditorAction::Continue
-            }
             _ => FilterEditorAction::Continue,
         }
     }
 
     fn handle_op_key(&mut self, key: &KeyEvent) -> FilterEditorAction {
         let ops = Op::all();
+        if keys::is_up(key) {
+            if let Some(sel) = self.op_list.selected() {
+                self.op_list.select(Some(sel.saturating_sub(1)));
+            }
+            return FilterEditorAction::Continue;
+        }
+        if keys::is_down(key) {
+            if let Some(sel) = self.op_list.selected() {
+                self.op_list.select(Some((sel + 1).min(ops.len() - 1)));
+            }
+            return FilterEditorAction::Continue;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.step = EditorStep::SelectField;
@@ -104,23 +116,31 @@ impl FilterEditorState {
                 }
                 FilterEditorAction::Continue
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(sel) = self.op_list.selected() {
-                    self.op_list.select(Some(sel.saturating_sub(1)));
-                }
-                FilterEditorAction::Continue
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(sel) = self.op_list.selected() {
-                    self.op_list.select(Some((sel + 1).min(ops.len() - 1)));
-                }
-                FilterEditorAction::Continue
-            }
             _ => FilterEditorAction::Continue,
         }
     }
 
     fn handle_value_key(&mut self, key: &KeyEvent) -> FilterEditorAction {
+        // Ctrl+N/P and arrows for suggestion navigation (not j/k since those type chars)
+        let is_nav_up = key.code == KeyCode::Up
+            || (key.code == KeyCode::Char('p')
+                && key.modifiers == crossterm::event::KeyModifiers::CONTROL);
+        let is_nav_down = key.code == KeyCode::Down
+            || (key.code == KeyCode::Char('n')
+                && key.modifiers == crossterm::event::KeyModifiers::CONTROL);
+        if is_nav_up && !self.filtered_suggestions.is_empty() {
+            let current = self.suggestion_state.selected().unwrap_or(0);
+            self.suggestion_state
+                .select(Some(current.saturating_sub(1)));
+            return FilterEditorAction::Continue;
+        }
+        if is_nav_down && !self.filtered_suggestions.is_empty() {
+            let current = self.suggestion_state.selected().unwrap_or(0);
+            let max = self.filtered_suggestions.len().saturating_sub(1);
+            self.suggestion_state
+                .select(Some((current + 1).min(max)));
+            return FilterEditorAction::Continue;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.step = EditorStep::SelectOp;
@@ -154,23 +174,6 @@ impl FilterEditorState {
                         self.value_input = self.suggestions[idx].clone();
                         self.refilter_suggestions();
                     }
-                }
-                FilterEditorAction::Continue
-            }
-            KeyCode::Up => {
-                if !self.filtered_suggestions.is_empty() {
-                    let current = self.suggestion_state.selected().unwrap_or(0);
-                    self.suggestion_state
-                        .select(Some(current.saturating_sub(1)));
-                }
-                FilterEditorAction::Continue
-            }
-            KeyCode::Down => {
-                if !self.filtered_suggestions.is_empty() {
-                    let current = self.suggestion_state.selected().unwrap_or(0);
-                    let max = self.filtered_suggestions.len().saturating_sub(1);
-                    self.suggestion_state
-                        .select(Some((current + 1).min(max)));
                 }
                 FilterEditorAction::Continue
             }

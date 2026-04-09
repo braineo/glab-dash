@@ -21,10 +21,12 @@ pub fn is_back(key: &KeyEvent) -> bool {
 
 pub fn is_up(key: &KeyEvent) -> bool {
     matches!(key.code, KeyCode::Char('k') | KeyCode::Up)
+        || (key.code == KeyCode::Char('p') && key.modifiers == KeyModifiers::CONTROL)
 }
 
 pub fn is_down(key: &KeyEvent) -> bool {
     matches!(key.code, KeyCode::Char('j') | KeyCode::Down)
+        || (key.code == KeyCode::Char('n') && key.modifiers == KeyModifiers::CONTROL)
 }
 
 pub fn is_left(key: &KeyEvent) -> bool {

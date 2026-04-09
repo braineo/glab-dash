@@ -7,7 +7,7 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
-use crate::ui::styles;
+use crate::ui::{keys, styles};
 
 pub struct PickerState {
     pub title: String,
@@ -50,17 +50,24 @@ impl PickerState {
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> PickerAction {
+        // Check navigation keys first (Ctrl+N/P, arrows, etc.)
+        if keys::is_up(key) {
+            self.move_up();
+            return PickerAction::Continue;
+        }
+        if keys::is_down(key) {
+            self.move_down();
+            return PickerAction::Continue;
+        }
         match key.code {
             KeyCode::Esc => return PickerAction::Cancel,
             KeyCode::Enter => return self.confirm(),
             KeyCode::Char(' ') if self.multi_select => {
                 if let Some(idx) = self.current_item_idx() {
-                    self.selected[idx] = !self.selected[idx];
+                    self.toggle_label(idx);
                 }
                 self.move_down();
             }
-            KeyCode::Up => self.move_up(),
-            KeyCode::Down => self.move_down(),
             KeyCode::Backspace => {
                 self.query.pop();
                 self.refilter();
@@ -72,6 +79,31 @@ impl PickerState {
             _ => {}
         }
         PickerAction::Continue
+    }
+
+    /// Toggle a label, enforcing scoped label mutual exclusivity.
+    /// If the toggled label is a scoped label (contains `::`) and is being
+    /// selected, deselect any other label with the same scope.
+    fn toggle_label(&mut self, idx: usize) {
+        let was_selected = self.selected[idx];
+        if was_selected {
+            // Just deselect
+            self.selected[idx] = false;
+            return;
+        }
+        // Selecting: check for scoped label conflict
+        let label = &self.items[idx];
+        if let Some(scope) = label.split_once("::").map(|(s, _)| s) {
+            // Deselect any other label with the same scope
+            for (i, item) in self.items.iter().enumerate() {
+                if i != idx && self.selected[i] {
+                    if item.split_once("::").map(|(s, _)| s) == Some(scope) {
+                        self.selected[i] = false;
+                    }
+                }
+            }
+        }
+        self.selected[idx] = true;
     }
 
     fn refilter(&mut self) {
