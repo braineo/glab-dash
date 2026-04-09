@@ -58,7 +58,16 @@ pub async fn run_onboarding() -> Result<Config> {
             u
         }
         Err(e) => {
-            println!("Warning: could not detect user ({e})");
+            println!("Failed!");
+            println!();
+            println!("  Error: {e}");
+            println!();
+            println!("  Common causes:");
+            println!("    - 401 Unauthorized: token is invalid or expired");
+            println!("    - 403 Forbidden: token is missing the 'api' scope");
+            println!("    - Connection error: wrong GitLab URL or network issue");
+            println!();
+            println!("  You can continue setup and fix the token later in the config file.");
             String::new()
         }
     };

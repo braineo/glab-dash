@@ -534,8 +534,9 @@ impl GitLabClient {
     async fn handle_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
         let status = resp.status();
         if !status.is_success() {
+            let url = resp.url().to_string();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("GitLab API error ({status}): {body}");
+            anyhow::bail!("{status} from {url}: {body}");
         }
         resp.json::<T>()
             .await
