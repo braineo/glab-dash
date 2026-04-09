@@ -375,6 +375,14 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
+    // ── Authenticated User ──
+
+    pub async fn get_authenticated_user(&self) -> Result<serde_json::Value> {
+        let url = self.api_url("/user");
+        let resp = self.client.get(&url).send().await?;
+        Self::handle_response(resp).await
+    }
+
     // ── Members / Users ──
 
     pub async fn search_users(&self, query: &str) -> Result<Vec<User>> {

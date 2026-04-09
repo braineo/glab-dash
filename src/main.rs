@@ -5,6 +5,9 @@ mod config_tests;
 mod event;
 mod filter;
 mod gitlab;
+mod onboarding;
+#[cfg(test)]
+mod onboarding_tests;
 mod ui;
 
 use std::io;
@@ -27,7 +30,11 @@ use crate::gitlab::client::GitLabClient;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = Config::load().context("Failed to load configuration")?;
+    let config = if onboarding::needs_onboarding() {
+        onboarding::run_onboarding()?
+    } else {
+        Config::load().context("Failed to load configuration")?
+    };
     let client = GitLabClient::new(&config).context("Failed to create GitLab client")?;
 
     // Async message channel
