@@ -122,11 +122,12 @@ fn render_node<'a>(
                 ]));
             }
             for code_line in cb.literal.trim_end().lines() {
+                let expanded = code_line.replace('\t', "    ");
                 lines.push(Line::from(vec![
                     Span::raw(indent.to_string()),
                     Span::styled("│ ", Style::default().fg(styles::BORDER)),
                     Span::styled(
-                        code_line.to_string(),
+                        expanded,
                         Style::default().fg(styles::ORANGE).bg(code_bg),
                     ),
                 ]));
