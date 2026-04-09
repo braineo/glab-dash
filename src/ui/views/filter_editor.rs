@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
@@ -21,6 +22,10 @@ pub struct FilterEditorState {
     pub value_input: String,
     pub selected_field: Option<Field>,
     pub selected_op: Option<Op>,
+    /// Suggestions for the value step, populated by app.rs based on field.
+    pub suggestions: Vec<String>,
+    filtered_suggestions: Vec<usize>,
+    suggestion_state: ListState,
 }
 
 impl Default for FilterEditorState {
@@ -36,6 +41,9 @@ impl Default for FilterEditorState {
             value_input: String::new(),
             selected_field: None,
             selected_op: None,
+            suggestions: Vec::new(),
+            filtered_suggestions: Vec::new(),
+            suggestion_state: ListState::default(),
         }
     }
 }
@@ -92,6 +100,7 @@ impl FilterEditorState {
                 if let Some(sel) = self.op_list.selected() {
                     self.selected_op = Some(ops[sel].clone());
                     self.step = EditorStep::EnterValue;
+                    self.refilter_suggestions();
                 }
                 FilterEditorAction::Continue
             }
@@ -118,26 +127,91 @@ impl FilterEditorState {
                 FilterEditorAction::Continue
             }
             KeyCode::Enter => {
+                // If a suggestion is highlighted, use it
+                let value = if let Some(sel) = self.suggestion_state.selected() {
+                    self.filtered_suggestions
+                        .get(sel)
+                        .map(|&idx| self.suggestions[idx].clone())
+                        .unwrap_or_else(|| self.value_input.clone())
+                } else {
+                    self.value_input.clone()
+                };
                 if let (Some(field), Some(op)) = (&self.selected_field, &self.selected_op) {
                     let condition = FilterCondition {
                         field: field.clone(),
                         op: op.clone(),
-                        value: self.value_input.clone(),
+                        value,
                     };
                     self.reset();
                     return FilterEditorAction::AddCondition(condition);
                 }
                 FilterEditorAction::Continue
             }
+            KeyCode::Tab => {
+                // Accept highlighted suggestion into input
+                if let Some(sel) = self.suggestion_state.selected() {
+                    if let Some(&idx) = self.filtered_suggestions.get(sel) {
+                        self.value_input = self.suggestions[idx].clone();
+                        self.refilter_suggestions();
+                    }
+                }
+                FilterEditorAction::Continue
+            }
+            KeyCode::Up => {
+                if !self.filtered_suggestions.is_empty() {
+                    let current = self.suggestion_state.selected().unwrap_or(0);
+                    self.suggestion_state
+                        .select(Some(current.saturating_sub(1)));
+                }
+                FilterEditorAction::Continue
+            }
+            KeyCode::Down => {
+                if !self.filtered_suggestions.is_empty() {
+                    let current = self.suggestion_state.selected().unwrap_or(0);
+                    let max = self.filtered_suggestions.len().saturating_sub(1);
+                    self.suggestion_state
+                        .select(Some((current + 1).min(max)));
+                }
+                FilterEditorAction::Continue
+            }
             KeyCode::Backspace => {
                 self.value_input.pop();
+                self.refilter_suggestions();
                 FilterEditorAction::Continue
             }
             KeyCode::Char(c) => {
                 self.value_input.push(c);
+                self.refilter_suggestions();
                 FilterEditorAction::Continue
             }
             _ => FilterEditorAction::Continue,
+        }
+    }
+
+    fn refilter_suggestions(&mut self) {
+        if self.suggestions.is_empty() {
+            self.filtered_suggestions.clear();
+            self.suggestion_state.select(None);
+            return;
+        }
+        let query = self.value_input.to_lowercase();
+        self.filtered_suggestions = self
+            .suggestions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                if query.is_empty() {
+                    true
+                } else {
+                    s.to_lowercase().contains(&query)
+                }
+            })
+            .map(|(i, _)| i)
+            .collect();
+        if self.filtered_suggestions.is_empty() {
+            self.suggestion_state.select(None);
+        } else {
+            self.suggestion_state.select(Some(0));
         }
     }
 }
@@ -174,7 +248,7 @@ fn step_indicator(step: &EditorStep) -> Line<'static> {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
-    let popup = centered_rect(45, 50, area);
+    let popup = centered_rect(50, 60, area);
     frame.render_widget(Clear, popup);
 
     match state.step {
@@ -192,7 +266,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
                 .block(styles::overlay_block("Select Field"));
             frame.render_stateful_widget(list, popup, &mut state.field_list);
 
-            // Render step indicator at bottom
             let indicator_area = Rect {
                 x: popup.x + 1,
                 y: popup.y + popup.height.saturating_sub(2),
@@ -254,40 +327,100 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
                 .as_ref()
                 .map(|o| o.symbol())
                 .unwrap_or("?");
-            let lines = vec![
-                Line::from(""),
-                step_indicator(&state.step),
-                Line::from(""),
-                Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(field_name, styles::overlay_key_style()),
-                    Span::styled(format!(" {op_sym} "), styles::overlay_desc_style()),
-                    Span::styled(
-                        if state.value_input.is_empty() {
-                            "type value..."
-                        } else {
-                            &state.value_input
-                        },
-                        if state.value_input.is_empty() {
-                            styles::draft_style()
-                        } else {
-                            styles::title_style()
-                        },
-                    ),
-                    Span::styled("_", styles::title_style()),
-                ]),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Enter to confirm, Esc to go back",
-                    styles::overlay_desc_style(),
-                )),
-                Line::from(Span::styled(
-                    "  Hint: $me, none, true/false",
-                    styles::overlay_desc_style(),
-                )),
-            ];
-            let para = Paragraph::new(lines).block(styles::overlay_block("Enter Value"));
-            frame.render_widget(para, popup);
+
+            let has_suggestions = !state.suggestions.is_empty();
+
+            if has_suggestions {
+                // Split popup: input at top, suggestions list below
+                let chunks =
+                    Layout::vertical([Constraint::Length(5), Constraint::Min(1)]).split(popup);
+
+                // Input area
+                let input_lines = vec![
+                    Line::from(""),
+                    step_indicator(&state.step),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(field_name, styles::overlay_key_style()),
+                        Span::styled(format!(" {op_sym} "), styles::overlay_desc_style()),
+                        Span::styled(
+                            if state.value_input.is_empty() {
+                                "type to filter..."
+                            } else {
+                                &state.value_input
+                            },
+                            if state.value_input.is_empty() {
+                                styles::overlay_desc_style()
+                                    .add_modifier(Modifier::ITALIC)
+                            } else {
+                                styles::title_style()
+                            },
+                        ),
+                        Span::styled("_", styles::title_style()),
+                    ]),
+                ];
+                let input_block = styles::overlay_block("Enter Value");
+                let input_para = Paragraph::new(input_lines).block(input_block);
+                frame.render_widget(input_para, chunks[0]);
+
+                // Suggestions list
+                let items: Vec<ListItem> = state
+                    .filtered_suggestions
+                    .iter()
+                    .map(|&idx| {
+                        let label = &state.suggestions[idx];
+                        let mut spans = vec![Span::raw("  ")];
+                        spans.extend(styles::label_spans(label));
+                        ListItem::new(Line::from(spans))
+                    })
+                    .collect();
+
+                let count = state.filtered_suggestions.len();
+                let suggestion_title = format!("Suggestions ({count})  Tab:accept");
+                let list = List::new(items)
+                    .highlight_style(styles::selected_style())
+                    .highlight_symbol(styles::ICON_SELECTOR)
+                    .block(styles::overlay_block(&suggestion_title));
+                frame.render_stateful_widget(list, chunks[1], &mut state.suggestion_state);
+            } else {
+                // No suggestions: simple input
+                let lines = vec![
+                    Line::from(""),
+                    step_indicator(&state.step),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(field_name, styles::overlay_key_style()),
+                        Span::styled(format!(" {op_sym} "), styles::overlay_desc_style()),
+                        Span::styled(
+                            if state.value_input.is_empty() {
+                                "type value..."
+                            } else {
+                                &state.value_input
+                            },
+                            if state.value_input.is_empty() {
+                                styles::overlay_desc_style()
+                                    .add_modifier(Modifier::ITALIC)
+                            } else {
+                                styles::title_style()
+                            },
+                        ),
+                        Span::styled("_", styles::title_style()),
+                    ]),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter to confirm, Esc to go back",
+                        styles::overlay_desc_style(),
+                    )),
+                    Line::from(Span::styled(
+                        "  Hint: $me, none, true/false",
+                        styles::overlay_desc_style(),
+                    )),
+                ];
+                let para = Paragraph::new(lines).block(styles::overlay_block("Enter Value"));
+                frame.render_widget(para, popup);
+            }
         }
     }
 }

@@ -58,6 +58,16 @@ Env var overrides: `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_PROJECT`
 - `src/ui/styles.rs` — Color/style definitions
 - `src/ui/keys.rs` — Key detection helpers
 
+## Style & Accessibility
+
+- **WCAG AA contrast required**: All text must meet 4.5:1 contrast ratio against its background (3:1 for bold/large text). This applies to all UI layers:
+  - Base background `(26,27,38)`: use `TEXT`, `TEXT_BRIGHT`, or accent colors
+  - Surface background `(36,40,59)`: use `TEXT`, `TEXT_BRIGHT`, or accent colors
+  - Overlay background `(52,59,88)`: use `OVERLAY_TEXT`, `OVERLAY_TEXT_DIM`, or `overlay_*_style()` functions — **never** use `TEXT_DIM` or `help_desc_style()` on overlay backgrounds
+- Use `overlay_key_style()`, `overlay_desc_style()`, `overlay_text_style()` for any text rendered inside overlays/popups (help, picker, confirm, error, filter editor)
+- Use `help_key_style()`, `help_desc_style()` only on base/surface backgrounds
+- Scoped labels (`scope::value`) render with distinct colors via `label_spans()` — scope in blue bold, value in teal
+
 ## Tests
 
 Tests are in `src/filter/tests.rs` and `src/config_tests.rs`. Run with `cargo test`.

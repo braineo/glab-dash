@@ -267,6 +267,31 @@ impl App {
             .apply_filters(&self.issues, &self.issue_filters, &me, &members);
     }
 
+    fn get_filter_suggestions(&self) -> Vec<String> {
+        use crate::filter::Field;
+        match &self.filter_editor_state.selected_field {
+            Some(Field::Label) => self.labels.iter().map(|l| l.name.clone()).collect(),
+            Some(Field::State) => {
+                vec![
+                    "opened".to_string(),
+                    "closed".to_string(),
+                    "merged".to_string(),
+                ]
+            }
+            Some(Field::Draft) => vec!["true".to_string(), "false".to_string()],
+            Some(Field::Assignee | Field::Author | Field::Reviewer | Field::ApprovedBy) => {
+                let mut names = self.config.team_members(self.active_team);
+                names.insert(0, "$me".to_string());
+                names.push("none".to_string());
+                names
+            }
+            Some(Field::Source) => {
+                vec!["tracking".to_string(), "external".to_string()]
+            }
+            _ => Vec::new(),
+        }
+    }
+
     fn refilter_mrs(&mut self) {
         let me = self.config.me.clone();
         let members = self.config.team_members(self.active_team);
@@ -635,6 +660,13 @@ impl App {
             }
             Overlay::FilterEditor => {
                 let action = self.filter_editor_state.handle_key(&key);
+                // Populate suggestions when entering value step
+                if self.filter_editor_state.step == filter_editor::EditorStep::EnterValue
+                    && self.filter_editor_state.suggestions.is_empty()
+                {
+                    self.filter_editor_state.suggestions =
+                        self.get_filter_suggestions();
+                }
                 match action {
                     filter_editor::FilterEditorAction::Continue => {}
                     filter_editor::FilterEditorAction::Cancel => {

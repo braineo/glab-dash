@@ -177,15 +177,25 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState) {
                 };
                 spans.push(Span::styled(format!("{icon} "), style));
             }
-            spans.push(Span::styled(
-                &state.items[idx],
-                styles::overlay_text_style(),
-            ));
+            // Render labels with scoped styling in the Labels picker
+            if state.title == "Labels" {
+                spans.extend(styles::label_spans(&state.items[idx]));
+            } else {
+                spans.push(Span::styled(
+                    &state.items[idx],
+                    styles::overlay_text_style(),
+                ));
+            }
             ListItem::new(Line::from(spans))
         })
         .collect();
 
-    let list_block = styles::overlay_block("");
+    let hint = if state.multi_select {
+        "Space:toggle  Enter:confirm  Esc:cancel"
+    } else {
+        "Enter:select  Esc:cancel"
+    };
+    let list_block = styles::overlay_block(hint);
     let list = List::new(items)
         .block(list_block)
         .highlight_style(styles::selected_style().add_modifier(Modifier::BOLD))

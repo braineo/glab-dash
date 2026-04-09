@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::widgets::{Row, Table, TableState};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, Row, Table, TableState};
 
 use crate::filter::{FilterCondition, matches_mr};
 use crate::gitlab::types::{ItemSource, TrackedMergeRequest};
@@ -172,7 +173,13 @@ pub fn render(
     filter_focused: bool,
     filter_selected: usize,
 ) {
-    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
+    let has_selection = state.table_state.selected().is_some();
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(if has_selection { 2 } else { 0 }),
+    ])
+    .split(area);
 
     components::filter_bar::render(
         frame,
@@ -275,6 +282,51 @@ pub fn render(
         .block(styles::block(&title));
 
     frame.render_stateful_widget(table, chunks[1], &mut state.table_state);
+
+    // Preview pane: show full labels and details of selected MR
+    if let Some(item) = state.selected_mr(mrs) {
+        let mut spans: Vec<Span> = vec![
+            Span::styled(" Labels: ", styles::help_desc_style()),
+        ];
+        if item.mr.labels.is_empty() {
+            spans.push(Span::styled("none", styles::help_desc_style()));
+        } else {
+            for (i, label) in item.mr.labels.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::styled("  ", styles::help_desc_style()));
+                }
+                spans.extend(styles::label_spans(label));
+            }
+        }
+        let pipeline_status = item
+            .mr
+            .head_pipeline
+            .as_ref()
+            .map(|p| p.status.as_str())
+            .unwrap_or("none");
+        let preview = Paragraph::new(vec![
+            Line::from(spans),
+            Line::from(vec![
+                Span::styled(" Branch: ", styles::help_desc_style()),
+                Span::styled(
+                    &item.mr.source_branch,
+                    ratatui::style::Style::default().fg(styles::TEAL),
+                ),
+                Span::styled(
+                    format!(" {} ", styles::ICON_ARROW),
+                    styles::help_desc_style(),
+                ),
+                Span::styled(
+                    &item.mr.target_branch,
+                    ratatui::style::Style::default().fg(styles::TEAL),
+                ),
+                Span::styled("  Pipeline: ", styles::help_desc_style()),
+                Span::styled(pipeline_status, styles::pipeline_style(pipeline_status)),
+            ]),
+        ])
+        .style(ratatui::style::Style::default().bg(styles::SURFACE));
+        frame.render_widget(preview, chunks[2]);
+    }
 }
 
 fn format_age(dt: &chrono::DateTime<chrono::Utc>) -> String {
