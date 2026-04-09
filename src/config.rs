@@ -1,0 +1,102 @@
+use anyhow::{Context, Result};
+use serde::Deserialize;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Config {
+    pub gitlab_url: String,
+    pub token: String,
+    pub me: String,
+    pub tracking_project: String,
+    #[serde(default = "default_refresh")]
+    pub refresh_interval_secs: u64,
+    #[serde(default)]
+    pub teams: Vec<TeamConfig>,
+    #[serde(default)]
+    pub filters: Vec<FilterPreset>,
+}
+
+fn default_refresh() -> u64 {
+    60
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TeamConfig {
+    pub name: String,
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilterPreset {
+    pub name: String,
+    pub kind: String,
+    #[serde(default)]
+    pub conditions: Vec<PresetCondition>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PresetCondition {
+    pub field: String,
+    pub op: String,
+    pub value: String,
+}
+
+impl Config {
+    pub fn load() -> Result<Self> {
+        let path = config_path()?;
+        if !path.exists() {
+            anyhow::bail!(
+                "Config file not found at {}.\nCreate it with gitlab_url, token, me, tracking_project, and teams.",
+                path.display()
+            );
+        }
+        let contents = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read config at {}", path.display()))?;
+        let mut config: Config =
+            serde_yaml::from_str(&contents).context("Failed to parse config YAML")?;
+
+        // Environment variable overrides
+        if let Ok(url) = std::env::var("GITLAB_URL") {
+            config.gitlab_url = url;
+        }
+        if let Ok(token) = std::env::var("GITLAB_TOKEN") {
+            config.token = token;
+        }
+        if let Ok(project) = std::env::var("GITLAB_PROJECT") {
+            config.tracking_project = project;
+        }
+
+        Ok(config)
+    }
+
+    pub fn all_members(&self) -> Vec<String> {
+        let mut members: Vec<String> = self.teams.iter().flat_map(|t| t.members.clone()).collect();
+        if !members.contains(&self.me) {
+            members.push(self.me.clone());
+        }
+        members.sort();
+        members.dedup();
+        members
+    }
+
+    pub fn team_members(&self, team_idx: usize) -> Vec<String> {
+        self.teams
+            .get(team_idx)
+            .map(|t| {
+                let mut m = t.members.clone();
+                if !m.contains(&self.me) {
+                    m.push(self.me.clone());
+                }
+                m
+            })
+            .unwrap_or_default()
+    }
+}
+
+fn config_path() -> Result<PathBuf> {
+    if let Ok(p) = std::env::var("GLAB_DASH_CONFIG") {
+        return Ok(PathBuf::from(p));
+    }
+    let config_dir = dirs::config_dir().context("Could not determine config directory")?;
+    Ok(config_dir.join("glab-dash").join("config.yaml"))
+}

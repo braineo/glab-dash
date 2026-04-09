@@ -1,0 +1,161 @@
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct User {
+    pub id: u64,
+    pub username: String,
+    pub name: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    pub web_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Label {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Milestone {
+    pub id: u64,
+    pub title: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Issue {
+    pub id: u64,
+    pub iid: u64,
+    pub title: String,
+    pub state: String,
+    pub author: Option<User>,
+    #[serde(default)]
+    pub assignees: Vec<User>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    pub milestone: Option<Milestone>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub web_url: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub user_notes_count: u64,
+    // References to identify which project this belongs to
+    #[serde(default)]
+    pub references: Option<References>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct References {
+    #[serde(rename = "full")]
+    pub full_ref: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Pipeline {
+    pub id: u64,
+    pub status: String,
+    #[serde(rename = "ref")]
+    pub ref_name: Option<String>,
+    pub web_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeRequest {
+    pub id: u64,
+    pub iid: u64,
+    pub title: String,
+    pub state: String,
+    pub author: Option<User>,
+    #[serde(default)]
+    pub assignees: Vec<User>,
+    #[serde(default)]
+    pub reviewers: Vec<User>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    pub milestone: Option<Milestone>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub web_url: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub work_in_progress: bool,
+    #[serde(default)]
+    pub merge_status: Option<String>,
+    pub source_branch: String,
+    pub target_branch: String,
+    pub head_pipeline: Option<Pipeline>,
+    #[serde(default)]
+    pub user_notes_count: u64,
+    #[serde(default)]
+    pub references: Option<References>,
+    #[serde(default)]
+    pub approved_by: Vec<ApprovalUser>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApprovalUser {
+    pub user: User,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Note {
+    pub id: u64,
+    pub body: String,
+    pub author: User,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub system: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectLabel {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeRequestApprovals {
+    #[serde(default)]
+    pub approved_by: Vec<ApprovalUser>,
+}
+
+/// Wrapper that tags items with their source
+#[derive(Debug, Clone)]
+pub enum ItemSource {
+    Tracking,
+    External(String), // project path
+}
+
+impl std::fmt::Display for ItemSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ItemSource::Tracking => write!(f, "tracking"),
+            ItemSource::External(p) => write!(f, "{p}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TrackedIssue {
+    pub issue: Issue,
+    pub source: ItemSource,
+    pub project_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrackedMergeRequest {
+    pub mr: MergeRequest,
+    pub source: ItemSource,
+    pub project_path: String,
+}

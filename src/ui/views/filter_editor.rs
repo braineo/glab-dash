@@ -1,0 +1,269 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+
+use crate::filter::{Field, FilterCondition, Op};
+use crate::ui::styles;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditorStep {
+    SelectField,
+    SelectOp,
+    EnterValue,
+}
+
+pub struct FilterEditorState {
+    pub step: EditorStep,
+    pub field_list: ListState,
+    pub op_list: ListState,
+    pub value_input: String,
+    pub selected_field: Option<Field>,
+    pub selected_op: Option<Op>,
+}
+
+impl Default for FilterEditorState {
+    fn default() -> Self {
+        let mut field_list = ListState::default();
+        field_list.select(Some(0));
+        let mut op_list = ListState::default();
+        op_list.select(Some(0));
+        Self {
+            step: EditorStep::SelectField,
+            field_list,
+            op_list,
+            value_input: String::new(),
+            selected_field: None,
+            selected_op: None,
+        }
+    }
+}
+
+impl FilterEditorState {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn handle_key(&mut self, key: &KeyEvent) -> FilterEditorAction {
+        match self.step {
+            EditorStep::SelectField => self.handle_field_key(key),
+            EditorStep::SelectOp => self.handle_op_key(key),
+            EditorStep::EnterValue => self.handle_value_key(key),
+        }
+    }
+
+    fn handle_field_key(&mut self, key: &KeyEvent) -> FilterEditorAction {
+        let fields = Field::all();
+        match key.code {
+            KeyCode::Esc => FilterEditorAction::Cancel,
+            KeyCode::Enter => {
+                if let Some(sel) = self.field_list.selected() {
+                    self.selected_field = Some(fields[sel].clone());
+                    self.step = EditorStep::SelectOp;
+                }
+                FilterEditorAction::Continue
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(sel) = self.field_list.selected() {
+                    self.field_list.select(Some(sel.saturating_sub(1)));
+                }
+                FilterEditorAction::Continue
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(sel) = self.field_list.selected() {
+                    self.field_list
+                        .select(Some((sel + 1).min(fields.len() - 1)));
+                }
+                FilterEditorAction::Continue
+            }
+            _ => FilterEditorAction::Continue,
+        }
+    }
+
+    fn handle_op_key(&mut self, key: &KeyEvent) -> FilterEditorAction {
+        let ops = Op::all();
+        match key.code {
+            KeyCode::Esc => {
+                self.step = EditorStep::SelectField;
+                FilterEditorAction::Continue
+            }
+            KeyCode::Enter => {
+                if let Some(sel) = self.op_list.selected() {
+                    self.selected_op = Some(ops[sel].clone());
+                    self.step = EditorStep::EnterValue;
+                }
+                FilterEditorAction::Continue
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(sel) = self.op_list.selected() {
+                    self.op_list.select(Some(sel.saturating_sub(1)));
+                }
+                FilterEditorAction::Continue
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(sel) = self.op_list.selected() {
+                    self.op_list.select(Some((sel + 1).min(ops.len() - 1)));
+                }
+                FilterEditorAction::Continue
+            }
+            _ => FilterEditorAction::Continue,
+        }
+    }
+
+    fn handle_value_key(&mut self, key: &KeyEvent) -> FilterEditorAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.step = EditorStep::SelectOp;
+                FilterEditorAction::Continue
+            }
+            KeyCode::Enter => {
+                if let (Some(field), Some(op)) = (&self.selected_field, &self.selected_op) {
+                    let condition = FilterCondition {
+                        field: field.clone(),
+                        op: op.clone(),
+                        value: self.value_input.clone(),
+                    };
+                    self.reset();
+                    return FilterEditorAction::AddCondition(condition);
+                }
+                FilterEditorAction::Continue
+            }
+            KeyCode::Backspace => {
+                self.value_input.pop();
+                FilterEditorAction::Continue
+            }
+            KeyCode::Char(c) => {
+                self.value_input.push(c);
+                FilterEditorAction::Continue
+            }
+            _ => FilterEditorAction::Continue,
+        }
+    }
+}
+
+pub enum FilterEditorAction {
+    Continue,
+    Cancel,
+    AddCondition(FilterCondition),
+}
+
+pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
+    let popup = centered_rect(45, 50, area);
+    frame.render_widget(Clear, popup);
+
+    match state.step {
+        EditorStep::SelectField => {
+            let items: Vec<ListItem> = Field::all()
+                .iter()
+                .map(|f| ListItem::new(f.name()))
+                .collect();
+            let list = List::new(items)
+                .highlight_style(styles::selected_style())
+                .highlight_symbol("> ")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Select Field (j/k, Enter) ")
+                        .title_style(styles::title_style())
+                        .border_style(styles::title_style()),
+                );
+            frame.render_stateful_widget(list, popup, &mut state.field_list);
+        }
+        EditorStep::SelectOp => {
+            let field_name = state
+                .selected_field
+                .as_ref()
+                .map(|f| f.name())
+                .unwrap_or("?");
+            let items: Vec<ListItem> = Op::all()
+                .iter()
+                .map(|o| {
+                    ListItem::new(format!(
+                        "{} ({})",
+                        match o {
+                            Op::Eq => "equals",
+                            Op::Neq => "not equals",
+                            Op::Contains => "contains",
+                            Op::NotContains => "not contains",
+                        },
+                        o.symbol()
+                    ))
+                })
+                .collect();
+            let list = List::new(items)
+                .highlight_style(styles::selected_style())
+                .highlight_symbol("> ")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {field_name}: Select Operator "))
+                        .title_style(styles::title_style())
+                        .border_style(styles::title_style()),
+                );
+            frame.render_stateful_widget(list, popup, &mut state.op_list);
+        }
+        EditorStep::EnterValue => {
+            let field_name = state
+                .selected_field
+                .as_ref()
+                .map(|f| f.name())
+                .unwrap_or("?");
+            let op_sym = state
+                .selected_op
+                .as_ref()
+                .map(|o| o.symbol())
+                .unwrap_or("?");
+            let lines = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(field_name, styles::help_key_style()),
+                    Span::raw(format!(" {op_sym} ")),
+                    Span::styled(
+                        if state.value_input.is_empty() {
+                            "type value..."
+                        } else {
+                            &state.value_input
+                        },
+                        styles::title_style(),
+                    ),
+                    Span::raw("_"),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Enter to confirm, Esc to go back",
+                    styles::help_desc_style(),
+                )),
+                Line::from(Span::styled(
+                    "  Hint: $me, none, true/false",
+                    styles::help_desc_style(),
+                )),
+            ];
+            let para = Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Enter Value ")
+                    .title_style(styles::title_style())
+                    .border_style(styles::title_style()),
+            );
+            frame.render_widget(para, popup);
+        }
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+    .split(r);
+
+    Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup_layout[1])[1]
+}
