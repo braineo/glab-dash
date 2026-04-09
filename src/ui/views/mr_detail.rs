@@ -31,7 +31,7 @@ impl MrDetailState {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, item: &TrackedMergeRequest, state: &MrDetailState) {
-    let chunks = Layout::vertical([Constraint::Length(6), Constraint::Min(1)]).split(area);
+    let chunks = Layout::vertical([Constraint::Length(7), Constraint::Min(1)]).split(area);
 
     // Header
     let assignees = item
@@ -138,6 +138,20 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedMergeRequest, state: 
                 Style::default().fg(styles::TEXT_BRIGHT),
             ),
         ]),
+        {
+            let mut spans = vec![Span::styled("Labels: ", styles::help_desc_style())];
+            if item.mr.labels.is_empty() {
+                spans.push(Span::styled("none", styles::help_desc_style()));
+            } else {
+                for (i, label) in item.mr.labels.iter().enumerate() {
+                    if i > 0 {
+                        spans.push(Span::styled(", ", Style::default().fg(styles::TEXT_DIM)));
+                    }
+                    spans.extend(styles::label_spans(label));
+                }
+            }
+            Line::from(spans)
+        },
         Line::from(vec![
             Span::styled("Approved by: ", styles::help_desc_style()),
             Span::styled(

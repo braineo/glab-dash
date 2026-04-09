@@ -203,7 +203,7 @@ pub fn render(
                 .map(|a| a.username.as_str())
                 .collect::<Vec<_>>()
                 .join(",");
-            let labels = item.issue.labels.join(",");
+            let labels = styles::labels_compact(&item.issue.labels, 30);
             let age = format_age(&item.issue.updated_at);
 
             let state_icon = match item.issue.state.as_str() {
@@ -238,7 +238,7 @@ pub fn render(
         Constraint::Min(30),    // Title
         Constraint::Length(10), // State
         Constraint::Length(15), // Assignees
-        Constraint::Length(20), // Labels
+        Constraint::Length(32), // Labels
         Constraint::Length(8),  // Age
     ];
 

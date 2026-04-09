@@ -19,14 +19,14 @@ pub fn render(frame: &mut Frame, area: Rect, message: &str) {
     for line in message.lines() {
         lines.push(Line::from(Span::styled(
             format!("  {line}"),
-            Style::default().fg(styles::TEXT),
+            styles::overlay_text_style(),
         )));
     }
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Press any key to dismiss",
-        styles::help_desc_style(),
+        styles::overlay_desc_style(),
     )));
 
     let block = styles::overlay_block("Error")

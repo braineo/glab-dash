@@ -161,14 +161,14 @@ fn step_indicator(step: &EditorStep) -> Line<'static> {
         Span::styled("●", ratatui::style::Style::default().fg(s2)),
         Span::raw(" "),
         Span::styled("●", ratatui::style::Style::default().fg(s3)),
-        Span::styled("  Step ", styles::help_desc_style()),
+        Span::styled("  Step ", styles::overlay_desc_style()),
         Span::styled(
             match step {
                 EditorStep::SelectField => "1/3",
                 EditorStep::SelectOp => "2/3",
                 EditorStep::EnterValue => "3/3",
             },
-            styles::help_desc_style(),
+            styles::overlay_desc_style(),
         ),
     ])
 }
@@ -183,7 +183,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
                 .iter()
                 .map(|f| ListItem::new(Line::from(vec![
                     Span::raw("  "),
-                    Span::styled(f.name(), ratatui::style::Style::default().fg(styles::TEXT)),
+                    Span::styled(f.name(), styles::overlay_text_style()),
                 ])))
                 .collect();
             let list = List::new(items)
@@ -223,7 +223,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
                                 },
                                 o.symbol()
                             ),
-                            ratatui::style::Style::default().fg(styles::TEXT),
+                            styles::overlay_text_style(),
                         ),
                     ]))
                 })
@@ -260,8 +260,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
                 Line::from(""),
                 Line::from(vec![
                     Span::raw("  "),
-                    Span::styled(field_name, styles::help_key_style()),
-                    Span::styled(format!(" {op_sym} "), styles::help_desc_style()),
+                    Span::styled(field_name, styles::overlay_key_style()),
+                    Span::styled(format!(" {op_sym} "), styles::overlay_desc_style()),
                     Span::styled(
                         if state.value_input.is_empty() {
                             "type value..."
@@ -279,11 +279,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
                 Line::from(""),
                 Line::from(Span::styled(
                     "  Enter to confirm, Esc to go back",
-                    styles::help_desc_style(),
+                    styles::overlay_desc_style(),
                 )),
                 Line::from(Span::styled(
                     "  Hint: $me, none, true/false",
-                    styles::help_desc_style(),
+                    styles::overlay_desc_style(),
                 )),
             ];
             let para = Paragraph::new(lines).block(styles::overlay_block("Enter Value"));

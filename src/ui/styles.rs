@@ -1,4 +1,5 @@
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 // ── Tokyo Night Color Palette ──
@@ -14,6 +15,10 @@ pub const TEXT: Color = Color::Rgb(169, 177, 214);
 pub const TEXT_DIM: Color = Color::Rgb(86, 95, 137);
 pub const TEXT_BRIGHT: Color = Color::Rgb(200, 211, 245);
 
+// Overlay-specific foregrounds (WCAG AA 4.5:1 against OVERLAY bg #343b58)
+pub const OVERLAY_TEXT: Color = Color::Rgb(192, 202, 233);
+pub const OVERLAY_TEXT_DIM: Color = Color::Rgb(148, 160, 197);
+
 // Accents
 pub const BLUE: Color = Color::Rgb(122, 162, 247);
 pub const CYAN: Color = Color::Rgb(125, 207, 255);
@@ -27,6 +32,11 @@ pub const TEAL: Color = Color::Rgb(115, 218, 202);
 // Borders
 pub const BORDER: Color = Color::Rgb(59, 66, 97);
 pub const BORDER_ACTIVE: Color = Color::Rgb(122, 162, 247);
+
+// Scoped label colors
+pub const LABEL_SCOPE: Color = Color::Rgb(137, 180, 250);
+pub const LABEL_SCOPE_SEP: Color = Color::Rgb(86, 95, 137);
+pub const LABEL_VALUE: Color = Color::Rgb(115, 218, 202);
 
 // ── Icons ──
 
@@ -64,6 +74,64 @@ pub fn overlay_block(title: &str) -> Block<'_> {
         .title(format!(" {title} "))
         .title_style(Style::default().fg(CYAN).add_modifier(Modifier::BOLD))
         .style(Style::default().bg(OVERLAY))
+}
+
+// ── Label Rendering ──
+
+/// Render a label as styled spans. Scoped labels (containing `::`) get
+/// the scope in LABEL_SCOPE and value in LABEL_VALUE with a dimmed `::`.
+/// Regular labels use TEAL.
+pub fn label_spans(label: &str) -> Vec<Span<'static>> {
+    if let Some((scope, value)) = label.split_once("::") {
+        vec![
+            Span::styled(
+                scope.to_string(),
+                Style::default().fg(LABEL_SCOPE).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("::", Style::default().fg(LABEL_SCOPE_SEP)),
+            Span::styled(value.to_string(), Style::default().fg(LABEL_VALUE)),
+        ]
+    } else {
+        vec![Span::styled(label.to_string(), Style::default().fg(TEAL))]
+    }
+}
+
+/// Render a list of labels into a single Line with comma separators.
+pub fn labels_line(labels: &[String]) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (i, label) in labels.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(", ", Style::default().fg(TEXT_DIM)));
+        }
+        spans.extend(label_spans(label));
+    }
+    Line::from(spans)
+}
+
+/// Render labels compactly for table cells: truncate to fit width.
+pub fn labels_compact(labels: &[String], max_width: usize) -> String {
+    if labels.is_empty() {
+        return String::new();
+    }
+    let mut result = String::new();
+    let mut remaining = labels.len();
+    for (i, label) in labels.iter().enumerate() {
+        let sep = if i > 0 { ", " } else { "" };
+        let candidate = format!("{sep}{label}");
+        remaining -= 1;
+        // Reserve space for "+N" suffix if needed
+        let suffix_len = if remaining > 0 {
+            format!("+{remaining}").len() + 1
+        } else {
+            0
+        };
+        if result.len() + candidate.len() + suffix_len > max_width && i > 0 {
+            result.push_str(&format!(" +{}", labels.len() - i));
+            return result;
+        }
+        result.push_str(&candidate);
+    }
+    result
 }
 
 // ── Styles ──
@@ -130,6 +198,21 @@ pub fn help_key_style() -> Style {
 
 pub fn help_desc_style() -> Style {
     Style::default().fg(TEXT_DIM)
+}
+
+// Overlay-specific help styles (higher contrast for WCAG AA on OVERLAY bg)
+pub fn overlay_key_style() -> Style {
+    Style::default()
+        .fg(CYAN)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub fn overlay_desc_style() -> Style {
+    Style::default().fg(OVERLAY_TEXT_DIM)
+}
+
+pub fn overlay_text_style() -> Style {
+    Style::default().fg(OVERLAY_TEXT)
 }
 
 pub fn source_tracking_style() -> Style {

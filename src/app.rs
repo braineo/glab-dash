@@ -39,6 +39,7 @@ pub enum ConfirmAction {
     ReopenIssue(String, u64),
     ApproveMr(String, u64),
     MergeMr(String, u64),
+    QuitApp,
 }
 
 #[derive(Debug)]
@@ -285,9 +286,14 @@ impl App {
             return false;
         }
 
-        // Global keys
+        // Global keys — q navigates back, confirms quit on dashboard
         if keys::is_quit(&key) {
-            return true; // quit
+            if let Some(prev) = self.view_stack.pop() {
+                self.view = prev;
+            } else {
+                self.overlay = Overlay::Confirm(ConfirmAction::QuitApp);
+            }
+            return false;
         }
 
         if key.code == KeyCode::Char('?') {
@@ -654,6 +660,9 @@ impl App {
                 let action = action.clone();
                 match key.code {
                     KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        if matches!(action, ConfirmAction::QuitApp) {
+                            return true;
+                        }
                         self.execute_confirm(action);
                         self.overlay = Overlay::None;
                     }
@@ -765,6 +774,7 @@ impl App {
                     .merge_mr(&project, iid)
                     .await
                     .map(|_| format!("Merged !{iid}")),
+                ConfirmAction::QuitApp => unreachable!(),
             };
             let _ = tx.send(AsyncMsg::ActionDone(result));
         });
@@ -1096,6 +1106,7 @@ impl App {
                         ("Approve MR", format!("Approve MR !{iid}?"))
                     }
                     ConfirmAction::MergeMr(_, iid) => ("Merge MR", format!("Merge MR !{iid}?")),
+                    ConfirmAction::QuitApp => ("Quit", "Quit glab-dash?".to_string()),
                 };
                 confirm_dialog::render(frame, area, title, &msg);
             }

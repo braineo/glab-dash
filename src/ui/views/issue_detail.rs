@@ -45,13 +45,29 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueD
         .map(|a| a.username.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let labels = item.issue.labels.join(", ");
-
     let state_icon = match item.issue.state.as_str() {
         "opened" => styles::ICON_OPEN,
         "closed" => styles::ICON_CLOSED,
         _ => " ",
     };
+
+    let mut labels_line_spans = vec![Span::styled("Labels: ", styles::help_desc_style())];
+    if item.issue.labels.is_empty() {
+        labels_line_spans.push(Span::styled("none", styles::help_desc_style()));
+    } else {
+        for (i, label) in item.issue.labels.iter().enumerate() {
+            if i > 0 {
+                labels_line_spans.push(Span::styled(", ", Style::default().fg(styles::TEXT_DIM)));
+            }
+            labels_line_spans.extend(styles::label_spans(label));
+        }
+    }
+    labels_line_spans.push(Span::raw("  "));
+    labels_line_spans.push(Span::styled("Source: ", styles::help_desc_style()));
+    labels_line_spans.push(Span::styled(
+        item.source.to_string(),
+        Style::default().fg(styles::TEXT),
+    ));
 
     let header_lines = vec![
         Line::from(vec![
@@ -75,23 +91,7 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueD
                 Style::default().fg(styles::TEXT_BRIGHT),
             ),
         ]),
-        Line::from(vec![
-            Span::styled("Labels: ", styles::help_desc_style()),
-            Span::styled(
-                if labels.is_empty() {
-                    "none".to_string()
-                } else {
-                    labels
-                },
-                styles::label_style(),
-            ),
-            Span::raw("  "),
-            Span::styled("Source: ", styles::help_desc_style()),
-            Span::styled(
-                item.source.to_string(),
-                Style::default().fg(styles::TEXT),
-            ),
-        ]),
+        Line::from(labels_line_spans),
         Line::from(vec![Span::styled(
             "  [c]omment [x]close/reopen [l]abels [a]ssign [o]pen [Esc]back",
             styles::help_desc_style(),

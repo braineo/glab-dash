@@ -14,15 +14,15 @@ pub fn render(frame: &mut Frame, area: Rect, title: &str, message: &str) {
         Line::from(""),
         Line::from(Span::styled(
             format!("  {message}"),
-            Style::default().fg(styles::TEXT),
+            styles::overlay_text_style(),
         )),
         Line::from(""),
         Line::from(vec![
             Span::raw("  "),
-            Span::styled("y", styles::help_key_style()),
-            Span::styled(": confirm  ", styles::help_desc_style()),
-            Span::styled("n/Esc", styles::help_key_style()),
-            Span::styled(": cancel", styles::help_desc_style()),
+            Span::styled("y", styles::overlay_key_style()),
+            Span::styled(": confirm  ", styles::overlay_desc_style()),
+            Span::styled("n/Esc", styles::overlay_key_style()),
+            Span::styled(": cancel", styles::overlay_desc_style()),
         ]),
     ];
 

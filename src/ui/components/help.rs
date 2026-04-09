@@ -9,13 +9,15 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
     let popup = centered_rect(70, 80, area);
     frame.render_widget(Clear, popup);
 
+    let section_style = styles::section_header_style().bg(styles::OVERLAY);
+
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled(
             format!(" {} Global", styles::ICON_SECTION),
-            styles::section_header_style(),
+            section_style,
         )),
-        help_line("q", "Quit"),
+        help_line("q", "Back / Quit"),
         help_line("?", "Toggle help"),
         help_line("Esc", "Go back / close overlay"),
         help_line("1-9", "Switch team"),
@@ -29,7 +31,7 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
         lines.extend([
             Line::from(Span::styled(
                 format!(" {} List Navigation", styles::ICON_SECTION),
-                styles::section_header_style(),
+                section_style,
             )),
             help_line("j/k", "Move down/up"),
             help_line("g/G", "Jump to top/bottom"),
@@ -41,7 +43,7 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
             Line::from(""),
             Line::from(Span::styled(
                 format!(" {} Filtering", styles::ICON_SECTION),
-                styles::section_header_style(),
+                section_style,
             )),
             help_line("f", "Add filter condition"),
             help_line("F", "Clear all filters"),
@@ -50,7 +52,7 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
             Line::from(""),
             Line::from(Span::styled(
                 format!(" {} Inline Actions", styles::ICON_SECTION),
-                styles::section_header_style(),
+                section_style,
             )),
             help_line("x", "Close / reopen"),
             help_line("l", "Set labels"),
@@ -64,7 +66,7 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
         lines.extend([
             Line::from(Span::styled(
                 format!(" {} MR Actions", styles::ICON_SECTION),
-                styles::section_header_style(),
+                section_style,
             )),
             help_line("A", "Approve MR"),
             help_line("M", "Merge MR"),
@@ -76,7 +78,7 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
         lines.extend([
             Line::from(Span::styled(
                 format!(" {} Detail View", styles::ICON_SECTION),
-                styles::section_header_style(),
+                section_style,
             )),
             help_line("j/k", "Scroll"),
             help_line("c", "Add comment"),
@@ -96,9 +98,12 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
 fn help_line<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
     Line::from(vec![
         Span::raw("  "),
-        Span::styled(format!("{key:>12}"), styles::help_key_style()),
-        Span::styled("  ·  ", styles::help_desc_style()),
-        Span::styled(desc, styles::help_desc_style()),
+        Span::styled(
+            format!("{key:>12}"),
+            styles::overlay_key_style(),
+        ),
+        Span::styled("  ·  ", styles::overlay_desc_style()),
+        Span::styled(desc, styles::overlay_desc_style()),
     ])
 }
 

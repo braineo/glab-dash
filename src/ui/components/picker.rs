@@ -155,10 +155,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState) {
     let search_text = if state.query.is_empty() {
         Span::styled(
             "Type to filter...",
-            styles::draft_style(),
+            styles::overlay_desc_style().add_modifier(Modifier::ITALIC),
         )
     } else {
-        Span::styled(&state.query, ratatui::style::Style::default().fg(styles::TEXT_BRIGHT))
+        Span::styled(&state.query, styles::overlay_text_style())
     };
     let search = Paragraph::new(Line::from(search_text)).block(search_block);
     frame.render_widget(search, chunks[0]);
@@ -173,13 +173,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState) {
                 let (icon, style) = if state.selected[idx] {
                     (styles::ICON_CHECK, styles::source_tracking_style())
                 } else {
-                    (styles::ICON_UNCHECK, styles::help_desc_style())
+                    (styles::ICON_UNCHECK, styles::overlay_desc_style())
                 };
                 spans.push(Span::styled(format!("{icon} "), style));
             }
             spans.push(Span::styled(
                 &state.items[idx],
-                ratatui::style::Style::default().fg(styles::TEXT),
+                styles::overlay_text_style(),
             ));
             ListItem::new(Line::from(spans))
         })
