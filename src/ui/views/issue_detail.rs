@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 use crate::gitlab::types::{Note, TrackedIssue};
-use crate::ui::styles;
+use crate::ui::{markdown, styles};
 
 #[derive(Default)]
 pub struct IssueDetailState {
@@ -118,10 +118,7 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueD
             styles::section_header_style(),
         )));
         body_lines.push(Line::from(""));
-        for line in desc.lines() {
-            body_lines.push(Line::from(format!("  {line}")));
-        }
-        body_lines.push(Line::from(""));
+        body_lines.extend(markdown::render(desc, "  "));
     }
 
     // Comments
@@ -151,12 +148,7 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueD
                     styles::help_desc_style(),
                 ),
             ]));
-            for line in note.body.lines() {
-                body_lines.push(Line::from(vec![
-                    Span::styled("  │ ", styles::help_desc_style()),
-                    Span::raw(line.to_string()),
-                ]));
-            }
+            body_lines.extend(markdown::render_comment(&note.body));
             body_lines.push(Line::from(""));
         }
     }
