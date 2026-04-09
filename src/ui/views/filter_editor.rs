@@ -121,20 +121,14 @@ impl FilterEditorState {
     }
 
     fn handle_value_key(&mut self, key: &KeyEvent) -> FilterEditorAction {
-        // Ctrl+N/P and arrows for suggestion navigation (not j/k since those type chars)
-        let is_nav_up = key.code == KeyCode::Up
-            || (key.code == KeyCode::Char('p')
-                && key.modifiers == crossterm::event::KeyModifiers::CONTROL);
-        let is_nav_down = key.code == KeyCode::Down
-            || (key.code == KeyCode::Char('n')
-                && key.modifiers == crossterm::event::KeyModifiers::CONTROL);
-        if is_nav_up && !self.filtered_suggestions.is_empty() {
+        // Arrows + Ctrl+N/P for suggestion nav (not j/k since those type chars)
+        if keys::is_nav_up(key) && !self.filtered_suggestions.is_empty() {
             let current = self.suggestion_state.selected().unwrap_or(0);
             self.suggestion_state
                 .select(Some(current.saturating_sub(1)));
             return FilterEditorAction::Continue;
         }
-        if is_nav_down && !self.filtered_suggestions.is_empty() {
+        if keys::is_nav_down(key) && !self.filtered_suggestions.is_empty() {
             let current = self.suggestion_state.selected().unwrap_or(0);
             let max = self.filtered_suggestions.len().saturating_sub(1);
             self.suggestion_state

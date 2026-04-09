@@ -50,12 +50,12 @@ impl PickerState {
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> PickerAction {
-        // Check navigation keys first (Ctrl+N/P, arrows, etc.)
-        if keys::is_up(key) {
+        // Use nav variants (no j/k) since typing is active in picker
+        if keys::is_nav_up(key) {
             self.move_up();
             return PickerAction::Continue;
         }
-        if keys::is_down(key) {
+        if keys::is_nav_down(key) {
             self.move_down();
             return PickerAction::Continue;
         }
