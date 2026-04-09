@@ -9,7 +9,7 @@ use crate::config::Config;
 use crate::filter::{Field, FilterCondition, Op};
 use crate::gitlab::client::GitLabClient;
 use crate::gitlab::types::*;
-use crate::ui::components::{confirm_dialog, help, picker};
+use crate::ui::components::{confirm_dialog, error_popup, help, picker};
 use crate::ui::keys;
 use crate::ui::views::{dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list};
 
@@ -30,6 +30,7 @@ pub enum Overlay {
     Confirm(ConfirmAction),
     Picker(PickerContext),
     CommentInput,
+    Error(String),
 }
 
 #[derive(Debug, Clone)]
@@ -202,7 +203,7 @@ impl App {
                 }
                 Err(e) => {
                     self.loading = false;
-                    self.error = Some(format!("Issues: {e}"));
+                    self.show_error(format!("Issues: {e}"));
                 }
             },
             AsyncMsg::MrsLoaded(result) => match result {
@@ -215,7 +216,7 @@ impl App {
                 }
                 Err(e) => {
                     self.loading = false;
-                    self.error = Some(format!("MRs: {e}"));
+                    self.show_error(format!("MRs: {e}"));
                 }
             },
             AsyncMsg::NotesLoaded(result) => match result {
@@ -229,7 +230,7 @@ impl App {
                     }
                 }
                 Err(e) => {
-                    self.error = Some(format!("Notes: {e}"));
+                    self.show_error(format!("Notes: {e}"));
                 }
             },
             AsyncMsg::ActionDone(result) => {
@@ -241,7 +242,7 @@ impl App {
                         self.fetch_all();
                     }
                     Err(e) => {
-                        self.error = Some(e.to_string());
+                        self.show_error(e.to_string());
                     }
                 }
             }
@@ -251,6 +252,11 @@ impl App {
                 }
             }
         }
+    }
+
+    fn show_error(&mut self, msg: String) {
+        self.error = Some(msg.clone());
+        self.overlay = Overlay::Error(msg);
     }
 
     fn refilter_issues(&mut self) {
@@ -689,6 +695,10 @@ impl App {
                     self.comment_input.handle_key(&key);
                 }
             },
+            Overlay::Error(_) => {
+                // Any key dismisses the error popup
+                self.overlay = Overlay::None;
+            }
             Overlay::None => {}
         }
         false
@@ -1103,6 +1113,9 @@ impl App {
                     &self.comment_input,
                     "Comment (Enter to submit, Esc to cancel)",
                 );
+            }
+            Overlay::Error(msg) => {
+                error_popup::render(frame, area, msg);
             }
         }
     }
