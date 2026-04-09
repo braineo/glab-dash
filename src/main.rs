@@ -31,7 +31,7 @@ use crate::gitlab::client::GitLabClient;
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = if onboarding::needs_onboarding() {
-        onboarding::run_onboarding()?
+        onboarding::run_onboarding().await?
     } else {
         Config::load().context("Failed to load configuration")?
     };

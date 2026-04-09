@@ -21,7 +21,7 @@ pub fn needs_onboarding() -> bool {
     }
 }
 
-pub fn run_onboarding() -> Result<Config> {
+pub async fn run_onboarding() -> Result<Config> {
     println!("{LOGO}");
     println!("  Welcome to glab-dash! Let's set up your configuration.\n");
 
@@ -50,14 +50,7 @@ pub fn run_onboarding() -> Result<Config> {
     };
     let client = GitLabClient::new(&test_config).context("Failed to create client")?;
 
-    let rt = tokio::runtime::Handle::try_current();
-    let username = if let Ok(handle) = rt {
-        handle.block_on(async { fetch_current_user(&client).await })
-    } else {
-        // We're not inside a tokio runtime yet during onboarding
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async { fetch_current_user(&client).await })
-    };
+    let username = fetch_current_user(&client).await;
 
     let detected_username = match username {
         Ok(u) => {
