@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Row, Table, TableState};
+use ratatui::widgets::{Row, Table, TableState};
 
 use crate::filter::{FilterCondition, matches_issue};
 use crate::gitlab::types::{ItemSource, TrackedIssue};
@@ -186,7 +186,8 @@ pub fn render(
     let rows: Vec<Row> = state
         .filtered_indices
         .iter()
-        .map(|&idx| {
+        .enumerate()
+        .map(|(row_idx, &idx)| {
             let item = &issues[idx];
             let source_span = match &item.source {
                 ItemSource::Tracking => Span::styled("TRK", styles::source_tracking_style()),
@@ -205,20 +206,29 @@ pub fn render(
             let labels = item.issue.labels.join(",");
             let age = format_age(&item.issue.updated_at);
 
-            Row::new(vec![
+            let state_icon = match item.issue.state.as_str() {
+                "opened" => styles::ICON_OPEN,
+                "closed" => styles::ICON_CLOSED,
+                _ => " ",
+            };
+
+            let row = Row::new(vec![
                 format!("#{}", item.issue.iid),
                 source_span.to_string(),
                 item.issue.title.clone(),
-                item.issue.state.clone(),
+                format!("{state_icon} {}", item.issue.state),
                 assignees,
                 labels,
                 age,
-            ])
-            .style(if item.issue.state == "closed" {
-                styles::draft_style()
+            ]);
+            let row = if item.issue.state == "closed" {
+                row.style(styles::draft_style())
+            } else if row_idx % 2 == 1 {
+                row.style(styles::row_alt_style())
             } else {
-                ratatui::style::Style::default()
-            })
+                row
+            };
+            row
         })
         .collect();
 
@@ -226,7 +236,7 @@ pub fn render(
         Constraint::Length(7),  // IID
         Constraint::Length(10), // Source
         Constraint::Min(30),    // Title
-        Constraint::Length(8),  // State
+        Constraint::Length(10), // State
         Constraint::Length(15), // Assignees
         Constraint::Length(20), // Labels
         Constraint::Length(8),  // Age
@@ -239,21 +249,16 @@ pub fn render(
     .bottom_margin(1);
 
     let title = if state.searching {
-        format!(" Issues (/{}) ", state.search_query)
+        format!("Issues /{}", state.search_query)
     } else {
-        format!(" Issues ({}) ", state.filtered_indices.len())
+        format!("Issues ({})", state.filtered_indices.len())
     };
 
     let table = Table::new(rows, widths)
         .header(header)
         .row_highlight_style(styles::selected_style())
-        .highlight_symbol("▶ ")
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_style(styles::title_style()),
-        );
+        .highlight_symbol(styles::ICON_SELECTOR)
+        .block(styles::block(&title));
 
     frame.render_stateful_widget(table, chunks[1], &mut state.table_state);
 }

@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::filter::{Field, FilterCondition, Op};
 use crate::ui::styles;
@@ -148,6 +148,31 @@ pub enum FilterEditorAction {
     AddCondition(FilterCondition),
 }
 
+fn step_indicator(step: &EditorStep) -> Line<'static> {
+    let (s1, s2, s3) = match step {
+        EditorStep::SelectField => (styles::BLUE, styles::TEXT_DIM, styles::TEXT_DIM),
+        EditorStep::SelectOp => (styles::BLUE, styles::BLUE, styles::TEXT_DIM),
+        EditorStep::EnterValue => (styles::BLUE, styles::BLUE, styles::BLUE),
+    };
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled("●", ratatui::style::Style::default().fg(s1)),
+        Span::raw(" "),
+        Span::styled("●", ratatui::style::Style::default().fg(s2)),
+        Span::raw(" "),
+        Span::styled("●", ratatui::style::Style::default().fg(s3)),
+        Span::styled("  Step ", styles::help_desc_style()),
+        Span::styled(
+            match step {
+                EditorStep::SelectField => "1/3",
+                EditorStep::SelectOp => "2/3",
+                EditorStep::EnterValue => "3/3",
+            },
+            styles::help_desc_style(),
+        ),
+    ])
+}
+
 pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
     let popup = centered_rect(45, 50, area);
     frame.render_widget(Clear, popup);
@@ -156,19 +181,25 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
         EditorStep::SelectField => {
             let items: Vec<ListItem> = Field::all()
                 .iter()
-                .map(|f| ListItem::new(f.name()))
+                .map(|f| ListItem::new(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(f.name(), ratatui::style::Style::default().fg(styles::TEXT)),
+                ])))
                 .collect();
             let list = List::new(items)
                 .highlight_style(styles::selected_style())
-                .highlight_symbol("> ")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Select Field (j/k, Enter) ")
-                        .title_style(styles::title_style())
-                        .border_style(styles::title_style()),
-                );
+                .highlight_symbol(styles::ICON_SELECTOR)
+                .block(styles::overlay_block("Select Field"));
             frame.render_stateful_widget(list, popup, &mut state.field_list);
+
+            // Render step indicator at bottom
+            let indicator_area = Rect {
+                x: popup.x + 1,
+                y: popup.y + popup.height.saturating_sub(2),
+                width: popup.width.saturating_sub(2),
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(step_indicator(&state.step)), indicator_area);
         }
         EditorStep::SelectOp => {
             let field_name = state
@@ -179,29 +210,38 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
             let items: Vec<ListItem> = Op::all()
                 .iter()
                 .map(|o| {
-                    ListItem::new(format!(
-                        "{} ({})",
-                        match o {
-                            Op::Eq => "equals",
-                            Op::Neq => "not equals",
-                            Op::Contains => "contains",
-                            Op::NotContains => "not contains",
-                        },
-                        o.symbol()
-                    ))
+                    ListItem::new(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            format!(
+                                "{} ({})",
+                                match o {
+                                    Op::Eq => "equals",
+                                    Op::Neq => "not equals",
+                                    Op::Contains => "contains",
+                                    Op::NotContains => "not contains",
+                                },
+                                o.symbol()
+                            ),
+                            ratatui::style::Style::default().fg(styles::TEXT),
+                        ),
+                    ]))
                 })
                 .collect();
+            let title = format!("{field_name}: Select Operator");
             let list = List::new(items)
                 .highlight_style(styles::selected_style())
-                .highlight_symbol("> ")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(format!(" {field_name}: Select Operator "))
-                        .title_style(styles::title_style())
-                        .border_style(styles::title_style()),
-                );
+                .highlight_symbol(styles::ICON_SELECTOR)
+                .block(styles::overlay_block(&title));
             frame.render_stateful_widget(list, popup, &mut state.op_list);
+
+            let indicator_area = Rect {
+                x: popup.x + 1,
+                y: popup.y + popup.height.saturating_sub(2),
+                width: popup.width.saturating_sub(2),
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(step_indicator(&state.step)), indicator_area);
         }
         EditorStep::EnterValue => {
             let field_name = state
@@ -216,19 +256,25 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
                 .unwrap_or("?");
             let lines = vec![
                 Line::from(""),
+                step_indicator(&state.step),
+                Line::from(""),
                 Line::from(vec![
                     Span::raw("  "),
                     Span::styled(field_name, styles::help_key_style()),
-                    Span::raw(format!(" {op_sym} ")),
+                    Span::styled(format!(" {op_sym} "), styles::help_desc_style()),
                     Span::styled(
                         if state.value_input.is_empty() {
                             "type value..."
                         } else {
                             &state.value_input
                         },
-                        styles::title_style(),
+                        if state.value_input.is_empty() {
+                            styles::draft_style()
+                        } else {
+                            styles::title_style()
+                        },
                     ),
-                    Span::raw("_"),
+                    Span::styled("_", styles::title_style()),
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
@@ -240,13 +286,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
                     styles::help_desc_style(),
                 )),
             ];
-            let para = Paragraph::new(lines).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Enter Value ")
-                    .title_style(styles::title_style())
-                    .border_style(styles::title_style()),
-            );
+            let para = Paragraph::new(lines).block(styles::overlay_block("Enter Value"));
             frame.render_widget(para, popup);
         }
     }

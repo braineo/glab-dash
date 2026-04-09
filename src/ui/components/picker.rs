@@ -5,7 +5,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::ui::styles;
 
@@ -151,17 +151,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState) {
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).split(popup);
 
     // Search input
-    let search_block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" {} ", state.title))
-        .title_style(styles::title_style())
-        .border_style(styles::title_style());
+    let search_block = styles::overlay_block(&state.title);
     let search_text = if state.query.is_empty() {
-        "Type to filter...".to_string()
+        Span::styled(
+            "Type to filter...",
+            styles::draft_style(),
+        )
     } else {
-        state.query.clone()
+        Span::styled(&state.query, ratatui::style::Style::default().fg(styles::TEXT_BRIGHT))
     };
-    let search = Paragraph::new(search_text).block(search_block);
+    let search = Paragraph::new(Line::from(search_text)).block(search_block);
     frame.render_widget(search, chunks[0]);
 
     // List
@@ -171,21 +170,26 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState) {
         .map(|&idx| {
             let mut spans = Vec::new();
             if state.multi_select {
-                let check = if state.selected[idx] { "[x] " } else { "[ ] " };
-                spans.push(Span::styled(check, styles::help_key_style()));
+                let (icon, style) = if state.selected[idx] {
+                    (styles::ICON_CHECK, styles::source_tracking_style())
+                } else {
+                    (styles::ICON_UNCHECK, styles::help_desc_style())
+                };
+                spans.push(Span::styled(format!("{icon} "), style));
             }
-            spans.push(Span::raw(&state.items[idx]));
+            spans.push(Span::styled(
+                &state.items[idx],
+                ratatui::style::Style::default().fg(styles::TEXT),
+            ));
             ListItem::new(Line::from(spans))
         })
         .collect();
 
-    let list_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(styles::title_style());
+    let list_block = styles::overlay_block("");
     let list = List::new(items)
         .block(list_block)
         .highlight_style(styles::selected_style().add_modifier(Modifier::BOLD))
-        .highlight_symbol("> ");
+        .highlight_symbol(styles::ICON_SELECTOR);
 
     frame.render_stateful_widget(list, chunks[1], &mut state.list_state);
 }

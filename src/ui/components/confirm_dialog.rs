@@ -1,7 +1,8 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::ui::styles;
 
@@ -11,22 +12,22 @@ pub fn render(frame: &mut Frame, area: Rect, title: &str, message: &str) {
 
     let lines = vec![
         Line::from(""),
-        Line::from(Span::raw(format!("  {message}"))),
+        Line::from(Span::styled(
+            format!("  {message}"),
+            Style::default().fg(styles::TEXT),
+        )),
         Line::from(""),
         Line::from(vec![
             Span::raw("  "),
             Span::styled("y", styles::help_key_style()),
-            Span::raw(": confirm  "),
+            Span::styled(": confirm  ", styles::help_desc_style()),
             Span::styled("n/Esc", styles::help_key_style()),
-            Span::raw(": cancel"),
+            Span::styled(": cancel", styles::help_desc_style()),
         ]),
     ];
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" {title} "))
-        .title_style(styles::error_style())
-        .border_style(styles::error_style());
+    let block = styles::overlay_block(title)
+        .border_style(Style::default().fg(styles::ORANGE));
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, popup);

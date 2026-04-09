@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::widgets::{Block, Borders, Row, Table, TableState};
+use ratatui::widgets::{Row, Table, TableState};
 
 use crate::filter::{FilterCondition, matches_mr};
 use crate::gitlab::types::{ItemSource, TrackedMergeRequest};
@@ -185,7 +185,8 @@ pub fn render(
     let rows: Vec<Row> = state
         .filtered_indices
         .iter()
-        .map(|&idx| {
+        .enumerate()
+        .map(|(row_idx, &idx)| {
             let item = &mrs[idx];
             let source_str = match &item.source {
                 ItemSource::Tracking => "TRK".to_string(),
@@ -197,14 +198,23 @@ pub fn render(
                 .as_ref()
                 .map(|a| a.username.as_str())
                 .unwrap_or("-");
-            let pipeline = item
+
+            let pipeline_status = item
                 .mr
                 .head_pipeline
                 .as_ref()
                 .map(|p| p.status.as_str())
                 .unwrap_or("-");
+            let pipeline_icon = match pipeline_status {
+                "success" | "passed" => styles::ICON_PIPELINE_OK,
+                "failed" => styles::ICON_PIPELINE_FAIL,
+                "running" => styles::ICON_PIPELINE_RUN,
+                "pending" => styles::ICON_PIPELINE_WAIT,
+                _ => " ",
+            };
+
             let title = if item.mr.draft {
-                format!("WIP: {}", item.mr.title)
+                format!("{} {}", styles::ICON_DRAFT, item.mr.title)
             } else {
                 item.mr.title.clone()
             };
@@ -217,20 +227,22 @@ pub fn render(
                 .join(",");
             let age = format_age(&item.mr.updated_at);
 
-            Row::new(vec![
+            let row = Row::new(vec![
                 format!("!{}", item.mr.iid),
                 source_str,
                 title,
                 author.to_string(),
-                pipeline.to_string(),
+                format!("{pipeline_icon} {pipeline_status}"),
                 approvals,
                 age,
-            ])
-            .style(if item.mr.draft {
-                styles::draft_style()
+            ]);
+            if item.mr.draft {
+                row.style(styles::draft_style())
+            } else if row_idx % 2 == 1 {
+                row.style(styles::row_alt_style())
             } else {
-                ratatui::style::Style::default()
-            })
+                row
+            }
         })
         .collect();
 
@@ -239,7 +251,7 @@ pub fn render(
         Constraint::Length(10), // Source
         Constraint::Min(30),    // Title
         Constraint::Length(12), // Author
-        Constraint::Length(10), // Pipeline
+        Constraint::Length(12), // Pipeline
         Constraint::Length(15), // Approvals
         Constraint::Length(8),  // Age
     ];
@@ -251,21 +263,16 @@ pub fn render(
     .bottom_margin(1);
 
     let title = if state.searching {
-        format!(" Merge Requests (/{}) ", state.search_query)
+        format!("Merge Requests /{}", state.search_query)
     } else {
-        format!(" Merge Requests ({}) ", state.filtered_indices.len())
+        format!("Merge Requests ({})", state.filtered_indices.len())
     };
 
     let table = Table::new(rows, widths)
         .header(header)
         .row_highlight_style(styles::selected_style())
-        .highlight_symbol("▶ ")
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_style(styles::title_style()),
-        );
+        .highlight_symbol(styles::ICON_SELECTOR)
+        .block(styles::block(&title));
 
     frame.render_stateful_widget(table, chunks[1], &mut state.table_state);
 }

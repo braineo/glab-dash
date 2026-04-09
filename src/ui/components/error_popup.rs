@@ -1,7 +1,8 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::ui::styles;
 
@@ -11,12 +12,15 @@ pub fn render(frame: &mut Frame, area: Rect, message: &str) {
 
     let mut lines = vec![
         Line::from(""),
-        Line::from(Span::styled("  Error", styles::error_style())),
+        Line::from(Span::styled("  ✗ Error", styles::error_style())),
         Line::from(""),
     ];
 
     for line in message.lines() {
-        lines.push(Line::from(format!("  {line}")));
+        lines.push(Line::from(Span::styled(
+            format!("  {line}"),
+            Style::default().fg(styles::TEXT),
+        )));
     }
 
     lines.push(Line::from(""));
@@ -25,11 +29,8 @@ pub fn render(frame: &mut Frame, area: Rect, message: &str) {
         styles::help_desc_style(),
     )));
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Error ")
-        .title_style(styles::error_style())
-        .border_style(styles::error_style());
+    let block = styles::overlay_block("Error")
+        .border_style(Style::default().fg(styles::RED));
 
     let paragraph = Paragraph::new(lines)
         .block(block)

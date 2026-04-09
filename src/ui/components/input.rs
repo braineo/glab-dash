@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::ui::styles;
 
@@ -61,11 +61,7 @@ impl InputState {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, state: &InputState, title: &str) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" {title} "))
-        .title_style(styles::title_style())
-        .border_style(styles::title_style());
+    let block = styles::overlay_block(title);
 
     let display = if state.value.is_empty() {
         String::from("_")

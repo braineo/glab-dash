@@ -14,31 +14,52 @@ pub fn render(
     loading: bool,
     error: Option<&str>,
 ) {
+    let view_icon = match view_name {
+        "Dashboard" => "◈",
+        "Issues" => "●",
+        "Merge Requests" => "⑂",
+        _ => "›",
+    };
+
     let mut spans = vec![
         Span::styled(
-            format!(" {view_name} "),
-            styles::title_style().bg(ratatui::style::Color::Rgb(40, 40, 60)),
+            format!(" {view_icon} {view_name} "),
+            styles::title_style().bg(styles::HIGHLIGHT),
         ),
-        Span::raw(" "),
-        Span::styled(format!("[{team_name}]"), styles::source_tracking_style()),
-        Span::raw("  "),
+        Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
+        Span::styled(format!("{team_name}"), styles::source_tracking_style()),
+        Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
     ];
 
     if loading {
-        spans.push(Span::styled("Loading...", styles::draft_style()));
+        spans.push(Span::styled("⟳ Loading...", styles::draft_style()));
     } else if let Some(err) = error {
-        spans.push(Span::styled(format!("Error: {err}"), styles::error_style()));
+        spans.push(Span::styled(format!("✗ {err}"), styles::error_style()));
     } else {
-        spans.push(Span::raw(format!("{item_count} items")));
+        spans.push(Span::styled(
+            format!("{item_count} items"),
+            ratatui::style::Style::default().fg(styles::TEXT),
+        ));
     }
 
     // Right-aligned hints
-    let hints = " q:quit ?:help i:issues m:mrs h:home ";
-    let hints_width = hints.len() as u16;
-    let left_width = spans.iter().map(|s| s.width()).sum::<usize>() as u16;
-    let padding = area.width.saturating_sub(left_width + hints_width);
-    spans.push(Span::raw(" ".repeat(padding as usize)));
-    spans.push(Span::styled(hints, styles::help_desc_style()));
+    let hints_spans = vec![
+        Span::styled("q", styles::help_key_style()),
+        Span::styled(":quit ", styles::help_desc_style()),
+        Span::styled("?", styles::help_key_style()),
+        Span::styled(":help ", styles::help_desc_style()),
+        Span::styled("i", styles::help_key_style()),
+        Span::styled(":issues ", styles::help_desc_style()),
+        Span::styled("m", styles::help_key_style()),
+        Span::styled(":mrs ", styles::help_desc_style()),
+        Span::styled("h", styles::help_key_style()),
+        Span::styled(":home ", styles::help_desc_style()),
+    ];
+    let hints_width: usize = hints_spans.iter().map(|s| s.width()).sum();
+    let left_width: usize = spans.iter().map(|s| s.width()).sum();
+    let padding = (area.width as usize).saturating_sub(left_width + hints_width);
+    spans.push(Span::raw(" ".repeat(padding)));
+    spans.extend(hints_spans);
 
     let bar = Paragraph::new(Line::from(spans)).style(styles::status_bar_style());
     frame.render_widget(bar, area);
