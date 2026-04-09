@@ -34,7 +34,7 @@ pub fn run_onboarding() -> Result<Config> {
     println!("    {gitlab_url}/-/user_settings/personal_access_tokens");
     println!("  Required scopes: read_api, api");
     println!();
-    let token = prompt_required("Personal access token (glpat-...)")?;
+    let token = prompt_password("Personal access token (glpat-...)")?;
 
     // Step 3: Validate connection
     print!("\n  Validating connection... ");
@@ -322,6 +322,19 @@ fn prompt_required(prompt: &str) -> Result<String> {
         io::stdout().flush()?;
         let mut input = String::new();
         io::stdin().lock().read_line(&mut input)?;
+        let input = input.trim().to_string();
+        if !input.is_empty() {
+            return Ok(input);
+        }
+        println!("  This field is required.");
+    }
+}
+
+fn prompt_password(prompt: &str) -> Result<String> {
+    loop {
+        print!("  {prompt}: ");
+        io::stdout().flush()?;
+        let input = rpassword::read_password().context("Failed to read password")?;
         let input = input.trim().to_string();
         if !input.is_empty() {
             return Ok(input);

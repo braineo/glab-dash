@@ -17,6 +17,7 @@ fuzzy-matcher = "0.3"
 open = "5"
 chrono = { version = "0.4", features = ["serde"] }
 unicode-width = "0.2"
+rpassword = "7"
 
 [profile.release]
 opt-level = 'z'
