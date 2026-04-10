@@ -429,8 +429,13 @@ impl App {
             }
         }
 
-        // Navigation
-        if keys::is_back(&key) {
+        // Navigation (skip if a view is in search input mode)
+        let in_search = match self.view {
+            View::IssueList => self.issue_list_state.searching,
+            View::MrList => self.mr_list_state.searching,
+            _ => false,
+        };
+        if keys::is_back(&key) && !in_search {
             if let Some(prev) = self.view_stack.pop() {
                 self.view = prev;
             }

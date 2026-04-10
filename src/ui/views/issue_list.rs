@@ -2,10 +2,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
+use ratatui::style::Style;
 use ratatui::widgets::{Paragraph, Row, Table, TableState};
 
 use crate::filter::{FilterCondition, matches_issue};
-use crate::gitlab::types::{ItemSource, TrackedIssue};
+use crate::gitlab::types::TrackedIssue;
 use crate::ui::{components, keys, styles};
 
 #[derive(Default)]
@@ -191,12 +192,10 @@ pub fn render(
         .enumerate()
         .map(|(row_idx, &idx)| {
             let item = &issues[idx];
-            let source_span = match &item.source {
-                ItemSource::Tracking => Span::styled("TRK", styles::source_tracking_style()),
-                ItemSource::External(p) => {
-                    let short = p.rsplit('/').next().unwrap_or(p);
-                    Span::styled(short.to_string(), styles::source_external_style())
-                }
+            let source_span = {
+                let p = &item.project_path;
+                let short = p.rsplit('/').next().unwrap_or(p);
+                Span::styled(short.to_string(), styles::source_external_style())
             };
             let assignees = item
                 .issue
@@ -250,17 +249,41 @@ pub fn render(
     .style(styles::header_style())
     .bottom_margin(1);
 
-    let title = if state.searching {
-        format!("Issues /{}", state.search_query)
+    let table_block = if state.searching {
+        let title_line = Line::from(vec![
+            Span::styled(" Issues /", Style::default().fg(styles::CYAN).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(&state.search_query, Style::default().fg(styles::TEXT_BRIGHT).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled("▎", Style::default().fg(styles::CYAN)),
+            Span::styled(" Enter", Style::default().fg(styles::YELLOW).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(":accept ", Style::default().fg(styles::TEXT_DIM)),
+            Span::styled("Esc", Style::default().fg(styles::YELLOW).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(":cancel ", Style::default().fg(styles::TEXT_DIM)),
+        ]);
+        ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(styles::CYAN))
+            .title(title_line)
+    } else if !state.search_query.is_empty() {
+        let title_line = Line::from(vec![
+            Span::styled(" Issues /", Style::default().fg(styles::CYAN).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(&state.search_query, Style::default().fg(styles::TEXT_BRIGHT).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(" ", Style::default()),
+        ]);
+        ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(styles::BORDER))
+            .title(title_line)
     } else {
-        format!("Issues ({})", state.filtered_indices.len())
+        styles::block("Issues")
     };
 
     let table = Table::new(rows, widths)
         .header(header)
         .row_highlight_style(styles::selected_style())
         .highlight_symbol(styles::ICON_SELECTOR)
-        .block(styles::block(&title));
+        .block(table_block);
 
     frame.render_stateful_widget(table, chunks[1], &mut state.table_state);
 
