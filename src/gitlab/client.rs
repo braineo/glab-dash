@@ -846,13 +846,12 @@ impl GitLabClient {
             iterations: GqlConnection<GqlIteration>,
         }
 
-        // Extract the group path from tracking_project (everything before the last `/`)
-        let group_path = self
-            .config
-            .tracking_project
+        // Extract the group path from primary tracking project (everything before the last `/`)
+        let primary = self.config.primary_tracking_project();
+        let group_path = primary
             .rsplit_once('/')
             .map(|(g, _)| g)
-            .unwrap_or(&self.config.tracking_project);
+            .unwrap_or(primary);
 
         let mut all = Vec::new();
         let mut cursor: Option<String> = None;
@@ -969,33 +968,36 @@ impl GitLabClient {
 
     // ── Fetch all data for dashboard ──
 
-    /// Fetch all issues from the tracking namespace via `namespace.workItems`.
+    /// Fetch all issues from the tracking namespaces via `namespace.workItems`.
     pub async fn fetch_tracking_issues(
         &self,
         state: Option<&str>,
         updated_after: Option<&str>,
     ) -> Result<Vec<TrackedIssue>> {
-        let issues = self
-            .graphql_list_work_items(
-                &self.config.tracking_project,
-                state,
-                None,
-                updated_after,
-            )
-            .await?;
+        let mut all = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        for project in &self.config.tracking_projects {
+            let issues = self
+                .graphql_list_work_items(
+                    project,
+                    state,
+                    None,
+                    updated_after,
+                )
+                .await?;
 
-        let tracking = &self.config.tracking_project;
-        Ok(issues
-            .into_iter()
-            .map(|issue| {
+            for issue in issues {
                 let project_path = issue
                     .references
                     .as_ref()
                     .map(|r| extract_project_from_ref(&r.full_ref))
-                    .unwrap_or_else(|| tracking.clone());
-                TrackedIssue { issue, project_path }
-            })
-            .collect())
+                    .unwrap_or_else(|| project.clone());
+                if seen_ids.insert(issue.id) {
+                    all.push(TrackedIssue { issue, project_path });
+                }
+            }
+        }
+        Ok(all)
     }
 
     /// Fetch issues assigned to team members outside the tracking namespace.
@@ -1039,7 +1041,6 @@ impl GitLabClient {
             }
         "#;
 
-        let tracking = &self.config.tracking_project;
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
 
@@ -1066,7 +1067,7 @@ impl GitLabClient {
                         .unwrap_or_default();
 
                     // Skip tracking project issues and duplicates
-                    if project_path == *tracking || !seen_ids.insert(issue.id) {
+                    if self.config.is_tracking_project(&project_path) || !seen_ids.insert(issue.id) {
                         continue;
                     }
 
@@ -1089,22 +1090,27 @@ impl GitLabClient {
         updated_after: Option<&str>,
     ) -> Result<Vec<TrackedMergeRequest>> {
         let mut all = Vec::new();
-        let mut page = 1u32;
-        loop {
-            let mrs = self
-                .list_project_mrs(&self.config.tracking_project, state, page, 100, updated_after)
-                .await?;
-            let done = mrs.len() < 100;
-            for mr in mrs {
-                all.push(TrackedMergeRequest {
-                    project_path: self.config.tracking_project.clone(),
-                    mr,
-                });
+        let mut seen_ids = std::collections::HashSet::new();
+        for project in &self.config.tracking_projects {
+            let mut page = 1u32;
+            loop {
+                let mrs = self
+                    .list_project_mrs(project, state, page, 100, updated_after)
+                    .await?;
+                let done = mrs.len() < 100;
+                for mr in mrs {
+                    if seen_ids.insert(mr.id) {
+                        all.push(TrackedMergeRequest {
+                            project_path: project.clone(),
+                            mr,
+                        });
+                    }
+                }
+                if done {
+                    break;
+                }
+                page += 1;
             }
-            if done {
-                break;
-            }
-            page += 1;
         }
         Ok(all)
     }
@@ -1135,7 +1141,7 @@ impl GitLabClient {
                             .as_ref()
                             .map(|r| extract_project_from_ref(&r.full_ref))
                             .unwrap_or_default();
-                        if project_path == self.config.tracking_project {
+                        if self.config.is_tracking_project(&project_path) {
                             continue;
                         }
                         if all.iter().any(|t: &TrackedMergeRequest| t.mr.id == mr.id) {

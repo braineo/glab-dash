@@ -331,7 +331,7 @@ pub fn render(
     state: &mut PlanningViewState,
     issues: &[TrackedIssue],
     config: &Config,
-    active_team: usize,
+    active_team: Option<usize>,
     ctx: &RenderCtx,
 ) {
     let visible: Vec<usize> = state.visible_columns();
@@ -364,7 +364,10 @@ pub fn render(
         .collect();
     let columns = Layout::horizontal(constraints).split(col_area);
 
-    let team_members = config.team_members(active_team);
+    let team_members = match active_team {
+        Some(idx) => config.team_members(idx),
+        None => config.all_members(),
+    };
 
     for (vi, &col_idx) in visible.iter().enumerate() {
         let is_focused = col_idx == state.focused_column;

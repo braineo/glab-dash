@@ -111,7 +111,7 @@ pub struct App {
     pub view: View,
     pub view_stack: Vec<View>,
     pub overlay: Overlay,
-    pub active_team: usize,
+    pub active_team: Option<usize>,
 
     // Data
     pub issues: Vec<TrackedIssue>,
@@ -170,6 +170,7 @@ impl App {
             .iter()
             .map(|o| (o.scope.clone(), o.values.clone()))
             .collect();
+        let active_team = if config.teams.is_empty() { None } else { Some(0) };
         Self {
             config,
             client,
@@ -177,7 +178,7 @@ impl App {
             view: View::Dashboard,
             view_stack: Vec::new(),
             overlay: Overlay::None,
-            active_team: 0,
+            active_team,
             issues: Vec::new(),
             mrs: Vec::new(),
             labels: Vec::new(),
@@ -211,17 +212,16 @@ impl App {
     /// Load cached data for instant startup display.
     pub fn load_cache(&mut self) {
         if let Some(cached) = cache::load() {
-            if cached.team_index == self.active_team {
-                // Don't set last_fetched_at here: cache provides instant display,
-                // but the first fetch must be full (not incremental) to ensure
-                // all fields (e.g. iteration) are populated.
-                self.issues = cached.issues;
-                self.mrs = cached.mrs;
-                self.labels = cached.labels;
-                self.rebuild_label_color_map();
-                self.refilter_issues();
-                self.refilter_mrs();
-            }
+            // Don't set last_fetched_at here: cache provides instant display,
+            // but the first fetch must be full (not incremental) to ensure
+            // all fields (e.g. iteration) are populated.
+            self.issues = cached.issues;
+            self.mrs = cached.mrs;
+            self.labels = cached.labels;
+            self.work_item_statuses = cached.work_item_statuses;
+            self.rebuild_label_color_map();
+            self.refilter_issues();
+            self.refilter_mrs();
         }
     }
 
@@ -259,6 +259,14 @@ impl App {
         };
     }
 
+    /// Get members for the active team, or empty vec for "All" view.
+    fn active_team_members(&self) -> Vec<String> {
+        match self.active_team {
+            Some(idx) => self.config.team_members(idx),
+            None => Vec::new(), // empty = no team filter = show all
+        }
+    }
+
     fn rebuild_label_color_map(&mut self) {
         self.label_color_map = self
             .labels
@@ -268,7 +276,7 @@ impl App {
     }
 
     fn save_cache(&self) {
-        cache::save(self.active_team, &self.issues, &self.mrs, &self.labels);
+        cache::save(&self.issues, &self.mrs, &self.labels, &self.work_item_statuses);
     }
 
     pub fn fetch_all(&self) {
@@ -299,7 +307,7 @@ impl App {
         let tx = self.async_tx.clone();
         let updated_after = self.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
-        let members = self.config.team_members(self.active_team);
+        let members = self.config.all_members();
         tokio::spawn(async move {
             let (state, ua) = if incremental {
                 (None, updated_after.as_deref())
@@ -325,7 +333,7 @@ impl App {
 
     fn fetch_mrs(&self) {
         let client = self.client.clone();
-        let members = self.config.team_members(self.active_team);
+        let members = self.config.all_members();
         let tx = self.async_tx.clone();
         let updated_after = self.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
@@ -347,11 +355,21 @@ impl App {
 
     fn fetch_labels(&self) {
         let client = self.client.clone();
-        let project = self.config.tracking_project.clone();
+        let projects = self.config.tracking_projects.clone();
         let tx = self.async_tx.clone();
         tokio::spawn(async move {
-            let result = client.list_project_labels(&project).await;
-            let _ = tx.send(AsyncMsg::LabelsLoaded(result));
+            let mut all_labels = Vec::new();
+            let mut seen_ids = std::collections::HashSet::new();
+            for project in &projects {
+                if let Ok(labels) = client.list_project_labels(project).await {
+                    for label in labels {
+                        if seen_ids.insert(label.id) {
+                            all_labels.push(label);
+                        }
+                    }
+                }
+            }
+            let _ = tx.send(AsyncMsg::LabelsLoaded(Ok(all_labels)));
         });
     }
 
@@ -664,6 +682,7 @@ impl App {
                         } else {
                             self.work_item_statuses
                                 .insert(project.clone(), statuses);
+                            self.save_cache();
                             self.refresh_focused();
                             self.show_status_chord(&project, issue_id, iid, close_only);
                         }
@@ -715,7 +734,7 @@ impl App {
 
     pub fn refilter_issues(&mut self) {
         let me = self.config.me.clone();
-        let members = self.config.team_members(self.active_team);
+        let members = self.active_team_members();
         self.issue_list_state.active_sort = self.issue_sort.clone();
         self.issue_list_state.apply_filters(
             &self.issues,
@@ -784,7 +803,7 @@ impl App {
             }
             Some(Field::Draft) => vec!["true".to_string(), "false".to_string()],
             Some(Field::Assignee | Field::Author | Field::Reviewer | Field::ApprovedBy) => {
-                let mut names = self.config.team_members(self.active_team);
+                let mut names = self.active_team_members();
                 names.insert(0, "$me".to_string());
                 names.push("none".to_string());
                 names
@@ -795,7 +814,7 @@ impl App {
 
     fn refilter_mrs(&mut self) {
         let me = self.config.me.clone();
-        let members = self.config.team_members(self.active_team);
+        let members = self.active_team_members();
         self.mr_list_state.active_sort = self.mr_sort.clone();
         self.mr_list_state.apply_filters(
             &self.mrs,
@@ -951,16 +970,23 @@ impl App {
         }
 
         // Team switching with number keys (only when not in text input)
+        // 0 = show all, 1-9 = select team. No fetch — just refilter.
         if let KeyCode::Char(c) = key.code
             && c.is_ascii_digit()
             && key.modifiers == KeyModifiers::NONE
         {
             let num = c.to_digit(10).unwrap_or(0) as usize;
-            if num >= 1 && num <= self.config.teams.len() {
-                self.active_team = num - 1;
-                self.last_fetched_at = None; // force full fetch for new team
-                self.loading = true;
-                self.fetch_all();
+            if num == 0 {
+                self.active_team = None;
+                self.refilter_issues();
+                self.refilter_mrs();
+                self.refresh_focused();
+                return false;
+            } else if num <= self.config.teams.len() {
+                self.active_team = Some(num - 1);
+                self.refilter_issues();
+                self.refilter_mrs();
+                self.refresh_focused();
                 return false;
             }
         }
@@ -1100,7 +1126,7 @@ impl App {
                 self.overlay = Overlay::Picker(PickerContext::Labels);
             }
             issue_list::IssueListAction::EditAssignee => {
-                let members = self.config.team_members(self.active_team);
+                let members = self.active_team_members();
                 self.chord_state =
                     Some(chord_popup::ChordState::new("Set Assignee", members));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
@@ -1197,7 +1223,7 @@ impl App {
                 self.overlay = Overlay::Picker(PickerContext::Labels);
             }
             mr_list::MrListAction::EditAssignee => {
-                let members = self.config.team_members(self.active_team);
+                let members = self.active_team_members();
                 self.chord_state =
                     Some(chord_popup::ChordState::new("Set Assignee", members));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
@@ -1273,7 +1299,7 @@ impl App {
                     self.overlay = Overlay::Picker(PickerContext::Labels);
                 }
                 KeyCode::Char('a') => {
-                    let members = self.config.team_members(self.active_team);
+                    let members = self.active_team_members();
                     self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
                     self.overlay = Overlay::Picker(PickerContext::Assignee);
                 }
@@ -1323,7 +1349,7 @@ impl App {
                     self.overlay = Overlay::Picker(PickerContext::Labels);
                 }
                 KeyCode::Char('a') => {
-                    let members = self.config.team_members(self.active_team);
+                    let members = self.active_team_members();
                     self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
                     self.overlay = Overlay::Picker(PickerContext::Assignee);
                 }
@@ -1385,7 +1411,7 @@ impl App {
                 }
             }
             PlanningAction::EditAssignee => {
-                let members = self.config.team_members(self.active_team);
+                let members = self.active_team_members();
                 self.chord_state =
                     Some(chord_popup::ChordState::new("Set Assignee", members));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
@@ -2067,9 +2093,8 @@ impl App {
 
         // Status bar
         let team_name = self
-            .config
-            .teams
-            .get(self.active_team)
+            .active_team
+            .and_then(|idx| self.config.teams.get(idx))
             .map(|t| t.name.as_str())
             .unwrap_or("all");
         let view_name = match self.view {

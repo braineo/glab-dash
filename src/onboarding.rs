@@ -43,7 +43,7 @@ pub async fn run_onboarding() -> Result<Config> {
         gitlab_url: gitlab_url.clone(),
         token: token.clone(),
         me: String::new(),
-        tracking_project: String::new(),
+        tracking_projects: Vec::new(),
         refresh_interval_secs: 60,
         teams: Vec::new(),
         filters: Vec::new(),
@@ -137,7 +137,7 @@ pub async fn run_onboarding() -> Result<Config> {
         gitlab_url: gitlab_url.clone(),
         token: token.clone(),
         me: me.clone(),
-        tracking_project: tracking_project.clone(),
+        tracking_projects: vec![tracking_project.clone()],
         refresh_interval_secs: 60,
         teams: teams.clone(),
         filters: default_filter_presets(),
@@ -183,10 +183,10 @@ pub fn generate_yaml(config: &Config) -> String {
     yaml.push_str(&format!("gitlab_url: \"{}\"\n", config.gitlab_url));
     yaml.push_str(&format!("token: \"{}\"\n", config.token));
     yaml.push_str(&format!("me: \"{}\"\n", config.me));
-    yaml.push_str(&format!(
-        "tracking_project: \"{}\"\n",
-        config.tracking_project
-    ));
+    yaml.push_str("tracking_projects:\n");
+    for project in &config.tracking_projects {
+        yaml.push_str(&format!("  - \"{project}\"\n"));
+    }
     yaml.push_str(&format!(
         "refresh_interval_secs: {}\n",
         config.refresh_interval_secs
