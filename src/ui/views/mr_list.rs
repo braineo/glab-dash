@@ -33,6 +33,17 @@ impl MrListState {
         self.filtered_indices = mrs
             .iter()
             .enumerate()
+            .filter(|(_, item)| {
+                // Implicit team filter: when a team is selected, only show items
+                // assigned to team members or unassigned items.
+                team_members.is_empty()
+                    || item.mr.assignees.is_empty()
+                    || item
+                        .mr
+                        .assignees
+                        .iter()
+                        .any(|a| team_members.contains(&a.username))
+            })
             .filter(|(_, item)| matches_mr(item, conditions, me, team_members))
             .filter(|(_, item)| {
                 if self.search_query.is_empty() {
@@ -152,9 +163,13 @@ impl MrListState {
                 KeyCode::Char('c') => return MrListAction::Comment,
                 KeyCode::Char('o') => return MrListAction::OpenBrowser,
                 KeyCode::Char('f') => return MrListAction::AddFilter,
-                KeyCode::Char('F') => return MrListAction::ClearFilters,
+                KeyCode::Char('F' | '0') => return MrListAction::ClearFilters,
                 KeyCode::Char('e') => return MrListAction::PickPreset,
                 KeyCode::Char('S') => return MrListAction::PickSortPreset,
+                KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                    let n = c.to_digit(10).unwrap_or(0) as usize;
+                    return MrListAction::ApplyPreset(n);
+                }
                 _ => {}
             }
         }
@@ -179,6 +194,7 @@ pub enum MrListAction {
     ClearFilters,
     PickPreset,
     PickSortPreset,
+    ApplyPreset(usize),
 }
 
 pub fn render(

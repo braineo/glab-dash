@@ -33,6 +33,17 @@ impl IssueListState {
         self.filtered_indices = issues
             .iter()
             .enumerate()
+            .filter(|(_, item)| {
+                // Implicit team filter: when a team is selected, only show items
+                // assigned to team members or unassigned items.
+                team_members.is_empty()
+                    || item.issue.assignees.is_empty()
+                    || item
+                        .issue
+                        .assignees
+                        .iter()
+                        .any(|a| team_members.contains(&a.username))
+            })
             .filter(|(_, item)| matches_issue(item, conditions, me, team_members))
             .filter(|(_, item)| {
                 if self.search_query.is_empty() {
@@ -149,9 +160,15 @@ impl IssueListState {
                 KeyCode::Char('c') => return IssueListAction::Comment,
                 KeyCode::Char('o') => return IssueListAction::OpenBrowser,
                 KeyCode::Char('f') => return IssueListAction::AddFilter,
-                KeyCode::Char('F') => return IssueListAction::ClearFilters,
+                KeyCode::Char('F' | '0') => {
+                    return IssueListAction::ClearFilters;
+                }
                 KeyCode::Char('e') => return IssueListAction::PickPreset,
                 KeyCode::Char('S') => return IssueListAction::PickSortPreset,
+                KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                    let n = c.to_digit(10).unwrap_or(0) as usize;
+                    return IssueListAction::ApplyPreset(n);
+                }
                 _ => {}
             }
         }
@@ -175,6 +192,7 @@ pub enum IssueListAction {
     ClearFilters,
     PickPreset,
     PickSortPreset,
+    ApplyPreset(usize),
 }
 
 pub fn render(

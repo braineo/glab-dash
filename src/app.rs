@@ -68,6 +68,7 @@ pub enum PickerContext {
     Assignee,
     Preset,
     SortPreset,
+    Team,
 }
 
 /// Context for the chord popup overlay (what action to perform on selection).
@@ -263,10 +264,20 @@ impl App {
     }
 
     /// Get members for the active team, or empty vec for "All" view.
+    /// Used for implicit team filtering — empty means no filter.
     fn active_team_members(&self) -> Vec<String> {
         match self.active_team {
             Some(idx) => self.config.team_members(idx),
-            None => Vec::new(), // empty = no team filter = show all
+            None => Vec::new(),
+        }
+    }
+
+    /// Get member list for pickers (assignee, filter suggestions).
+    /// Returns all configured members in "All" mode, team members otherwise.
+    fn picker_members(&self) -> Vec<String> {
+        match self.active_team {
+            Some(idx) => self.config.team_members(idx),
+            None => self.config.all_members(),
         }
     }
 
@@ -833,7 +844,7 @@ impl App {
             }
             Some(Field::Draft) => vec!["true".to_string(), "false".to_string()],
             Some(Field::Assignee | Field::Author | Field::Reviewer | Field::ApprovedBy) => {
-                let mut names = self.active_team_members();
+                let mut names = self.picker_members();
                 names.insert(0, "$me".to_string());
                 names.push("none".to_string());
                 names
@@ -997,24 +1008,22 @@ impl App {
             return false;
         }
 
-        // Team switching with number keys (only when not in text input)
-        // 0 = show all, 1-9 = select team. No fetch — just refilter.
-        if let KeyCode::Char(c) = key.code
-            && c.is_ascii_digit()
+        // Team switching via 't' key — opens picker with team names + "All".
+        if key.code == KeyCode::Char('t')
             && key.modifiers == KeyModifiers::NONE
+            && !self.config.teams.is_empty()
         {
-            let num = c.to_digit(10).unwrap_or(0) as usize;
-            if num == 0 {
-                self.active_team = None;
-                self.refilter_issues();
-                self.refilter_mrs();
-                self.refresh_focused();
-                return false;
-            } else if num <= self.config.teams.len() {
-                self.active_team = Some(num - 1);
-                self.refilter_issues();
-                self.refilter_mrs();
-                self.refresh_focused();
+            let in_search = match self.view {
+                View::IssueList => self.issue_list_state.searching,
+                View::MrList => self.mr_list_state.searching,
+                View::Planning => self.planning_state.searching,
+                _ => false,
+            };
+            if !in_search {
+                let mut names: Vec<String> = vec!["All".to_string()];
+                names.extend(self.config.teams.iter().map(|t| t.name.clone()));
+                self.picker_state = Some(picker::PickerState::new("Switch Team", names, false));
+                self.overlay = Overlay::Picker(PickerContext::Team);
                 return false;
             }
         }
@@ -1150,7 +1159,7 @@ impl App {
                 self.overlay = Overlay::Picker(PickerContext::Labels);
             }
             issue_list::IssueListAction::EditAssignee => {
-                let members = self.active_team_members();
+                let members = self.picker_members();
                 self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
@@ -1187,6 +1196,18 @@ impl App {
             }
             issue_list::IssueListAction::PickSortPreset => {
                 self.show_sort_preset_picker("issue");
+            }
+            issue_list::IssueListAction::ApplyPreset(n) => {
+                if let Some(name) = self
+                    .config
+                    .filters
+                    .iter()
+                    .filter(|f| f.kind == "issue")
+                    .nth(n - 1)
+                    .map(|f| f.name.clone())
+                {
+                    self.apply_preset(&name);
+                }
             }
         }
     }
@@ -1252,7 +1273,7 @@ impl App {
                 self.overlay = Overlay::Picker(PickerContext::Labels);
             }
             mr_list::MrListAction::EditAssignee => {
-                let members = self.active_team_members();
+                let members = self.picker_members();
                 self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
@@ -1289,6 +1310,18 @@ impl App {
             }
             mr_list::MrListAction::PickSortPreset => {
                 self.show_sort_preset_picker("merge_request");
+            }
+            mr_list::MrListAction::ApplyPreset(n) => {
+                if let Some(name) = self
+                    .config
+                    .filters
+                    .iter()
+                    .filter(|f| f.kind == "merge_request")
+                    .nth(n - 1)
+                    .map(|f| f.name.clone())
+                {
+                    self.apply_preset(&name);
+                }
             }
         }
     }
@@ -1327,7 +1360,7 @@ impl App {
                     self.overlay = Overlay::Picker(PickerContext::Labels);
                 }
                 KeyCode::Char('a') => {
-                    let members = self.active_team_members();
+                    let members = self.picker_members();
                     self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
                     self.overlay = Overlay::Picker(PickerContext::Assignee);
                 }
@@ -1385,7 +1418,7 @@ impl App {
                     self.overlay = Overlay::Picker(PickerContext::Labels);
                 }
                 KeyCode::Char('a') => {
-                    let members = self.active_team_members();
+                    let members = self.picker_members();
                     self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
                     self.overlay = Overlay::Picker(PickerContext::Assignee);
                 }
@@ -1454,7 +1487,7 @@ impl App {
                 }
             }
             PlanningAction::EditAssignee => {
-                let members = self.active_team_members();
+                let members = self.picker_members();
                 self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
@@ -1828,6 +1861,18 @@ impl App {
             Overlay::Picker(PickerContext::SortPreset) => {
                 if let Some(name) = values.first() {
                     self.apply_sort_preset(name);
+                }
+            }
+            Overlay::Picker(PickerContext::Team) => {
+                if let Some(name) = values.first() {
+                    if name == "All" {
+                        self.active_team = None;
+                    } else {
+                        self.active_team = self.config.teams.iter().position(|t| t.name == *name);
+                    }
+                    self.refilter_issues();
+                    self.refilter_mrs();
+                    self.refresh_focused();
                 }
             }
             _ => {}
