@@ -411,6 +411,11 @@ fn render_column(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(if is_focused {
+            ratatui::widgets::BorderType::Thick
+        } else {
+            ratatui::widgets::BorderType::Rounded
+        })
         .border_style(border_style)
         .title(Span::styled(
             header,
