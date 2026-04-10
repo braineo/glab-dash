@@ -70,7 +70,7 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueD
     labels_line_spans.push(Span::raw("  "));
     labels_line_spans.push(Span::styled("Source: ", styles::help_desc_style()));
     labels_line_spans.push(Span::styled(
-        item.source.to_string(),
+        item.project_path.clone(),
         Style::default().fg(styles::TEXT),
     ));
 

@@ -17,7 +17,6 @@ fn make_tracked_issue(
     state: &str,
     assignees: &[&str],
     labels: &[&str],
-    source: ItemSource,
     project: &str,
 ) -> TrackedIssue {
     TrackedIssue {
@@ -38,7 +37,6 @@ fn make_tracked_issue(
             references: None,
             custom_status: None,
         },
-        source,
         project_path: project.to_string(),
     }
 }
@@ -50,7 +48,6 @@ fn make_tracked_mr(
     reviewers: &[&str],
     draft: bool,
     approved_by: &[&str],
-    source: ItemSource,
     project: &str,
 ) -> TrackedMergeRequest {
     TrackedMergeRequest {
@@ -81,7 +78,6 @@ fn make_tracked_mr(
                 .map(|u| ApprovalUser { user: make_user(u) })
                 .collect(),
         },
-        source,
         project_path: project.to_string(),
     }
 }
@@ -93,7 +89,6 @@ fn test_filter_assignee_eq() {
         "opened",
         &["alice"],
         &[],
-        ItemSource::Tracking,
         "org/repo",
     );
     let conditions = vec![FilterCondition {
@@ -118,7 +113,6 @@ fn test_filter_assignee_none() {
         "opened",
         &[],
         &[],
-        ItemSource::Tracking,
         "org/repo",
     );
     let conditions = vec![FilterCondition {
@@ -136,7 +130,6 @@ fn test_filter_state() {
         "closed",
         &[],
         &[],
-        ItemSource::Tracking,
         "org/repo",
     );
     let conditions = vec![FilterCondition {
@@ -161,7 +154,6 @@ fn test_filter_label_contains() {
         "opened",
         &["alice"],
         &["bug", "urgent"],
-        ItemSource::Tracking,
         "org/repo",
     );
     let conditions = vec![FilterCondition {
@@ -180,49 +172,12 @@ fn test_filter_label_contains() {
 }
 
 #[test]
-fn test_filter_source() {
-    let tracking = make_tracked_issue(
-        "Internal",
-        "opened",
-        &[],
-        &[],
-        ItemSource::Tracking,
-        "org/repo",
-    );
-    let external = make_tracked_issue(
-        "External",
-        "opened",
-        &[],
-        &[],
-        ItemSource::External("other/repo".to_string()),
-        "other/repo",
-    );
-
-    let filter_tracking = vec![FilterCondition {
-        field: Field::Source,
-        op: Op::Eq,
-        value: "tracking".to_string(),
-    }];
-    assert!(matches_issue(&tracking, &filter_tracking, "me", &[]));
-    assert!(!matches_issue(&external, &filter_tracking, "me", &[]));
-
-    let filter_external = vec![FilterCondition {
-        field: Field::Source,
-        op: Op::Eq,
-        value: "external".to_string(),
-    }];
-    assert!(!matches_issue(&tracking, &filter_external, "me", &[]));
-    assert!(matches_issue(&external, &filter_external, "me", &[]));
-}
-
-#[test]
 fn test_filter_me_variable() {
     let issue = make_tracked_issue(
         "My issue",
         "opened",
         &["binbin"],
         &[],
-        ItemSource::Tracking,
         "org/repo",
     );
     let conditions = vec![FilterCondition {
@@ -241,7 +196,6 @@ fn test_filter_multiple_conditions() {
         "opened",
         &["alice"],
         &["bug"],
-        ItemSource::Tracking,
         "org/repo",
     );
 
@@ -288,7 +242,6 @@ fn test_filter_title() {
         "opened",
         &[],
         &[],
-        ItemSource::Tracking,
         "org/repo",
     );
     let conditions = vec![FilterCondition {
@@ -308,7 +261,6 @@ fn test_mr_filter_draft() {
         &[],
         true,
         &[],
-        ItemSource::Tracking,
         "org/repo",
     );
     let ready_mr = make_tracked_mr(
@@ -318,7 +270,6 @@ fn test_mr_filter_draft() {
         &[],
         false,
         &[],
-        ItemSource::Tracking,
         "org/repo",
     );
 
@@ -340,7 +291,6 @@ fn test_mr_filter_approved_by() {
         &["bob"],
         false,
         &["charlie"],
-        ItemSource::Tracking,
         "org/repo",
     );
 
@@ -364,7 +314,6 @@ fn test_mr_filter_reviewer() {
         &["bob", "charlie"],
         false,
         &[],
-        ItemSource::Tracking,
         "org/repo",
     );
 
@@ -390,7 +339,6 @@ fn test_empty_conditions_matches_all() {
         "opened",
         &[],
         &[],
-        ItemSource::Tracking,
         "org/repo",
     );
     assert!(matches_issue(&issue, &[], "me", &[]));
@@ -441,7 +389,6 @@ fn test_filter_project() {
         "opened",
         &[],
         &[],
-        ItemSource::External("other/project".to_string()),
         "other/project",
     );
     let conditions = vec![FilterCondition {

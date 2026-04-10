@@ -129,11 +129,11 @@ fn render_quick_stats(
 ) {
     let tracking_issues = issues
         .iter()
-        .filter(|i| matches!(i.source, crate::gitlab::types::ItemSource::Tracking))
+        .filter(|i| i.project_path == config.tracking_project)
         .count();
     let external_issues = issues
         .iter()
-        .filter(|i| matches!(i.source, crate::gitlab::types::ItemSource::External(_)))
+        .filter(|i| i.project_path != config.tracking_project)
         .count();
     let unassigned_issues = issues
         .iter()

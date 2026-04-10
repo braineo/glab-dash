@@ -1,4 +1,4 @@
-use crate::gitlab::types::{ItemSource, TrackedIssue, TrackedMergeRequest};
+use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Field {
@@ -11,7 +11,6 @@ pub enum Field {
     Draft,
     ApprovedBy,
     Title,
-    Source,
     Project,
     Team,
 }
@@ -28,7 +27,6 @@ impl Field {
             Field::Draft,
             Field::ApprovedBy,
             Field::Title,
-            Field::Source,
             Field::Project,
             Field::Team,
         ]
@@ -45,7 +43,6 @@ impl Field {
             Field::Draft => "draft",
             Field::ApprovedBy => "approved_by",
             Field::Title => "title",
-            Field::Source => "source",
             Field::Project => "project",
             Field::Team => "team",
         }
@@ -62,7 +59,6 @@ impl Field {
             "draft" => Some(Field::Draft),
             "approved_by" => Some(Field::ApprovedBy),
             "title" => Some(Field::Title),
-            "source" => Some(Field::Source),
             "project" => Some(Field::Project),
             "team" => Some(Field::Team),
             _ => None,
@@ -163,7 +159,6 @@ pub fn matches_issue(
             ),
             Field::State => match_string(&item.issue.state, &c.op, &value),
             Field::Title => match_string_contains(&item.issue.title, &c.op, &value),
-            Field::Source => match_source(&item.source, &c.op, &value),
             Field::Project => match_string(&item.project_path, &c.op, &value),
             Field::Team => match_team_membership(
                 &item
@@ -247,7 +242,6 @@ pub fn matches_mr(
                 &value,
             ),
             Field::Title => match_string_contains(&item.mr.title, &c.op, &value),
-            Field::Source => match_source(&item.source, &c.op, &value),
             Field::Project => match_string(&item.project_path, &c.op, &value),
             Field::Team => match_team_membership(
                 &item
@@ -325,14 +319,6 @@ fn match_bool(field_val: bool, op: &Op, value: &str) -> bool {
         Op::Eq | Op::Contains => field_val == expected,
         Op::Neq | Op::NotContains => field_val != expected,
     }
-}
-
-fn match_source(source: &ItemSource, op: &Op, value: &str) -> bool {
-    let source_str = match source {
-        ItemSource::Tracking => "tracking",
-        ItemSource::External(_) => "external",
-    };
-    match_string(source_str, op, value)
 }
 
 fn match_team_membership(

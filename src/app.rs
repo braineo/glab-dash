@@ -471,9 +471,6 @@ impl App {
                 names.push("none".to_string());
                 names
             }
-            Some(Field::Source) => {
-                vec!["tracking".to_string(), "external".to_string()]
-            }
             _ => Vec::new(),
         }
     }

@@ -136,7 +136,7 @@ pub struct MergeRequestApprovals {
 /// A work item status from GitLab's custom status system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkItemStatus {
-    pub id: String, // Global ID like "gid://gitlab/WorkItems::Statuses::SystemDefined::Status/1"
+    pub id: String,
     pub name: String,
     #[serde(default)]
     pub icon_name: Option<String>,
@@ -146,32 +146,14 @@ pub struct WorkItemStatus {
     pub position: Option<i32>,
 }
 
-/// Wrapper that tags items with their source
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ItemSource {
-    Tracking,
-    External(String), // project path
-}
-
-impl std::fmt::Display for ItemSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ItemSource::Tracking => write!(f, "tracking"),
-            ItemSource::External(p) => write!(f, "{p}"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackedIssue {
     pub issue: Issue,
-    pub source: ItemSource,
     pub project_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackedMergeRequest {
     pub mr: MergeRequest,
-    pub source: ItemSource,
     pub project_path: String,
 }

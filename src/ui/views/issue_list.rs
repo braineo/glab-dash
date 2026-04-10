@@ -325,7 +325,7 @@ pub fn render(
                 ),
                 Span::styled("  Source: ", styles::help_desc_style()),
                 Span::styled(
-                    item.source.to_string(),
+                    item.project_path.clone(),
                     ratatui::style::Style::default().fg(styles::TEXT),
                 ),
             ]),

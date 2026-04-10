@@ -869,7 +869,7 @@ impl GitLabClient {
                     .as_ref()
                     .map(|r| extract_project_from_ref(&r.full_ref))
                     .unwrap_or_else(|| tracking.clone());
-                TrackedIssue { issue, source: ItemSource::Tracking, project_path }
+                TrackedIssue { issue, project_path }
             })
             .collect())
     }
@@ -944,11 +944,7 @@ impl GitLabClient {
                         continue;
                     }
 
-                    all.push(TrackedIssue {
-                        issue,
-                        source: ItemSource::External(project_path.clone()),
-                        project_path,
-                    });
+                    all.push(TrackedIssue { issue, project_path });
                 }
 
                 match connection.page_info {
@@ -976,7 +972,6 @@ impl GitLabClient {
             for mr in mrs {
                 all.push(TrackedMergeRequest {
                     project_path: self.config.tracking_project.clone(),
-                    source: ItemSource::Tracking,
                     mr,
                 });
             }
@@ -1020,12 +1015,7 @@ impl GitLabClient {
                         if all.iter().any(|t: &TrackedMergeRequest| t.mr.id == mr.id) {
                             continue;
                         }
-                        let source = ItemSource::External(project_path.clone());
-                        all.push(TrackedMergeRequest {
-                            mr,
-                            source,
-                            project_path,
-                        });
+                        all.push(TrackedMergeRequest { mr, project_path });
                     }
                     if done {
                         break;
