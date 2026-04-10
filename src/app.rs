@@ -1387,8 +1387,9 @@ impl App {
             }
             PlanningAction::EditAssignee => {
                 let members = self.config.team_members(self.active_team);
-                self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
-                self.overlay = Overlay::Picker(PickerContext::Assignee);
+                self.chord_state =
+                    Some(chord_popup::ChordState::new("Set Assignee", members));
+                self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
             PlanningAction::Comment => {
                 self.comment_input = crate::ui::components::input::InputState::default();
