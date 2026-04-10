@@ -36,6 +36,7 @@ fn make_tracked_issue(
             description: None,
             user_notes_count: 0,
             references: None,
+            custom_status: None,
         },
         source,
         project_path: project.to_string(),

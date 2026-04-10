@@ -24,6 +24,7 @@ pub fn render(
     team_name: &str,
     item_count: usize,
     loading: bool,
+    loading_msg: &str,
     error: Option<&str>,
     last_fetched_at: Option<u64>,
 ) {
@@ -45,7 +46,8 @@ pub fn render(
     ];
 
     if loading {
-        spans.push(Span::styled("⟳ Loading...", styles::draft_style()));
+        let msg = if loading_msg.is_empty() { "Loading..." } else { loading_msg };
+        spans.push(Span::styled(format!("⟳ {msg}"), styles::draft_style()));
     } else if let Some(err) = error {
         spans.push(Span::styled(format!("✗ {err}"), styles::error_style()));
     } else {

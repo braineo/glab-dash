@@ -48,6 +48,9 @@ pub struct Issue {
     // References to identify which project this belongs to
     #[serde(default)]
     pub references: Option<References>,
+    // Custom workflow status (from GraphQL widgets, not in REST API)
+    #[serde(default)]
+    pub custom_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +131,19 @@ pub struct ProjectLabel {
 pub struct MergeRequestApprovals {
     #[serde(default)]
     pub approved_by: Vec<ApprovalUser>,
+}
+
+/// A work item status from GitLab's custom status system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkItemStatus {
+    pub id: String, // Global ID like "gid://gitlab/WorkItems::Statuses::SystemDefined::Status/1"
+    pub name: String,
+    #[serde(default)]
+    pub icon_name: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub position: Option<i32>,
 }
 
 /// Wrapper that tags items with their source

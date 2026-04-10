@@ -207,22 +207,30 @@ pub fn render(
             let labels = styles::labels_compact(&item.issue.labels, 30);
             let age = format_age(&item.issue.updated_at);
 
-            let state_icon = match item.issue.state.as_str() {
-                "opened" => styles::ICON_OPEN,
-                "closed" => styles::ICON_CLOSED,
-                _ => " ",
-            };
+            // Show custom status if available, otherwise fall back to state
+            let (state_icon, state_text) =
+                if let Some(ref status) = item.issue.custom_status {
+                    (styles::status_icon(status), status.clone())
+                } else {
+                    let icon = match item.issue.state.as_str() {
+                        "opened" => styles::ICON_OPEN,
+                        "closed" => styles::ICON_CLOSED,
+                        _ => " ",
+                    };
+                    (icon, item.issue.state.clone())
+                };
 
             let row = Row::new(vec![
                 format!("#{}", item.issue.iid),
                 source_span.to_string(),
                 item.issue.title.clone(),
-                format!("{state_icon} {}", item.issue.state),
+                format!("{state_icon} {state_text}"),
                 assignees,
                 labels,
                 age,
             ]);
-            let row = if item.issue.state == "closed" {
+            let is_closed = item.issue.state == "closed";
+            let row = if is_closed {
                 row.style(styles::draft_style())
             } else if row_idx % 2 == 1 {
                 row.style(styles::row_alt_style())
@@ -237,7 +245,7 @@ pub fn render(
         Constraint::Length(7),  // IID
         Constraint::Length(10), // Source
         Constraint::Min(30),    // Title
-        Constraint::Length(10), // State
+        Constraint::Length(18), // State / Status
         Constraint::Length(15), // Assignees
         Constraint::Length(32), // Labels
         Constraint::Length(8),  // Age

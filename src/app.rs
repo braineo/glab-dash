@@ -50,16 +50,18 @@ pub enum PickerContext {
     Labels,
     Assignee,
     Preset,
+    /// Status picker for issues: (project_path, issue_db_id, issue_iid)
+    Status(String, u64, u64),
 }
 
 /// Messages from async operations
 pub enum AsyncMsg {
-    /// (result, is_incremental)
-    IssuesLoaded(Result<(Vec<TrackedIssue>, Vec<TrackedIssue>)>, bool),
+    IssuesLoaded(Result<Vec<TrackedIssue>>, bool),
     MrsLoaded(Result<(Vec<TrackedMergeRequest>, Vec<TrackedMergeRequest>)>, bool),
     NotesLoaded(Result<Vec<Note>>),
     ActionDone(Result<String>),
     LabelsLoaded(Result<Vec<ProjectLabel>>),
+    StatusesLoaded(Result<Vec<WorkItemStatus>>, String, u64, u64),
 }
 
 pub struct App {
@@ -78,6 +80,7 @@ pub struct App {
     pub mrs: Vec<TrackedMergeRequest>,
     pub labels: Vec<ProjectLabel>,
     pub loading: bool,
+    pub loading_msg: &'static str,
     pub error: Option<String>,
 
     // View-specific state
@@ -91,6 +94,9 @@ pub struct App {
 
     // Cache / incremental fetch
     pub last_fetched_at: Option<u64>,
+
+    // Work item statuses per project (project_path -> available statuses)
+    pub work_item_statuses: std::collections::HashMap<String, Vec<WorkItemStatus>>,
 
     // Filter state
     pub issue_filters: Vec<FilterCondition>,
@@ -118,6 +124,7 @@ impl App {
             mrs: Vec::new(),
             labels: Vec::new(),
             loading: false,
+            loading_msg: "",
             error: None,
             issue_list_state: issue_list::IssueListState::default(),
             mr_list_state: mr_list::MrListState::default(),
@@ -127,6 +134,7 @@ impl App {
             picker_state: None,
             comment_input: crate::ui::components::input::InputState::default(),
             last_fetched_at: None,
+            work_item_statuses: std::collections::HashMap::new(),
             issue_filters: Vec::new(),
             mr_filters: Vec::new(),
             filter_bar_focused: false,
@@ -176,20 +184,27 @@ impl App {
 
     fn fetch_issues(&self) {
         let client = self.client.clone();
-        let members = self.config.team_members(self.active_team);
         let tx = self.async_tx.clone();
         let updated_after = self.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
+        let members = self.config.team_members(self.active_team);
         tokio::spawn(async move {
             let (state, ua) = if incremental {
-                ("all", updated_after.as_deref())
+                (None, updated_after.as_deref())
             } else {
-                ("opened", None)
+                (Some("opened"), None)
             };
-            let tracking = client.fetch_tracking_issues(state, ua).await;
-            let external = client.fetch_external_issues(&members, state, ua).await;
-            let result = match (tracking, external) {
-                (Ok(t), Ok(e)) => Ok((t, e)),
+            let (tracking, assigned) = tokio::join!(
+                client.fetch_tracking_issues(state, ua),
+                client.fetch_assigned_issues(&members, state, ua),
+            );
+            let result = match (tracking, assigned) {
+                (Ok(mut t), Ok(a)) => {
+                    let existing: std::collections::HashSet<u64> =
+                        t.iter().map(|i| i.issue.id).collect();
+                    t.extend(a.into_iter().filter(|i| !existing.contains(&i.issue.id)));
+                    Ok(t)
+                }
                 (Err(e), _) | (_, Err(e)) => Err(e),
             };
             let _ = tx.send(AsyncMsg::IssuesLoaded(result, incremental));
@@ -238,6 +253,43 @@ impl App {
         });
     }
 
+    fn fetch_statuses_and_show_picker(&mut self, project: String, issue_id: u64, iid: u64) {
+        // If we already have cached statuses for this project, show picker immediately
+        if let Some(statuses) = self.work_item_statuses.get(&project) {
+            if statuses.is_empty() {
+                // No custom statuses — fall back to open/close toggle
+                let item_state = self
+                    .issue_list_state
+                    .selected_issue(&self.issues)
+                    .or_else(|| self.current_detail_issue())
+                    .map(|i| i.issue.state.as_str())
+                    .unwrap_or("opened");
+                let action = if item_state == "opened" {
+                    ConfirmAction::CloseIssue(project, iid)
+                } else {
+                    ConfirmAction::ReopenIssue(project, iid)
+                };
+                self.overlay = Overlay::Confirm(action);
+            } else {
+                let status_names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
+                self.picker_state =
+                    Some(picker::PickerState::new("Set Status", status_names, false));
+                self.overlay = Overlay::Picker(PickerContext::Status(project, issue_id, iid));
+            }
+            return;
+        }
+
+        // Fetch statuses from GitLab
+        let client = self.client.clone();
+        let tx = self.async_tx.clone();
+        let project_clone = project.clone();
+        self.loading = true;
+        tokio::spawn(async move {
+            let result = client.fetch_work_item_statuses(&project_clone).await;
+            let _ = tx.send(AsyncMsg::StatusesLoaded(result, project_clone, issue_id, iid));
+        });
+    }
+
     fn fetch_notes_for_mr(&self, project: &str, iid: u64) {
         let client = self.client.clone();
         let project = project.to_string();
@@ -251,10 +303,9 @@ impl App {
     pub fn handle_async_msg(&mut self, msg: AsyncMsg) {
         match msg {
             AsyncMsg::IssuesLoaded(result, incremental) => match result {
-                Ok((tracking, external)) => {
+                Ok(items) => {
                     if incremental {
-                        // Merge: upsert changed items, then drop non-opened
-                        for item in tracking.into_iter().chain(external) {
+                        for item in items {
                             if let Some(pos) =
                                 self.issues.iter().position(|e| e.issue.id == item.issue.id)
                             {
@@ -265,12 +316,11 @@ impl App {
                         }
                         self.issues.retain(|i| i.issue.state == "opened");
                     } else {
-                        self.issues = tracking;
-                        self.issues.extend(external);
+                        self.issues = items;
                     }
                     self.last_fetched_at = Some(Self::now_secs());
-                    self.loading = false;
                     self.error = None;
+                    self.loading = false;
                     self.refilter_issues();
                     self.save_cache();
                 }
@@ -340,6 +390,44 @@ impl App {
                     self.save_cache();
                 }
             }
+            AsyncMsg::StatusesLoaded(result, project, issue_id, iid) => {
+                self.loading = false;
+                match result {
+                    Ok(statuses) => {
+                        if statuses.is_empty() {
+                            // No custom statuses available — fall back to open/close toggle
+                            let item_state = self
+                                .issue_list_state
+                                .selected_issue(&self.issues)
+                                .or_else(|| self.current_detail_issue())
+                                .map(|i| i.issue.state.as_str())
+                                .unwrap_or("opened");
+                            let action = if item_state == "opened" {
+                                ConfirmAction::CloseIssue(project, iid)
+                            } else {
+                                ConfirmAction::ReopenIssue(project, iid)
+                            };
+                            self.overlay = Overlay::Confirm(action);
+                        } else {
+                            // Cache and show status picker
+                            let status_names: Vec<String> =
+                                statuses.iter().map(|s| s.name.clone()).collect();
+                            self.work_item_statuses
+                                .insert(project.clone(), statuses);
+                            self.picker_state = Some(picker::PickerState::new(
+                                "Set Status",
+                                status_names,
+                                false,
+                            ));
+                            self.overlay =
+                                Overlay::Picker(PickerContext::Status(project, issue_id, iid));
+                        }
+                    }
+                    Err(e) => {
+                        self.show_error(format!("Statuses: {e}"));
+                    }
+                }
+            }
         }
     }
 
@@ -348,7 +436,7 @@ impl App {
         self.overlay = Overlay::Error(msg);
     }
 
-    fn refilter_issues(&mut self) {
+    pub fn refilter_issues(&mut self) {
         let me = self.config.me.clone();
         let members = self.config.team_members(self.active_team);
         self.issue_list_state
@@ -360,11 +448,21 @@ impl App {
         match &self.filter_editor_state.selected_field {
             Some(Field::Label) => self.labels.iter().map(|l| l.name.clone()).collect(),
             Some(Field::State) => {
-                vec![
+                let mut states = vec![
                     "opened".to_string(),
                     "closed".to_string(),
                     "merged".to_string(),
-                ]
+                ];
+                // Add any custom status names from cached statuses
+                for statuses in self.work_item_statuses.values() {
+                    for s in statuses {
+                        let name = s.name.to_lowercase();
+                        if !states.iter().any(|existing| existing.to_lowercase() == name) {
+                            states.push(s.name.clone());
+                        }
+                    }
+                }
+                states
             }
             Some(Field::Draft) => vec!["true".to_string(), "false".to_string()],
             Some(Field::Assignee | Field::Author | Field::Reviewer | Field::ApprovedBy) => {
@@ -501,13 +599,9 @@ impl App {
             issue_list::IssueListAction::ToggleState => {
                 if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
                     let project = item.project_path.clone();
+                    let issue_id = item.issue.id;
                     let iid = item.issue.iid;
-                    let action = if item.issue.state == "opened" {
-                        ConfirmAction::CloseIssue(project, iid)
-                    } else {
-                        ConfirmAction::ReopenIssue(project, iid)
-                    };
-                    self.overlay = Overlay::Confirm(action);
+                    self.fetch_statuses_and_show_picker(project, issue_id, iid);
                 }
             }
             issue_list::IssueListAction::EditLabels => {
@@ -679,12 +773,10 @@ impl App {
                     self.overlay = Overlay::CommentInput;
                 }
                 KeyCode::Char('x') => {
-                    let action = if item.issue.state == "opened" {
-                        ConfirmAction::CloseIssue(item.project_path.clone(), item.issue.iid)
-                    } else {
-                        ConfirmAction::ReopenIssue(item.project_path.clone(), item.issue.iid)
-                    };
-                    self.overlay = Overlay::Confirm(action);
+                    let project = item.project_path.clone();
+                    let issue_id = item.issue.id;
+                    let iid = item.issue.iid;
+                    self.fetch_statuses_and_show_picker(project, issue_id, iid);
                 }
                 KeyCode::Char('o') => {
                     let _ = open::that(&item.issue.web_url);
@@ -918,6 +1010,32 @@ impl App {
         });
     }
 
+    fn set_issue_status(&mut self, project: &str, issue_id: u64, iid: u64, status_name: &str) {
+        // Find the status ID from cached statuses
+        let status_id = self
+            .work_item_statuses
+            .get(project)
+            .and_then(|statuses| statuses.iter().find(|s| s.name == status_name))
+            .map(|s| s.id.clone());
+
+        let Some(status_id) = status_id else {
+            self.show_error(format!("Status '{status_name}' not found"));
+            return;
+        };
+
+        let client = self.client.clone();
+        let tx = self.async_tx.clone();
+        let status_display = status_name.to_string();
+        self.loading = true;
+        tokio::spawn(async move {
+            let result = client
+                .update_issue_status(issue_id, &status_id)
+                .await
+                .map(|_| format!("#{iid} → {status_display}"));
+            let _ = tx.send(AsyncMsg::ActionDone(result));
+        });
+    }
+
     fn handle_picker_result(&mut self, values: Vec<String>) {
         // Determine what we picked for based on overlay context
         let context = std::mem::replace(&mut self.overlay, Overlay::None);
@@ -933,6 +1051,11 @@ impl App {
             Overlay::Picker(PickerContext::Preset) => {
                 if let Some(preset_name) = values.first() {
                     self.apply_preset(preset_name);
+                }
+            }
+            Overlay::Picker(PickerContext::Status(project, issue_id, iid)) => {
+                if let Some(status_name) = values.first() {
+                    self.set_issue_status(&project, issue_id, iid, status_name);
                 }
             }
             _ => {}
@@ -1215,6 +1338,7 @@ impl App {
             team_name,
             item_count,
             self.loading,
+            self.loading_msg,
             self.error.as_deref(),
             self.last_fetched_at,
         );

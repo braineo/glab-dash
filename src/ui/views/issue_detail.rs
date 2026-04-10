@@ -45,10 +45,15 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueD
         .map(|a| a.username.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let state_icon = match item.issue.state.as_str() {
-        "opened" => styles::ICON_OPEN,
-        "closed" => styles::ICON_CLOSED,
-        _ => " ",
+    let (state_icon, state_text) = if let Some(ref status) = item.issue.custom_status {
+        (styles::status_icon(status), status.clone())
+    } else {
+        let icon = match item.issue.state.as_str() {
+            "opened" => styles::ICON_OPEN,
+            "closed" => styles::ICON_CLOSED,
+            _ => " ",
+        };
+        (icon, item.issue.state.clone())
     };
 
     let mut labels_line_spans = vec![Span::styled("Labels: ", styles::help_desc_style())];
@@ -75,10 +80,14 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueD
             Span::styled(&item.issue.title, styles::title_style()),
         ]),
         Line::from(vec![
-            Span::styled("State: ", styles::help_desc_style()),
+            Span::styled("Status: ", styles::help_desc_style()),
             Span::styled(
-                format!("{state_icon} {}", item.issue.state),
-                styles::state_style(&item.issue.state),
+                format!("{state_icon} {state_text}"),
+                if item.issue.custom_status.is_some() {
+                    styles::status_style(&state_text)
+                } else {
+                    styles::state_style(&item.issue.state)
+                },
             ),
             Span::raw("  "),
             Span::styled("Assignees: ", styles::help_desc_style()),

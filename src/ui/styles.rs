@@ -180,6 +180,68 @@ pub fn state_style(state: &str) -> Style {
     }
 }
 
+/// Style for work item custom status names.
+/// Style for work item custom status names.
+/// Colors are chosen based on the status color returned from GitLab when
+/// available; otherwise we fall back to keyword matching.
+pub fn status_style_from_color(color: Option<&str>) -> Option<Style> {
+    let hex = color?.trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Style::default().fg(Color::Rgb(r, g, b)))
+}
+
+pub fn status_style(status: &str) -> Style {
+    let lower = status.to_lowercase();
+    if lower.contains("done") {
+        Style::default().fg(GREEN)
+    } else if lower.contains("progress") {
+        Style::default().fg(BLUE)
+    } else if lower.contains("won't do") || lower.contains("wont do") {
+        Style::default().fg(RED)
+    } else if lower.contains("duplicate") {
+        Style::default().fg(TEXT_DIM)
+    } else if lower.contains("todo") || lower.contains("to do") {
+        Style::default().fg(CYAN)
+    } else if lower.contains("backlog") {
+        Style::default().fg(TEXT_DIM)
+    } else if lower.contains("draft") {
+        Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC)
+    } else if lower.contains("block") {
+        Style::default().fg(ORANGE)
+    } else if lower.contains("review") || lower.contains("await") {
+        Style::default().fg(MAGENTA)
+    } else {
+        Style::default().fg(YELLOW)
+    }
+}
+
+/// Icon for work item custom status.
+pub fn status_icon(status: &str) -> &'static str {
+    let lower = status.to_lowercase();
+    if lower.contains("done") {
+        ICON_CHECK
+    } else if lower.contains("progress") {
+        ICON_PIPELINE_RUN
+    } else if lower.contains("won't do") || lower.contains("wont do") {
+        ICON_CLOSED
+    } else if lower.contains("duplicate") {
+        ICON_CLOSED
+    } else if lower.contains("block") {
+        "⊘"
+    } else if lower.contains("review") || lower.contains("await") {
+        ICON_PIPELINE_WAIT
+    } else if lower.contains("draft") {
+        ICON_DRAFT
+    } else {
+        ICON_OPEN
+    }
+}
+
 pub fn label_style() -> Style {
     Style::default().fg(TEAL)
 }

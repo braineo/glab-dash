@@ -212,6 +212,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState) {
             // Render labels with scoped styling in the Labels picker
             if state.title == "Labels" {
                 spans.extend(styles::label_spans(&state.items[idx]));
+            } else if state.title == "Set Status" {
+                let name = &state.items[idx];
+                let icon = styles::status_icon(name);
+                let style = styles::status_style(name);
+                spans.push(Span::styled(format!("{icon} "), style));
+                spans.push(Span::styled(name.clone(), style));
             } else {
                 spans.push(Span::styled(
                     &state.items[idx],
