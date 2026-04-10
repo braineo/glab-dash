@@ -176,7 +176,8 @@ pub enum PickerAction {
     Cancel,
 }
 
-pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState) {
+pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState, ctx: &crate::ui::RenderCtx<'_>) {
+    let label_colors = ctx.label_colors;
     let popup = centered_rect(50, 60, area);
     frame.render_widget(Clear, popup);
 
@@ -211,7 +212,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState) {
             }
             // Render labels with scoped styling in the Labels picker
             if state.title == "Labels" {
-                spans.extend(styles::label_spans(&state.items[idx]));
+                let color = label_colors.get(&state.items[idx]).map(|s| s.as_str());
+                spans.extend(styles::label_spans(&state.items[idx], color));
             } else if state.title == "Set Status" {
                 let name = &state.items[idx];
                 let icon = styles::status_icon(name);

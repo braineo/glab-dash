@@ -66,7 +66,10 @@ Env var overrides: `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_PROJECT`
   - Overlay background `(52,59,88)`: use `OVERLAY_TEXT`, `OVERLAY_TEXT_DIM`, or `overlay_*_style()` functions — **never** use `TEXT_DIM` or `help_desc_style()` on overlay backgrounds
 - Use `overlay_key_style()`, `overlay_desc_style()`, `overlay_text_style()` for any text rendered inside overlays/popups (help, picker, confirm, error, filter editor)
 - Use `help_key_style()`, `help_desc_style()` only on base/surface backgrounds
-- Scoped labels (`scope::value`) render with distinct colors via `label_spans()` — scope in blue bold, value in teal
+- Labels render as powerline-style chip spans via `label_spans()` — no `::` shown, segments joined by `\u{E0B0}` arrows
+- Scoped labels (`a::b::c`) split into colored segments; first scope uses server label color, rest from curated palette (16 colors in `CHIP_PALETTE`)
+- Non-scoped labels use server color when available, else curated palette
+- **`RenderCtx`** (`src/ui/mod.rs`): shared context passed to all render functions. Add new server-derived or global state here instead of adding parameters to every render function
 
 ## Tests
 

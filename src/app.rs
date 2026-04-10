@@ -94,6 +94,7 @@ pub struct App {
     pub issues: Vec<TrackedIssue>,
     pub mrs: Vec<TrackedMergeRequest>,
     pub labels: Vec<ProjectLabel>,
+    pub label_color_map: crate::ui::styles::LabelColors,
     pub loading: bool,
     pub loading_msg: &'static str,
     pub error: Option<String>,
@@ -141,6 +142,7 @@ impl App {
             issues: Vec::new(),
             mrs: Vec::new(),
             labels: Vec::new(),
+            label_color_map: std::collections::HashMap::new(),
             loading: false,
             loading_msg: "",
             error: None,
@@ -169,10 +171,19 @@ impl App {
                 self.issues = cached.issues;
                 self.mrs = cached.mrs;
                 self.labels = cached.labels;
+                self.rebuild_label_color_map();
                 self.refilter_issues();
                 self.refilter_mrs();
             }
         }
+    }
+
+    fn rebuild_label_color_map(&mut self) {
+        self.label_color_map = self
+            .labels
+            .iter()
+            .filter_map(|l| Some((l.name.clone(), l.color.clone()?)))
+            .collect();
     }
 
     fn save_cache(&self) {
@@ -459,6 +470,7 @@ impl App {
             AsyncMsg::LabelsLoaded(result) => {
                 if let Ok(labels) = result {
                     self.labels = labels;
+                    self.rebuild_label_color_map();
                     self.save_cache();
                 }
             }
@@ -1438,6 +1450,10 @@ impl App {
         ])
         .split(area);
 
+        let ctx = crate::ui::RenderCtx {
+            label_colors: &self.label_color_map,
+        };
+
         // Render main view
         match self.view {
             View::Dashboard => {
@@ -1460,11 +1476,18 @@ impl App {
                     &self.issue_filters,
                     self.filter_bar_focused,
                     self.filter_bar_selected,
+                    &ctx,
                 );
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
-                    issue_detail::render(frame, chunks[0], &item, &self.issue_detail_state);
+                    issue_detail::render(
+                        frame,
+                        chunks[0],
+                        &item,
+                        &self.issue_detail_state,
+                        &ctx,
+                    );
                 }
             }
             View::MrList => {
@@ -1476,11 +1499,18 @@ impl App {
                     &self.mr_filters,
                     self.filter_bar_focused,
                     self.filter_bar_selected,
+                    &ctx,
                 );
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(frame, chunks[0], &item, &self.mr_detail_state);
+                    mr_detail::render(
+                        frame,
+                        chunks[0],
+                        &item,
+                        &self.mr_detail_state,
+                        &ctx,
+                    );
                 }
             }
         }
@@ -1520,15 +1550,20 @@ impl App {
         match &self.overlay {
             Overlay::None => {}
             Overlay::Help => {
-                let ctx = match self.view {
+                let help_ctx = match self.view {
                     View::IssueList | View::MrList => "list",
                     View::IssueDetail | View::MrDetail => "detail",
                     View::Dashboard => "all",
                 };
-                help::render(frame, area, ctx);
+                help::render(frame, area, help_ctx);
             }
             Overlay::FilterEditor => {
-                filter_editor::render(frame, area, &mut self.filter_editor_state);
+                filter_editor::render(
+                    frame,
+                    area,
+                    &mut self.filter_editor_state,
+                    &ctx,
+                );
             }
             Overlay::Confirm(action) => {
                 let (title, msg) = match action {
@@ -1548,7 +1583,7 @@ impl App {
             }
             Overlay::Picker(_) => {
                 if let Some(ref mut ps) = self.picker_state {
-                    picker::render(frame, area, ps);
+                    picker::render(frame, area, ps, &ctx);
                 }
             }
             Overlay::CommentInput => {
