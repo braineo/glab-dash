@@ -212,7 +212,9 @@ impl App {
     pub fn load_cache(&mut self) {
         if let Some(cached) = cache::load() {
             if cached.team_index == self.active_team {
-                self.last_fetched_at = Some(cached.saved_at);
+                // Don't set last_fetched_at here: cache provides instant display,
+                // but the first fetch must be full (not incremental) to ensure
+                // all fields (e.g. iteration) are populated.
                 self.issues = cached.issues;
                 self.mrs = cached.mrs;
                 self.labels = cached.labels;
@@ -273,6 +275,7 @@ impl App {
         self.fetch_issues();
         self.fetch_mrs();
         self.fetch_labels();
+        self.fetch_iterations();
     }
 
     /// Convert a unix timestamp to ISO 8601 for the GitLab API, with 60s safety buffer.
@@ -993,9 +996,6 @@ impl App {
                     self.view = View::Planning;
                     self.refilter_planning();
                     self.refresh_focused();
-                    if self.iterations.is_empty() {
-                        self.fetch_iterations();
-                    }
                     return false;
                 }
                 KeyCode::Char('i') if self.view != View::IssueList => {
@@ -1366,7 +1366,6 @@ impl App {
             }
             PlanningAction::Refresh => {
                 self.fetch_all();
-                self.fetch_iterations();
             }
             PlanningAction::SetStatus => {
                 self.do_set_status();
