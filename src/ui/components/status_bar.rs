@@ -27,6 +27,7 @@ pub fn render(
     loading_msg: &str,
     error: Option<&str>,
     last_fetched_at: Option<u64>,
+    hints: &[(&str, &str)],
 ) {
     let view_icon = match view_name {
         "Dashboard" => "◈",
@@ -69,19 +70,12 @@ pub fn render(
         ));
     }
 
-    // Right-aligned hints
-    let hints_spans = vec![
-        Span::styled("q", styles::help_key_style()),
-        Span::styled(":quit ", styles::help_desc_style()),
-        Span::styled("?", styles::help_key_style()),
-        Span::styled(":help ", styles::help_desc_style()),
-        Span::styled("i", styles::help_key_style()),
-        Span::styled(":issues ", styles::help_desc_style()),
-        Span::styled("m", styles::help_key_style()),
-        Span::styled(":mrs ", styles::help_desc_style()),
-        Span::styled("h", styles::help_key_style()),
-        Span::styled(":home ", styles::help_desc_style()),
-    ];
+    // Right-aligned hints (dynamic per view)
+    let mut hints_spans = Vec::new();
+    for (key, desc) in hints {
+        hints_spans.push(Span::styled(*key, styles::help_key_style()));
+        hints_spans.push(Span::styled(format!(":{desc} "), styles::help_desc_style()));
+    }
     let hints_width: usize = hints_spans.iter().map(|s| s.width()).sum();
     let left_width: usize = spans.iter().map(|s| s.width()).sum();
     let padding = (area.width as usize).saturating_sub(left_width + hints_width);

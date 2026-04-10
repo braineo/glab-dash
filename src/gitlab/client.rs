@@ -151,11 +151,13 @@ struct GqlAllowedStatus {
     color: Option<String>,
     #[serde(default)]
     position: Option<i32>,
+    #[serde(default)]
+    category: Option<String>,
 }
 
 impl From<GqlAllowedStatus> for WorkItemStatus {
     fn from(s: GqlAllowedStatus) -> Self {
-        WorkItemStatus { id: s.id, name: s.name, icon_name: s.icon_name, color: s.color, position: s.position }
+        WorkItemStatus { id: s.id, name: s.name, icon_name: s.icon_name, color: s.color, position: s.position, category: s.category }
     }
 }
 

@@ -3,9 +3,10 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
+use crate::app::View;
 use crate::ui::styles;
 
-pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
+pub fn render(frame: &mut Frame, area: Rect, view: &View) {
     let popup = centered_rect(70, 80, area);
     frame.render_widget(Clear, popup);
 
@@ -21,13 +22,18 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
         help_line("?", "Toggle help"),
         help_line("Esc", "Go back / close overlay"),
         help_line("1-9", "Switch team"),
+        help_line("h", "Dashboard (home)"),
         help_line("i", "Go to issues"),
         help_line("m", "Go to merge requests"),
-        help_line("h", "Dashboard (home)"),
         Line::from(""),
     ];
 
-    if view_context == "list" || view_context == "all" {
+    let is_list = matches!(view, View::IssueList | View::MrList);
+    let is_issue = matches!(view, View::IssueList | View::IssueDetail);
+    let is_mr = matches!(view, View::MrList | View::MrDetail);
+    let is_detail = matches!(view, View::IssueDetail | View::MrDetail);
+
+    if is_list {
         lines.extend([
             Line::from(Span::styled(
                 format!(" {} List Navigation", styles::ICON_SECTION),
@@ -51,19 +57,37 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
             help_line("S", "Pick sort preset"),
             help_line("Tab", "Focus filter bar"),
             Line::from(""),
+        ]);
+    }
+
+    if is_detail {
+        lines.extend([
             Line::from(Span::styled(
-                format!(" {} Inline Actions", styles::ICON_SECTION),
+                format!(" {} Detail", styles::ICON_SECTION),
                 section_style,
             )),
-            help_line("s / x", "Set status (chord: s then 1-9)"),
+            help_line("j/k", "Scroll down/up"),
+            help_line("o", "Open in browser"),
+            Line::from(""),
+        ]);
+    }
+
+    if is_issue {
+        lines.extend([
+            Line::from(Span::styled(
+                format!(" {} Issue Actions", styles::ICON_SECTION),
+                section_style,
+            )),
+            help_line("s", "Set status"),
+            help_line("x", "Close / Reopen"),
             help_line("l", "Set labels"),
-            help_line("a", "Set assignee (chord: a then 1-9)"),
+            help_line("a", "Set assignee"),
             help_line("c", "Add comment"),
             Line::from(""),
         ]);
     }
 
-    if view_context == "mr" || view_context == "all" {
+    if is_mr {
         lines.extend([
             Line::from(Span::styled(
                 format!(" {} MR Actions", styles::ICON_SECTION),
@@ -71,22 +95,10 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
             )),
             help_line("A", "Approve MR"),
             help_line("M", "Merge MR"),
-            Line::from(""),
-        ]);
-    }
-
-    if view_context == "detail" || view_context == "all" {
-        lines.extend([
-            Line::from(Span::styled(
-                format!(" {} Detail View", styles::ICON_SECTION),
-                section_style,
-            )),
-            help_line("j/k", "Scroll"),
-            help_line("c", "Add comment"),
-            help_line("s / x", "Set status (chord: s then 1-9)"),
+            help_line("x", "Close MR"),
             help_line("l", "Set labels"),
             help_line("a", "Set assignee"),
-            help_line("o", "Open in browser"),
+            help_line("c", "Add comment"),
             Line::from(""),
         ]);
     }
