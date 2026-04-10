@@ -4,13 +4,13 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
-use crate::gitlab::types::{Note, TrackedIssue};
+use crate::gitlab::types::{Discussion, TrackedIssue};
 use crate::ui::{markdown, styles};
 
 #[derive(Default)]
 pub struct IssueDetailState {
     pub scroll: u16,
-    pub notes: Vec<Note>,
+    pub discussions: Vec<Discussion>,
     pub loading_notes: bool,
 }
 
@@ -25,8 +25,46 @@ impl IssueDetailState {
 
     pub fn reset(&mut self) {
         self.scroll = 0;
-        self.notes.clear();
+        self.discussions.clear();
         self.loading_notes = false;
+    }
+
+    /// Build picker items for thread selection: (discussion_id, display label).
+    /// Build thread metadata for the reply picker.
+    pub fn thread_picker_items(&self) -> Vec<crate::app::ThreadPickerInfo> {
+        self.discussions
+            .iter()
+            .filter_map(|d| {
+                let non_system: Vec<_> = d.notes.iter().filter(|n| !n.system).collect();
+                let first = non_system.first()?;
+                let reply_count = non_system.len() - 1;
+                let (last_author, last_preview) = if reply_count > 0 {
+                    let last = non_system.last().unwrap();
+                    (
+                        Some(last.author.username.clone()),
+                        Some(last.body.lines().next().unwrap_or("").to_string()),
+                    )
+                } else {
+                    (None, None)
+                };
+                Some(crate::app::ThreadPickerInfo {
+                    discussion_id: d.id.clone(),
+                    author: first.author.username.clone(),
+                    preview: first.body.lines().next().unwrap_or("").to_string(),
+                    last_author,
+                    last_preview,
+                    reply_count,
+                })
+            })
+            .collect()
+    }
+
+    fn non_system_note_count(&self) -> usize {
+        self.discussions
+            .iter()
+            .flat_map(|d| &d.notes)
+            .filter(|n| !n.system)
+            .count()
     }
 }
 
@@ -110,7 +148,7 @@ pub fn render(
         ]),
         Line::from(labels_line_spans),
         Line::from(vec![Span::styled(
-            "  [s]tatus [x]close/reopen [c]omment [l]abels [a]ssign [o]pen [Esc]back",
+            "  [s]tatus [x]close/reopen [c]omment [r]eply [l]abels [a]ssign [o]pen [Esc]back",
             styles::help_desc_style(),
         )]),
     ];
@@ -138,24 +176,49 @@ pub fn render(
         body_lines.extend(markdown::render(desc, "  "));
     }
 
-    // Comments
+    // Comments (threaded)
     if state.loading_notes {
         body_lines.push(Line::from(Span::styled(
-            "⟳ Loading comments...",
+            "\u{27F3} Loading comments...",
             styles::draft_style(),
         )));
-    } else if !state.notes.is_empty() {
+    } else if state.non_system_note_count() > 0 {
         body_lines.push(Line::from(Span::styled(
-            format!(" {} Comments ({})", styles::ICON_SECTION, state.notes.len()),
+            format!(
+                " {} Comments ({})",
+                styles::ICON_SECTION,
+                state.non_system_note_count()
+            ),
             styles::section_header_style(),
         )));
         body_lines.push(Line::from(""));
-        for note in &state.notes {
-            if note.system {
-                continue;
-            }
-            body_lines.push(Line::from(vec![
-                Span::styled("  │ ", styles::help_desc_style()),
+        render_discussions(&mut body_lines, state);
+    }
+
+    let body = Paragraph::new(body_lines)
+        .block(Block::default().borders(Borders::NONE))
+        .wrap(Wrap { trim: false })
+        .scroll((state.scroll, 0));
+    frame.render_widget(body, chunks[1]);
+}
+
+fn render_discussions(lines: &mut Vec<Line<'_>>, state: &IssueDetailState) {
+    for disc in &state.discussions {
+        let non_system_notes: Vec<_> = disc.notes.iter().filter(|n| !n.system).collect();
+        if non_system_notes.is_empty() {
+            continue;
+        }
+        for (i, note) in non_system_notes.iter().enumerate() {
+            let is_reply = i > 0;
+
+            let prefix = if is_reply {
+                "  \u{2502}   \u{21B3} "
+            } else {
+                "  \u{2502} "
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, styles::help_desc_style()),
                 Span::styled(
                     format!("@{}", note.author.username),
                     styles::help_key_style(),
@@ -165,14 +228,18 @@ pub fn render(
                     styles::help_desc_style(),
                 ),
             ]));
-            body_lines.extend(markdown::render_comment(&note.body));
-            body_lines.push(Line::from(""));
+
+            let rendered = markdown::render_comment(&note.body);
+            if is_reply {
+                for line in rendered {
+                    let mut spans = vec![Span::raw("      ".to_string())];
+                    spans.extend(line.spans);
+                    lines.push(Line::from(spans));
+                }
+            } else {
+                lines.extend(rendered);
+            }
+            lines.push(Line::from(""));
         }
     }
-
-    let body = Paragraph::new(body_lines)
-        .block(Block::default().borders(Borders::NONE))
-        .wrap(Wrap { trim: false })
-        .scroll((state.scroll, 0));
-    frame.render_widget(body, chunks[1]);
 }

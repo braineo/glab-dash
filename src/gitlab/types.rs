@@ -136,6 +136,14 @@ pub struct Note {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Discussion {
+    pub id: String,
+    #[serde(default)]
+    pub individual_note: bool,
+    pub notes: Vec<Note>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectLabel {
     pub id: u64,
     pub name: String,

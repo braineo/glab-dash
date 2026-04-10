@@ -12,8 +12,8 @@ use crate::config::Config;
 use crate::filter::{Field, FilterCondition, Op};
 use crate::gitlab::client::GitLabClient;
 use crate::gitlab::types::{
-    Issue, Iteration, MergeRequest, Note, ProjectLabel, TrackedIssue, TrackedMergeRequest, User,
-    WorkItemStatus,
+    Discussion, Issue, Iteration, MergeRequest, ProjectLabel, TrackedIssue, TrackedMergeRequest,
+    User, WorkItemStatus,
 };
 use crate::ui::components::{chord_popup, confirm_dialog, error_popup, help, picker};
 use crate::ui::keys;
@@ -69,6 +69,19 @@ pub enum PickerContext {
     Preset,
     SortPreset,
     Team,
+    /// Reply to a discussion thread; stores thread metadata parallel to picker items.
+    ReplyThread(Vec<ThreadPickerInfo>),
+}
+
+/// Metadata for a single thread shown in the reply picker.
+#[derive(Debug)]
+pub struct ThreadPickerInfo {
+    pub discussion_id: String,
+    pub author: String,
+    pub preview: String,
+    pub last_author: Option<String>,
+    pub last_preview: Option<String>,
+    pub reply_count: usize,
 }
 
 /// Context for the chord popup overlay (what action to perform on selection).
@@ -88,7 +101,7 @@ pub enum AsyncMsg {
         Result<(Vec<TrackedMergeRequest>, Vec<TrackedMergeRequest>)>,
         bool,
     ),
-    NotesLoaded(Result<Vec<Note>>),
+    DiscussionsLoaded(Result<Vec<Discussion>>),
     ActionDone(Result<String>),
     /// An issue was mutated; carry the updated object and project path.
     IssueUpdated(Result<Issue>, String),
@@ -132,6 +145,9 @@ pub struct App {
     pub filter_editor_state: filter_editor::FilterEditorState,
     pub picker_state: Option<picker::PickerState>,
     pub comment_input: crate::ui::components::input::InputState,
+    pub autocomplete: crate::ui::components::autocomplete::AutocompleteState,
+    /// When set, the next comment submission replies to this discussion thread.
+    pub reply_discussion_id: Option<String>,
 
     // Cache / incremental fetch
     pub last_fetched_at: Option<u64>,
@@ -199,6 +215,8 @@ impl App {
             filter_editor_state: filter_editor::FilterEditorState::default(),
             picker_state: None,
             comment_input: crate::ui::components::input::InputState::default(),
+            autocomplete: crate::ui::components::autocomplete::AutocompleteState::default(),
+            reply_discussion_id: None,
             last_fetched_at: None,
             work_item_statuses: std::collections::HashMap::new(),
             focused: None,
@@ -397,8 +415,8 @@ impl App {
         let project = project.to_string();
         let tx = self.async_tx.clone();
         tokio::spawn(async move {
-            let result = client.list_issue_notes(&project, iid).await;
-            let _ = tx.send(AsyncMsg::NotesLoaded(result));
+            let result = client.list_issue_discussions(&project, iid).await;
+            let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
         });
     }
 
@@ -526,8 +544,8 @@ impl App {
         let project = project.to_string();
         let tx = self.async_tx.clone();
         tokio::spawn(async move {
-            let result = client.list_mr_notes(&project, iid).await;
-            let _ = tx.send(AsyncMsg::NotesLoaded(result));
+            let result = client.list_mr_discussions(&project, iid).await;
+            let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
         });
     }
 
@@ -616,15 +634,15 @@ impl App {
                     self.show_error(format!("MRs: {e}"));
                 }
             },
-            AsyncMsg::NotesLoaded(result) => {
+            AsyncMsg::DiscussionsLoaded(result) => {
                 self.loading = false;
                 match result {
-                    Ok(notes) => {
+                    Ok(discussions) => {
                         if self.view == View::IssueDetail {
-                            self.issue_detail_state.notes = notes;
+                            self.issue_detail_state.discussions = discussions;
                             self.issue_detail_state.loading_notes = false;
                         } else if self.view == View::MrDetail {
-                            self.mr_detail_state.notes = notes;
+                            self.mr_detail_state.discussions = discussions;
                             self.mr_detail_state.loading_notes = false;
                         }
                     }
@@ -1165,6 +1183,7 @@ impl App {
             }
             issue_list::IssueListAction::Comment => {
                 self.comment_input = crate::ui::components::input::InputState::default();
+                self.reply_discussion_id = None;
                 self.overlay = Overlay::CommentInput;
             }
             issue_list::IssueListAction::OpenBrowser => {
@@ -1279,6 +1298,7 @@ impl App {
             }
             mr_list::MrListAction::Comment => {
                 self.comment_input = crate::ui::components::input::InputState::default();
+                self.reply_discussion_id = None;
                 self.overlay = Overlay::CommentInput;
             }
             mr_list::MrListAction::OpenBrowser => {
@@ -1339,7 +1359,19 @@ impl App {
             match key.code {
                 KeyCode::Char('c') => {
                     self.comment_input = crate::ui::components::input::InputState::default();
+                    self.reply_discussion_id = None;
                     self.overlay = Overlay::CommentInput;
+                }
+                KeyCode::Char('r') => {
+                    let infos = self.issue_detail_state.thread_picker_items();
+                    if !infos.is_empty() {
+                        let (labels, subtitles) = build_thread_picker_display(&infos);
+                        self.picker_state = Some(
+                            picker::PickerState::new("Reply to thread", labels, false)
+                                .with_subtitles(subtitles),
+                        );
+                        self.overlay = Overlay::Picker(PickerContext::ReplyThread(infos));
+                    }
                 }
                 KeyCode::Char('s') => {
                     self.do_set_status();
@@ -1382,7 +1414,19 @@ impl App {
             match key.code {
                 KeyCode::Char('c') => {
                     self.comment_input = crate::ui::components::input::InputState::default();
+                    self.reply_discussion_id = None;
                     self.overlay = Overlay::CommentInput;
+                }
+                KeyCode::Char('r') => {
+                    let infos = self.mr_detail_state.thread_picker_items();
+                    if !infos.is_empty() {
+                        let (labels, subtitles) = build_thread_picker_display(&infos);
+                        self.picker_state = Some(
+                            picker::PickerState::new("Reply to thread", labels, false)
+                                .with_subtitles(subtitles),
+                        );
+                        self.overlay = Overlay::Picker(PickerContext::ReplyThread(infos));
+                    }
                 }
                 KeyCode::Char('A') => {
                     if let Some(FocusedItem::Mr {
@@ -1493,6 +1537,7 @@ impl App {
             }
             PlanningAction::Comment => {
                 self.comment_input = crate::ui::components::input::InputState::default();
+                self.reply_discussion_id = None;
                 self.overlay = Overlay::CommentInput;
             }
             PlanningAction::OpenBrowser => {
@@ -1627,8 +1672,11 @@ impl App {
                         }
                         picker::PickerAction::Picked(values) => {
                             self.handle_picker_result(values);
+                            // ReplyThread transitions to CommentInput; don't overwrite
+                            if !matches!(self.overlay, Overlay::CommentInput) {
+                                self.overlay = Overlay::None;
+                            }
                             self.picker_state = None;
-                            self.overlay = Overlay::None;
                         }
                     }
                 }
@@ -1649,21 +1697,53 @@ impl App {
                     }
                 }
             }
-            Overlay::CommentInput => match key.code {
-                KeyCode::Esc => {
-                    self.overlay = Overlay::None;
-                }
-                KeyCode::Enter => {
-                    let body = self.comment_input.value.clone();
-                    if !body.is_empty() {
-                        self.submit_comment(&body);
+            Overlay::CommentInput => {
+                // Autocomplete takes priority when active
+                if self.autocomplete.active {
+                    if key.code == KeyCode::Tab {
+                        self.accept_completion();
+                        return false;
                     }
-                    self.overlay = Overlay::None;
+                    if key.code == KeyCode::Esc {
+                        self.autocomplete.dismiss();
+                        return false;
+                    }
+                    if keys::is_nav_up(&key) {
+                        self.autocomplete.move_up();
+                        return false;
+                    }
+                    if keys::is_nav_down(&key) {
+                        self.autocomplete.move_down();
+                        return false;
+                    }
                 }
-                _ => {
-                    self.comment_input.handle_key(&key);
+                match key.code {
+                    KeyCode::Esc => {
+                        self.autocomplete.dismiss();
+                        self.overlay = Overlay::None;
+                    }
+                    _ => {
+                        if self.comment_input.handle_key(&key) {
+                            // handle_key returns true on Ctrl+S = submit
+                            let body = self.comment_input.value.trim().to_string();
+                            if !body.is_empty() {
+                                self.submit_comment(&body);
+                            }
+                            self.autocomplete.dismiss();
+                            self.overlay = Overlay::None;
+                        } else {
+                            // Update autocomplete after each keystroke
+                            let members = self.config.all_members();
+                            self.autocomplete.update(
+                                &self.comment_input,
+                                &members,
+                                &self.issues,
+                                &self.mrs,
+                            );
+                        }
+                    }
                 }
-            },
+            }
             Overlay::Error(_) => {
                 // Any key dismisses the error popup
                 self.overlay = Overlay::None;
@@ -1875,6 +1955,16 @@ impl App {
                     self.refresh_focused();
                 }
             }
+            Overlay::Picker(PickerContext::ReplyThread(infos)) => {
+                if let (Some(ps), Some(picked_label)) = (&self.picker_state, values.first())
+                    && let Some(idx) = ps.items.iter().position(|item| item == picked_label)
+                    && let Some(info) = infos.get(idx)
+                {
+                    self.reply_discussion_id = Some(info.discussion_id.clone());
+                    self.comment_input = crate::ui::components::input::InputState::default();
+                    self.overlay = Overlay::CommentInput;
+                }
+            }
             _ => {}
         }
     }
@@ -1987,6 +2077,28 @@ impl App {
         });
     }
 
+    fn accept_completion(&mut self) {
+        let Some(item) = self.autocomplete.selected_item().cloned() else {
+            return;
+        };
+        let trigger_pos = self.autocomplete.trigger_pos;
+        let trigger_len =
+            crate::ui::components::autocomplete::AutocompleteState::trigger_char_len();
+        let cursor = self.comment_input.cursor;
+
+        let mut new_value =
+            String::with_capacity(self.comment_input.value.len() + item.insert.len());
+        new_value.push_str(&self.comment_input.value[..trigger_pos + trigger_len]);
+        new_value.push_str(&item.insert);
+        new_value.push(' ');
+        new_value.push_str(&self.comment_input.value[cursor..]);
+
+        let new_cursor = trigger_pos + trigger_len + item.insert.len() + 1;
+        self.comment_input.value = new_value;
+        self.comment_input.cursor = new_cursor;
+        self.autocomplete.dismiss();
+    }
+
     fn submit_comment(&mut self, body: &str) {
         let client = self.client.clone();
         let tx = self.async_tx.clone();
@@ -2029,24 +2141,40 @@ impl App {
             View::Dashboard => return,
         };
 
+        let reply_id = self.reply_discussion_id.take();
         self.loading = true;
         tokio::spawn(async move {
-            let create_result = if is_mr {
-                client.create_mr_note(&project, iid, &body).await
-            } else {
-                client.create_issue_note(&project, iid, &body).await
+            let create_result = match &reply_id {
+                Some(disc_id) => {
+                    if is_mr {
+                        client
+                            .reply_to_mr_discussion(&project, iid, disc_id, &body)
+                            .await
+                    } else {
+                        client
+                            .reply_to_issue_discussion(&project, iid, disc_id, &body)
+                            .await
+                    }
+                }
+                None => {
+                    if is_mr {
+                        client.create_mr_note(&project, iid, &body).await
+                    } else {
+                        client.create_issue_note(&project, iid, &body).await
+                    }
+                }
             };
             if let Err(e) = create_result {
                 let _ = tx.send(AsyncMsg::ActionDone(Err(e)));
                 return;
             }
-            // Re-fetch notes so the UI shows the new comment
-            let notes = if is_mr {
-                client.list_mr_notes(&project, iid).await
+            // Re-fetch discussions so the UI shows the new comment
+            let discussions = if is_mr {
+                client.list_mr_discussions(&project, iid).await
             } else {
-                client.list_issue_notes(&project, iid).await
+                client.list_issue_discussions(&project, iid).await
             };
-            let _ = tx.send(AsyncMsg::NotesLoaded(notes));
+            let _ = tx.send(AsyncMsg::DiscussionsLoaded(discussions));
         });
     }
 
@@ -2279,14 +2407,15 @@ impl App {
                 }
             }
             Overlay::CommentInput => {
-                let popup = centered_rect(60, 15, area);
+                let popup = centered_rect(60, 40, area);
                 ratatui::widgets::Clear.render(popup, frame.buffer_mut());
-                crate::ui::components::input::render(
-                    frame,
-                    popup,
-                    &self.comment_input,
-                    "Comment (Enter to submit, Esc to cancel)",
-                );
+                let title = if self.reply_discussion_id.is_some() {
+                    "Reply (Ctrl+S to submit, Esc to cancel)"
+                } else {
+                    "Comment (Ctrl+S to submit, Esc to cancel)"
+                };
+                crate::ui::components::input::render(frame, popup, &self.comment_input, title);
+                crate::ui::components::autocomplete::render(frame, popup, &self.autocomplete);
             }
             Overlay::Chord(_) => {
                 if let Some(ref cs) = self.chord_state {
@@ -2298,6 +2427,37 @@ impl App {
             }
         }
     }
+}
+
+/// Build display labels and subtitles for the thread reply picker.
+fn build_thread_picker_display(infos: &[ThreadPickerInfo]) -> (Vec<String>, Vec<String>) {
+    let labels: Vec<String> = infos
+        .iter()
+        .map(|t| format!("@{}: {}", t.author, t.preview))
+        .collect();
+    let subtitles: Vec<String> = infos
+        .iter()
+        .map(|t| {
+            if t.reply_count > 0 {
+                let last_author = t.last_author.as_deref().unwrap_or("?");
+                let last_msg = t.last_preview.as_deref().unwrap_or("");
+                format!(
+                    "\u{21B3} @{}: {}  ({} {})",
+                    last_author,
+                    last_msg,
+                    t.reply_count,
+                    if t.reply_count == 1 {
+                        "reply"
+                    } else {
+                        "replies"
+                    }
+                )
+            } else {
+                String::new()
+            }
+        })
+        .collect();
+    (labels, subtitles)
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

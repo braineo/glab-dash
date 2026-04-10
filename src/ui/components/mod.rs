@@ -1,3 +1,4 @@
+pub mod autocomplete;
 pub mod chord_popup;
 pub mod confirm_dialog;
 pub mod error_popup;
