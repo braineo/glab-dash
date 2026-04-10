@@ -33,18 +33,19 @@ impl MrListState {
                 if self.search_query.is_empty() {
                     true
                 } else {
-                    let q = self.search_query.to_lowercase();
-                    item.mr.title.to_lowercase().contains(&q)
-                        || item
-                            .mr
-                            .author
-                            .as_ref()
-                            .is_some_and(|a| a.username.to_lowercase().contains(&q))
-                        || item
-                            .mr
-                            .assignees
-                            .iter()
-                            .any(|a| a.username.to_lowercase().contains(&q))
+                    let mut haystack = item.mr.title.to_lowercase();
+                    if let Some(a) = &item.mr.author {
+                        haystack.push(' ');
+                        haystack.push_str(&a.username.to_lowercase());
+                    }
+                    for a in &item.mr.assignees {
+                        haystack.push(' ');
+                        haystack.push_str(&a.username.to_lowercase());
+                    }
+                    self.search_query
+                        .to_lowercase()
+                        .split_whitespace()
+                        .all(|word| haystack.contains(word))
                 }
             })
             .map(|(i, _)| i)

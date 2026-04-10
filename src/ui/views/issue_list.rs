@@ -33,18 +33,19 @@ impl IssueListState {
                 if self.search_query.is_empty() {
                     true
                 } else {
-                    let q = self.search_query.to_lowercase();
-                    item.issue.title.to_lowercase().contains(&q)
-                        || item
-                            .issue
-                            .assignees
-                            .iter()
-                            .any(|a| a.username.to_lowercase().contains(&q))
-                        || item
-                            .issue
-                            .labels
-                            .iter()
-                            .any(|l| l.to_lowercase().contains(&q))
+                    let mut haystack = item.issue.title.to_lowercase();
+                    for a in &item.issue.assignees {
+                        haystack.push(' ');
+                        haystack.push_str(&a.username.to_lowercase());
+                    }
+                    for l in &item.issue.labels {
+                        haystack.push(' ');
+                        haystack.push_str(&l.to_lowercase());
+                    }
+                    self.search_query
+                        .to_lowercase()
+                        .split_whitespace()
+                        .all(|word| haystack.contains(word))
                 }
             })
             .map(|(i, _)| i)
