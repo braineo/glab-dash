@@ -52,8 +52,6 @@ pub enum PickerContext {
     Assignee,
     Preset,
     SortPreset,
-    /// Status picker for issues: (project_path, issue_db_id, issue_iid)
-    Status(String, u64, u64),
 }
 
 /// Context for the chord popup overlay (what action to perform on selection).
@@ -297,7 +295,7 @@ impl App {
     }
 
     fn fetch_statuses_and_show_picker(&mut self, project: String, issue_id: u64, iid: u64) {
-        // If we already have cached statuses for this project, show picker immediately
+        // If we already have cached statuses for this project, show chord immediately
         if let Some(statuses) = self.work_item_statuses.get(&project) {
             if statuses.is_empty() {
                 // No custom statuses — fall back to open/close toggle
@@ -314,10 +312,9 @@ impl App {
                 };
                 self.overlay = Overlay::Confirm(action);
             } else {
-                let status_names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
-                self.picker_state =
-                    Some(picker::PickerState::new("Set Status", status_names, false));
-                self.overlay = Overlay::Picker(PickerContext::Status(project, issue_id, iid));
+                let names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
+                self.chord_state = Some(chord_popup::ChordState::new("Set Status", names));
+                self.overlay = Overlay::Chord(ChordContext::Status(project, issue_id, iid));
             }
             return;
         }
@@ -506,18 +503,15 @@ impl App {
                             };
                             self.overlay = Overlay::Confirm(action);
                         } else {
-                            // Cache and show status picker
-                            let status_names: Vec<String> =
+                            // Cache and show status chord
+                            let names: Vec<String> =
                                 statuses.iter().map(|s| s.name.clone()).collect();
                             self.work_item_statuses
                                 .insert(project.clone(), statuses);
-                            self.picker_state = Some(picker::PickerState::new(
-                                "Set Status",
-                                status_names,
-                                false,
-                            ));
+                            self.chord_state =
+                                Some(chord_popup::ChordState::new("Set Status", names));
                             self.overlay =
-                                Overlay::Picker(PickerContext::Status(project, issue_id, iid));
+                                Overlay::Chord(ChordContext::Status(project, issue_id, iid));
                         }
                     }
                     Err(e) => {
@@ -1386,11 +1380,6 @@ impl App {
             Overlay::Picker(PickerContext::SortPreset) => {
                 if let Some(name) = values.first() {
                     self.apply_sort_preset(name);
-                }
-            }
-            Overlay::Picker(PickerContext::Status(project, issue_id, iid)) => {
-                if let Some(status_name) = values.first() {
-                    self.set_issue_status(&project, issue_id, iid, status_name);
                 }
             }
             _ => {}
