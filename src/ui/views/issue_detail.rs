@@ -136,6 +136,15 @@ pub fn render(
                 },
             ),
             Span::raw("  "),
+            Span::styled("Author: ", styles::help_desc_style()),
+            Span::styled(
+                item.issue
+                    .author
+                    .as_ref()
+                    .map_or("-", |a| a.username.as_str()),
+                Style::default().fg(styles::TEXT_BRIGHT),
+            ),
+            Span::raw("  "),
             Span::styled("Assignees: ", styles::help_desc_style()),
             Span::styled(
                 if assignees.is_empty() {

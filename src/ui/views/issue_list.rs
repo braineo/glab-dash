@@ -244,6 +244,11 @@ pub fn render(
                 .map(|a| a.username.as_str())
                 .collect::<Vec<_>>()
                 .join(",");
+            let author = item
+                .issue
+                .author
+                .as_ref()
+                .map_or("-", |a| a.username.as_str());
             let labels = styles::labels_compact(&item.issue.labels, 30, label_colors);
             let age = format_age(&item.issue.updated_at);
 
@@ -273,6 +278,7 @@ pub fn render(
                     format!("{state_icon} {state_text}"),
                     state_style,
                 ))),
+                Cell::from(author.to_string()),
                 Cell::from(assignees),
                 Cell::from(labels),
                 Cell::from(age),
@@ -296,13 +302,14 @@ pub fn render(
         Constraint::Length(10), // Source
         Constraint::Min(30),    // Title
         Constraint::Length(18), // State / Status
+        Constraint::Length(12), // Author
         Constraint::Length(15), // Assignees
         Constraint::Length(32), // Labels
         Constraint::Length(8),  // Age
     ];
 
     let header = Row::new(vec![
-        "ID", "Source", "Title", "State", "Assignee", "Labels", "Updated",
+        "ID", "Source", "Title", "State", "Author", "Assignee", "Labels", "Updated",
     ])
     .style(styles::header_style())
     .bottom_margin(1);
