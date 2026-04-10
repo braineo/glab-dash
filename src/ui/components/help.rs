@@ -48,6 +48,7 @@ pub fn render(frame: &mut Frame, area: Rect, view_context: &str) {
             help_line("f", "Add filter condition"),
             help_line("F", "Clear all filters"),
             help_line("p", "Pick saved preset"),
+            help_line("S", "Pick sort preset"),
             help_line("Tab", "Focus filter bar"),
             Line::from(""),
             Line::from(Span::styled(

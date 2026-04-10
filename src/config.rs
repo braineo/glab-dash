@@ -14,6 +14,10 @@ pub struct Config {
     pub teams: Vec<TeamConfig>,
     #[serde(default)]
     pub filters: Vec<FilterPreset>,
+    #[serde(default)]
+    pub sort_presets: Vec<SortPreset>,
+    #[serde(default)]
+    pub label_sort_orders: Vec<LabelSortOrderConfig>,
 }
 
 fn default_refresh() -> u64 {
@@ -39,6 +43,32 @@ pub struct PresetCondition {
     pub field: String,
     pub op: String,
     pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SortPreset {
+    pub name: String,
+    pub kind: String,
+    pub specs: Vec<SortSpecConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SortSpecConfig {
+    pub field: String,
+    #[serde(default = "default_desc")]
+    pub direction: String,
+    #[serde(default)]
+    pub label_scope: Option<String>,
+}
+
+fn default_desc() -> String {
+    "desc".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LabelSortOrderConfig {
+    pub scope: String,
+    pub values: Vec<String>,
 }
 
 impl Config {

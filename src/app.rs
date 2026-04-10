@@ -51,6 +51,7 @@ pub enum PickerContext {
     Labels,
     Assignee,
     Preset,
+    SortPreset,
     /// Status picker for issues: (project_path, issue_db_id, issue_iid)
     Status(String, u64, u64),
 }
@@ -122,7 +123,11 @@ pub struct App {
     pub mr_filters: Vec<FilterCondition>,
     pub filter_bar_focused: bool,
     pub filter_bar_selected: usize,
-    // (detail context uses list selection state)
+
+    // Sort state
+    pub issue_sort: Vec<crate::sort::SortSpec>,
+    pub mr_sort: Vec<crate::sort::SortSpec>,
+    pub label_sort_orders: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl App {
@@ -131,6 +136,11 @@ impl App {
         client: GitLabClient,
         async_tx: mpsc::UnboundedSender<AsyncMsg>,
     ) -> Self {
+        let label_sort_orders = config
+            .label_sort_orders
+            .iter()
+            .map(|o| (o.scope.clone(), o.values.clone()))
+            .collect();
         Self {
             config,
             client,
@@ -160,6 +170,9 @@ impl App {
             mr_filters: Vec::new(),
             filter_bar_focused: false,
             filter_bar_selected: 0,
+            issue_sort: Vec::new(),
+            mr_sort: Vec::new(),
+            label_sort_orders,
         }
     }
 
@@ -523,8 +536,14 @@ impl App {
     pub fn refilter_issues(&mut self) {
         let me = self.config.me.clone();
         let members = self.config.team_members(self.active_team);
-        self.issue_list_state
-            .apply_filters(&self.issues, &self.issue_filters, &me, &members);
+        self.issue_list_state.active_sort = self.issue_sort.clone();
+        self.issue_list_state.apply_filters(
+            &self.issues,
+            &self.issue_filters,
+            &me,
+            &members,
+            &self.label_sort_orders,
+        );
     }
 
     fn get_filter_suggestions(&self) -> Vec<String> {
@@ -562,8 +581,130 @@ impl App {
     fn refilter_mrs(&mut self) {
         let me = self.config.me.clone();
         let members = self.config.team_members(self.active_team);
-        self.mr_list_state
-            .apply_filters(&self.mrs, &self.mr_filters, &me, &members);
+        self.mr_list_state.active_sort = self.mr_sort.clone();
+        self.mr_list_state.apply_filters(
+            &self.mrs,
+            &self.mr_filters,
+            &me,
+            &members,
+            &self.label_sort_orders,
+        );
+    }
+
+    fn show_sort_preset_picker(&mut self, kind: &str) {
+        let mut names: Vec<String> = Vec::new();
+
+        // "Clear sort" when a sort is active
+        let has_sort = match self.view {
+            View::IssueList => !self.issue_sort.is_empty(),
+            View::MrList => !self.mr_sort.is_empty(),
+            _ => false,
+        };
+        if has_sort {
+            names.push("⊘ Clear sort".to_string());
+        }
+
+        // Config presets
+        for p in &self.config.sort_presets {
+            if p.kind == kind {
+                names.push(format!("▸ {}", p.name));
+            }
+        }
+
+        // Built-in field sorts (always available)
+        let fields: &[crate::sort::SortField] = match kind {
+            "merge_request" => crate::sort::SortField::all_mr(),
+            _ => crate::sort::SortField::all_issue(),
+        };
+        for field in fields {
+            names.push(format!("↓ {} (newest first)", field.name()));
+            names.push(format!("↑ {} (oldest first)", field.name()));
+        }
+
+        // Label scope sorts from config
+        for order in &self.config.label_sort_orders {
+            names.push(format!("↓ {}:: (high priority first)", order.scope));
+            names.push(format!("↑ {}:: (low priority first)", order.scope));
+        }
+
+        self.picker_state = Some(picker::PickerState::new("Sort", names, false));
+        self.overlay = Overlay::Picker(PickerContext::SortPreset);
+    }
+
+    fn apply_sort_preset(&mut self, name: &str) {
+        let specs = if name == "⊘ Clear sort" {
+            Vec::new()
+        } else if let Some(preset_name) = name.strip_prefix("▸ ") {
+            // Config preset
+            self.config
+                .sort_presets
+                .iter()
+                .find(|p| p.name == preset_name)
+                .map(|preset| {
+                    preset
+                        .specs
+                        .iter()
+                        .filter_map(|s| {
+                            let field = crate::sort::SortField::from_str(&s.field)?;
+                            let direction =
+                                crate::sort::SortDirection::from_str(&s.direction)?;
+                            Some(crate::sort::SortSpec {
+                                field,
+                                direction,
+                                label_scope: s.label_scope.clone(),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else if let Some(rest) = name.strip_prefix("↓ ") {
+            self.parse_inline_sort(rest, crate::sort::SortDirection::Desc)
+        } else if let Some(rest) = name.strip_prefix("↑ ") {
+            self.parse_inline_sort(rest, crate::sort::SortDirection::Asc)
+        } else {
+            return;
+        };
+
+        match self.view {
+            View::IssueList => {
+                self.issue_sort = specs;
+                self.refilter_issues();
+            }
+            View::MrList => {
+                self.mr_sort = specs;
+                self.refilter_mrs();
+            }
+            _ => {}
+        }
+    }
+
+    fn parse_inline_sort(
+        &self,
+        text: &str,
+        direction: crate::sort::SortDirection,
+    ) -> Vec<crate::sort::SortSpec> {
+        // "field_name (description)" or "scope:: (description)"
+        let field_part = text.split(" (").next().unwrap_or(text);
+
+        // Label scope sort: "workflow::"
+        if let Some(scope) = field_part.strip_suffix("::") {
+            return vec![crate::sort::SortSpec {
+                field: crate::sort::SortField::Label,
+                direction,
+                label_scope: Some(scope.to_string()),
+            }];
+        }
+
+        // Regular field sort
+        if let Some(field) = crate::sort::SortField::from_str(field_part) {
+            return vec![crate::sort::SortSpec {
+                field,
+                direction,
+                label_scope: None,
+            }];
+        }
+
+        Vec::new()
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -761,6 +902,9 @@ impl App {
                     self.overlay = Overlay::Picker(PickerContext::Preset);
                 }
             }
+            issue_list::IssueListAction::PickSortPreset => {
+                self.show_sort_preset_picker("issue");
+            }
         }
     }
 
@@ -862,6 +1006,9 @@ impl App {
                         Some(picker::PickerState::new("Filter Preset", presets, false));
                     self.overlay = Overlay::Picker(PickerContext::Preset);
                 }
+            }
+            mr_list::MrListAction::PickSortPreset => {
+                self.show_sort_preset_picker("merge_request");
             }
         }
     }
@@ -1234,6 +1381,11 @@ impl App {
             Overlay::Picker(PickerContext::Preset) => {
                 if let Some(preset_name) = values.first() {
                     self.apply_preset(preset_name);
+                }
+            }
+            Overlay::Picker(PickerContext::SortPreset) => {
+                if let Some(name) = values.first() {
+                    self.apply_sort_preset(name);
                 }
             }
             Overlay::Picker(PickerContext::Status(project, issue_id, iid)) => {

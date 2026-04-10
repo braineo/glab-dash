@@ -6,6 +6,7 @@ mod config_tests;
 mod event;
 mod filter;
 mod gitlab;
+mod sort;
 mod onboarding;
 #[cfg(test)]
 mod onboarding_tests;

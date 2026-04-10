@@ -343,6 +343,12 @@ pub fn filter_chip_selected_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+pub fn sort_chip_style() -> Style {
+    Style::default()
+        .fg(MAGENTA)
+        .bg(Color::Rgb(48, 36, 56))
+}
+
 pub fn state_style(state: &str) -> Style {
     match state {
         "opened" => Style::default().fg(GREEN),

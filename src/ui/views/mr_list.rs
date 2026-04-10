@@ -5,8 +5,11 @@ use ratatui::text::{Line, Span};
 use ratatui::style::Style;
 use ratatui::widgets::{Paragraph, Row, Table, TableState};
 
+use std::collections::HashMap;
+
 use crate::filter::{FilterCondition, matches_mr};
 use crate::gitlab::types::TrackedMergeRequest;
+use crate::sort::{self, SortSpec};
 use crate::ui::{components, keys, styles};
 
 #[derive(Default)]
@@ -15,6 +18,7 @@ pub struct MrListState {
     pub filtered_indices: Vec<usize>,
     pub search_query: String,
     pub searching: bool,
+    pub active_sort: Vec<SortSpec>,
 }
 
 impl MrListState {
@@ -24,6 +28,7 @@ impl MrListState {
         conditions: &[FilterCondition],
         me: &str,
         team_members: &[String],
+        label_orders: &HashMap<String, Vec<String>>,
     ) {
         self.filtered_indices = mrs
             .iter()
@@ -50,6 +55,9 @@ impl MrListState {
             })
             .map(|(i, _)| i)
             .collect();
+
+        // Sort
+        sort::sort_mrs(&mut self.filtered_indices, mrs, &self.active_sort, label_orders);
 
         if self.filtered_indices.is_empty() {
             self.table_state.select(None);
@@ -141,6 +149,7 @@ impl MrListState {
                 KeyCode::Char('f') => return MrListAction::AddFilter,
                 KeyCode::Char('F') => return MrListAction::ClearFilters,
                 KeyCode::Char('p') => return MrListAction::PickPreset,
+                KeyCode::Char('S') => return MrListAction::PickSortPreset,
                 _ => {}
             }
         }
@@ -164,6 +173,7 @@ pub enum MrListAction {
     AddFilter,
     ClearFilters,
     PickPreset,
+    PickSortPreset,
 }
 
 pub fn render(
@@ -189,6 +199,7 @@ pub fn render(
         frame,
         chunks[0],
         conditions,
+        &state.active_sort,
         filter_focused,
         filter_selected,
     );

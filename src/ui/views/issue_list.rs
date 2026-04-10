@@ -5,8 +5,11 @@ use ratatui::text::{Line, Span};
 use ratatui::style::Style;
 use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState};
 
+use std::collections::HashMap;
+
 use crate::filter::{FilterCondition, matches_issue};
 use crate::gitlab::types::TrackedIssue;
+use crate::sort::{self, SortSpec};
 use crate::ui::{components, keys, styles};
 
 #[derive(Default)]
@@ -15,6 +18,7 @@ pub struct IssueListState {
     pub filtered_indices: Vec<usize>,
     pub search_query: String,
     pub searching: bool,
+    pub active_sort: Vec<SortSpec>,
 }
 
 impl IssueListState {
@@ -24,6 +28,7 @@ impl IssueListState {
         conditions: &[FilterCondition],
         me: &str,
         team_members: &[String],
+        label_orders: &HashMap<String, Vec<String>>,
     ) {
         self.filtered_indices = issues
             .iter()
@@ -50,6 +55,9 @@ impl IssueListState {
             })
             .map(|(i, _)| i)
             .collect();
+
+        // Sort
+        sort::sort_issues(&mut self.filtered_indices, issues, &self.active_sort, label_orders);
 
         // Clamp selection
         if self.filtered_indices.is_empty() {
@@ -137,6 +145,7 @@ impl IssueListState {
                 KeyCode::Char('f') => return IssueListAction::AddFilter,
                 KeyCode::Char('F') => return IssueListAction::ClearFilters,
                 KeyCode::Char('p') => return IssueListAction::PickPreset,
+                KeyCode::Char('S') => return IssueListAction::PickSortPreset,
                 _ => {}
             }
         }
@@ -158,6 +167,7 @@ pub enum IssueListAction {
     AddFilter,
     ClearFilters,
     PickPreset,
+    PickSortPreset,
 }
 
 pub fn render(
@@ -179,11 +189,12 @@ pub fn render(
     ])
     .split(area);
 
-    // Filter bar
+    // Filter + sort bar
     components::filter_bar::render(
         frame,
         chunks[0],
         conditions,
+        &state.active_sort,
         filter_focused,
         filter_selected,
     );

@@ -47,6 +47,8 @@ pub async fn run_onboarding() -> Result<Config> {
         refresh_interval_secs: 60,
         teams: Vec::new(),
         filters: Vec::new(),
+        sort_presets: Vec::new(),
+        label_sort_orders: Vec::new(),
     };
     let client = GitLabClient::new(&test_config).context("Failed to create client")?;
 
@@ -139,6 +141,8 @@ pub async fn run_onboarding() -> Result<Config> {
         refresh_interval_secs: 60,
         teams: teams.clone(),
         filters: default_filter_presets(),
+        sort_presets: Vec::new(),
+        label_sort_orders: Vec::new(),
     };
 
     // Step 8: Write config file

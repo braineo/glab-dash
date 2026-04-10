@@ -28,6 +28,8 @@ fn test_generate_yaml_roundtrip() {
                 value: "$me".to_string(),
             }],
         }],
+        sort_presets: Vec::new(),
+        label_sort_orders: Vec::new(),
     };
 
     let yaml = generate_yaml(&config);
@@ -58,6 +60,8 @@ fn test_generate_yaml_contains_all_fields() {
         refresh_interval_secs: 120,
         teams: vec![],
         filters: vec![],
+        sort_presets: Vec::new(),
+        label_sort_orders: Vec::new(),
     };
 
     let yaml = generate_yaml(&config);
