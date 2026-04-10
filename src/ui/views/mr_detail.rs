@@ -145,7 +145,7 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedMergeRequest, state: 
             } else {
                 for (i, label) in item.mr.labels.iter().enumerate() {
                     if i > 0 {
-                        spans.push(Span::styled(", ", Style::default().fg(styles::TEXT_DIM)));
+                        spans.push(Span::raw(" "));
                     }
                     spans.extend(styles::label_spans(label));
                 }

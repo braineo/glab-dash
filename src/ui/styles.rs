@@ -33,10 +33,14 @@ pub const TEAL: Color = Color::Rgb(115, 218, 202);
 pub const BORDER: Color = Color::Rgb(59, 66, 97);
 pub const BORDER_ACTIVE: Color = Color::Rgb(122, 162, 247);
 
-// Scoped label colors
-pub const LABEL_SCOPE: Color = Color::Rgb(137, 180, 250);
-pub const LABEL_SCOPE_SEP: Color = Color::Rgb(86, 95, 137);
-pub const LABEL_VALUE: Color = Color::Rgb(115, 218, 202);
+// Scoped label chip colors
+pub const LABEL_SCOPE_FG: Color = Color::Rgb(200, 215, 255);
+pub const LABEL_SCOPE_BG: Color = Color::Rgb(40, 50, 90);
+pub const LABEL_VALUE_FG: Color = Color::Rgb(200, 240, 230);
+pub const LABEL_VALUE_BG: Color = Color::Rgb(25, 60, 55);
+// Regular label chip colors
+pub const LABEL_FG: Color = Color::Rgb(200, 240, 230);
+pub const LABEL_BG: Color = Color::Rgb(25, 60, 55);
 
 // ── Icons ──
 
@@ -78,60 +82,88 @@ pub fn overlay_block(title: &str) -> Block<'_> {
 
 // ── Label Rendering ──
 
-/// Render a label as styled spans. Scoped labels (containing `::`) get
-/// the scope in LABEL_SCOPE and value in LABEL_VALUE with a dimmed `::`.
-/// Regular labels use TEAL.
+/// Render a label as chip-style spans with background colors.
+/// Scoped labels (`scope::value`) render as two-tone chips: scope and value
+/// segments with distinct backgrounds, no `::` shown.
+/// Regular labels render as single-tone chips.
 pub fn label_spans(label: &str) -> Vec<Span<'static>> {
     if let Some((scope, value)) = label.split_once("::") {
         vec![
             Span::styled(
-                scope.to_string(),
-                Style::default().fg(LABEL_SCOPE).add_modifier(Modifier::BOLD),
+                format!(" {scope} "),
+                Style::default()
+                    .fg(LABEL_SCOPE_FG)
+                    .bg(LABEL_SCOPE_BG)
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("::", Style::default().fg(LABEL_SCOPE_SEP)),
-            Span::styled(value.to_string(), Style::default().fg(LABEL_VALUE)),
+            Span::styled(
+                format!(" {value} "),
+                Style::default().fg(LABEL_VALUE_FG).bg(LABEL_VALUE_BG),
+            ),
         ]
     } else {
-        vec![Span::styled(label.to_string(), Style::default().fg(TEAL))]
+        vec![Span::styled(
+            format!(" {label} "),
+            Style::default().fg(LABEL_FG).bg(LABEL_BG),
+        )]
     }
 }
 
-/// Render a list of labels into a single Line with comma separators.
+/// Render a list of labels into a single Line with chip-style spans.
 pub fn labels_line(labels: &[String]) -> Line<'static> {
     let mut spans = Vec::new();
     for (i, label) in labels.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled(", ", Style::default().fg(TEXT_DIM)));
+            spans.push(Span::raw(" "));
         }
         spans.extend(label_spans(label));
     }
     Line::from(spans)
 }
 
-/// Render labels compactly for table cells: truncate to fit width.
-pub fn labels_compact(labels: &[String], max_width: usize) -> String {
-    if labels.is_empty() {
-        return String::new();
+/// Visual width of a label rendered as a chip (with padding spaces).
+fn label_chip_width(label: &str) -> usize {
+    if let Some((scope, value)) = label.split_once("::") {
+        // " scope " + " value "
+        scope.len() + 2 + value.len() + 2
+    } else {
+        // " label "
+        label.len() + 2
     }
-    let mut result = String::new();
+}
+
+/// Render labels as chip-style spans for table cells, truncating to fit width.
+pub fn labels_compact(labels: &[String], max_width: usize) -> Line<'static> {
+    if labels.is_empty() {
+        return Line::from("");
+    }
+    let mut spans = Vec::new();
+    let mut used = 0usize;
     let mut remaining = labels.len();
     for (i, label) in labels.iter().enumerate() {
-        let sep = if i > 0 { ", " } else { "" };
-        let candidate = format!("{sep}{label}");
+        let gap = if i > 0 { 1 } else { 0 };
+        let chip_w = label_chip_width(label);
         remaining -= 1;
-        // Reserve space for "+N" suffix if needed
         let suffix_len = if remaining > 0 {
             format!("+{remaining}").len() + 1
         } else {
             0
         };
-        if result.len() + candidate.len() + suffix_len > max_width && i > 0 {
-            result.push_str(&format!(" +{}", labels.len() - i));
-            return result;
+        if used + gap + chip_w + suffix_len > max_width && i > 0 {
+            spans.push(Span::styled(
+                format!(" +{}", labels.len() - i),
+                Style::default().fg(TEXT_DIM),
+            ));
+            return Line::from(spans);
         }
-        result.push_str(&candidate);
+        if i > 0 {
+            spans.push(Span::raw(" "));
+            used += 1;
+        }
+        spans.extend(label_spans(label));
+        used += chip_w;
     }
-    result
+    Line::from(spans)
 }
 
 // ── Styles ──

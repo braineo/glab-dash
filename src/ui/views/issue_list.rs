@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::style::Style;
-use ratatui::widgets::{Paragraph, Row, Table, TableState};
+use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState};
 
 use crate::filter::{FilterCondition, matches_issue};
 use crate::gitlab::types::TrackedIssue;
@@ -221,14 +221,14 @@ pub fn render(
                     (icon, item.issue.state.clone())
                 };
 
-            let row = Row::new(vec![
-                format!("#{}", item.issue.iid),
-                source_span.to_string(),
-                item.issue.title.clone(),
-                format!("{state_icon} {state_text}"),
-                assignees,
-                labels,
-                age,
+            let row = Row::new([
+                Cell::from(format!("#{}", item.issue.iid)),
+                Cell::from(source_span.to_string()),
+                Cell::from(item.issue.title.clone()),
+                Cell::from(format!("{state_icon} {state_text}")),
+                Cell::from(assignees),
+                Cell::from(labels),
+                Cell::from(age),
             ]);
             let is_closed = item.issue.state == "closed";
             let row = if is_closed {
@@ -306,7 +306,7 @@ pub fn render(
         } else {
             for (i, label) in item.issue.labels.iter().enumerate() {
                 if i > 0 {
-                    spans.push(Span::styled("  ", styles::help_desc_style()));
+                    spans.push(Span::raw(" "));
                 }
                 spans.extend(styles::label_spans(label));
             }

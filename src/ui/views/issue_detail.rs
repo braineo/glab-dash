@@ -62,7 +62,7 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueD
     } else {
         for (i, label) in item.issue.labels.iter().enumerate() {
             if i > 0 {
-                labels_line_spans.push(Span::styled(", ", Style::default().fg(styles::TEXT_DIM)));
+                labels_line_spans.push(Span::raw(" "));
             }
             labels_line_spans.extend(styles::label_spans(label));
         }
