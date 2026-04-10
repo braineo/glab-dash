@@ -54,12 +54,33 @@ pub enum PickerContext {
     Status(String, u64, u64),
 }
 
+/// Pending key chord for quick inline editing (vim-style 2-key combos).
+/// Press a leader key (s=status, a=assignee) then a digit to select instantly.
+#[derive(Debug, Clone)]
+pub enum PendingChord {
+    Status {
+        options: Vec<(char, String)>,
+        project: String,
+        issue_id: u64,
+        iid: u64,
+    },
+    Assignee {
+        options: Vec<(char, String)>,
+    },
+}
+
 /// Messages from async operations
 pub enum AsyncMsg {
     IssuesLoaded(Result<Vec<TrackedIssue>>, bool),
     MrsLoaded(Result<(Vec<TrackedMergeRequest>, Vec<TrackedMergeRequest>)>, bool),
     NotesLoaded(Result<Vec<Note>>),
     ActionDone(Result<String>),
+    /// An issue was mutated; carry the updated object and project path.
+    IssueUpdated(Result<Issue>, String),
+    /// A merge request was mutated; carry the updated object and project path.
+    MrUpdated(Result<MergeRequest>, String),
+    /// Issue custom status changed: (project_path, iid, new_status_name).
+    IssueStatusUpdated(Result<(String, u64, String)>),
     LabelsLoaded(Result<Vec<ProjectLabel>>),
     StatusesLoaded(Result<Vec<WorkItemStatus>>, String, u64, u64),
 }
@@ -357,20 +378,23 @@ impl App {
                     self.show_error(format!("MRs: {e}"));
                 }
             },
-            AsyncMsg::NotesLoaded(result) => match result {
-                Ok(notes) => {
-                    if self.view == View::IssueDetail {
-                        self.issue_detail_state.notes = notes;
-                        self.issue_detail_state.loading_notes = false;
-                    } else if self.view == View::MrDetail {
-                        self.mr_detail_state.notes = notes;
-                        self.mr_detail_state.loading_notes = false;
+            AsyncMsg::NotesLoaded(result) => {
+                self.loading = false;
+                match result {
+                    Ok(notes) => {
+                        if self.view == View::IssueDetail {
+                            self.issue_detail_state.notes = notes;
+                            self.issue_detail_state.loading_notes = false;
+                        } else if self.view == View::MrDetail {
+                            self.mr_detail_state.notes = notes;
+                            self.mr_detail_state.loading_notes = false;
+                        }
+                    }
+                    Err(e) => {
+                        self.show_error(format!("Notes: {e}"));
                     }
                 }
-                Err(e) => {
-                    self.show_error(format!("Notes: {e}"));
-                }
-            },
+            }
             AsyncMsg::ActionDone(result) => {
                 self.loading = false;
                 match result {
@@ -382,6 +406,56 @@ impl App {
                     Err(e) => {
                         self.show_error(e.to_string());
                     }
+                }
+            }
+            AsyncMsg::IssueUpdated(result, project_path) => {
+                self.loading = false;
+                match result {
+                    Ok(issue) => {
+                        if let Some(pos) = self.issues.iter().position(|e| {
+                            e.issue.iid == issue.iid && e.project_path == project_path
+                        }) {
+                            let custom_status = self.issues[pos].issue.custom_status.clone();
+                            self.issues[pos].issue = issue;
+                            self.issues[pos].issue.custom_status = custom_status;
+                        }
+                        self.error = None;
+                        self.refilter_issues();
+                        self.save_cache();
+                    }
+                    Err(e) => self.show_error(e.to_string()),
+                }
+            }
+            AsyncMsg::MrUpdated(result, project_path) => {
+                self.loading = false;
+                match result {
+                    Ok(mr) => {
+                        if let Some(pos) = self.mrs.iter().position(|e| {
+                            e.mr.iid == mr.iid && e.project_path == project_path
+                        }) {
+                            self.mrs[pos].mr = mr;
+                        }
+                        self.error = None;
+                        self.refilter_mrs();
+                        self.save_cache();
+                    }
+                    Err(e) => self.show_error(e.to_string()),
+                }
+            }
+            AsyncMsg::IssueStatusUpdated(result) => {
+                self.loading = false;
+                match result {
+                    Ok((project_path, iid, status_name)) => {
+                        if let Some(pos) = self.issues.iter().position(|e| {
+                            e.issue.iid == iid && e.project_path == project_path
+                        }) {
+                            self.issues[pos].issue.custom_status = Some(status_name);
+                        }
+                        self.error = None;
+                        self.refilter_issues();
+                        self.save_cache();
+                    }
+                    Err(e) => self.show_error(e.to_string()),
                 }
             }
             AsyncMsg::LabelsLoaded(result) => {
@@ -984,26 +1058,36 @@ impl App {
         let tx = self.async_tx.clone();
         self.loading = true;
         tokio::spawn(async move {
-            let result = match action {
-                ConfirmAction::CloseIssue(project, iid) => client
-                    .close_issue(&project, iid)
-                    .await
-                    .map(|_| format!("Closed #{iid}")),
-                ConfirmAction::ReopenIssue(project, iid) => client
-                    .reopen_issue(&project, iid)
-                    .await
-                    .map(|_| format!("Reopened #{iid}")),
-                ConfirmAction::ApproveMr(project, iid) => client
-                    .approve_mr(&project, iid)
-                    .await
-                    .map(|_| format!("Approved !{iid}")),
-                ConfirmAction::MergeMr(project, iid) => client
-                    .merge_mr(&project, iid)
-                    .await
-                    .map(|_| format!("Merged !{iid}")),
+            match action {
+                ConfirmAction::CloseIssue(project, iid) => {
+                    let result = client
+                        .update_issue(&project, iid, serde_json::json!({"state_event": "close"}))
+                        .await;
+                    let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
+                }
+                ConfirmAction::ReopenIssue(project, iid) => {
+                    let result = client
+                        .update_issue(
+                            &project,
+                            iid,
+                            serde_json::json!({"state_event": "reopen"}),
+                        )
+                        .await;
+                    let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
+                }
+                ConfirmAction::ApproveMr(project, iid) => {
+                    let result = client
+                        .approve_mr(&project, iid)
+                        .await
+                        .map(|_| format!("Approved !{iid}"));
+                    let _ = tx.send(AsyncMsg::ActionDone(result));
+                }
+                ConfirmAction::MergeMr(project, iid) => {
+                    let result = client.merge_mr(&project, iid).await;
+                    let _ = tx.send(AsyncMsg::MrUpdated(result, project));
+                }
                 ConfirmAction::QuitApp => unreachable!(),
-            };
-            let _ = tx.send(AsyncMsg::ActionDone(result));
+            }
         });
     }
 
@@ -1022,14 +1106,15 @@ impl App {
 
         let client = self.client.clone();
         let tx = self.async_tx.clone();
+        let project = project.to_string();
         let status_display = status_name.to_string();
         self.loading = true;
         tokio::spawn(async move {
             let result = client
                 .update_issue_status(issue_id, &status_id)
                 .await
-                .map(|_| format!("#{iid} → {status_display}"));
-            let _ = tx.send(AsyncMsg::ActionDone(result));
+                .map(|_| (project, iid, status_display));
+            let _ = tx.send(AsyncMsg::IssueStatusUpdated(result));
         });
     }
 
@@ -1059,105 +1144,79 @@ impl App {
         }
     }
 
+    /// Extract (project_path, iid, is_mr) for the currently selected item.
+    fn selected_item_ref(&self) -> Option<(String, u64, bool)> {
+        match self.view {
+            View::IssueList => self
+                .issue_list_state
+                .selected_issue(&self.issues)
+                .map(|i| (i.project_path.clone(), i.issue.iid, false)),
+            View::IssueDetail => self
+                .current_detail_issue()
+                .map(|i| (i.project_path.clone(), i.issue.iid, false)),
+            View::MrList => self
+                .mr_list_state
+                .selected_mr(&self.mrs)
+                .map(|m| (m.project_path.clone(), m.mr.iid, true)),
+            View::MrDetail => self
+                .current_detail_mr()
+                .map(|m| (m.project_path.clone(), m.mr.iid, true)),
+            _ => None,
+        }
+    }
+
     fn update_labels(&mut self, labels: Vec<String>) {
-        let (project, iid, _is_mr) = match self.view {
-            View::IssueList => {
-                if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
-                    (item.project_path.clone(), item.issue.iid, false)
-                } else {
-                    return;
-                }
-            }
-            View::IssueDetail => {
-                if let Some(item) = self.current_detail_issue() {
-                    (item.project_path.clone(), item.issue.iid, false)
-                } else {
-                    return;
-                }
-            }
-            View::MrList => {
-                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
-                    (item.project_path.clone(), item.mr.iid, true)
-                } else {
-                    return;
-                }
-            }
-            View::MrDetail => {
-                if let Some(item) = self.current_detail_mr() {
-                    (item.project_path.clone(), item.mr.iid, true)
-                } else {
-                    return;
-                }
-            }
-            _ => return,
+        let Some((project, iid, is_mr)) = self.selected_item_ref() else {
+            return;
         };
 
+        let payload = serde_json::json!({"labels": labels.join(",")});
         let client = self.client.clone();
         let tx = self.async_tx.clone();
         self.loading = true;
         tokio::spawn(async move {
-            let result = client
-                .update_issue_labels(&project, iid, &labels)
-                .await
-                .map(|_| "Labels updated".to_string());
-            let _ = tx.send(AsyncMsg::ActionDone(result));
+            if is_mr {
+                let result = client.update_mr(&project, iid, payload).await;
+                let _ = tx.send(AsyncMsg::MrUpdated(result, project));
+            } else {
+                let result = client.update_issue(&project, iid, payload).await;
+                let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
+            }
         });
     }
 
     fn update_assignee(&mut self, username: &str) {
-        // For simplicity, we search users and use the first match
+        let Some((project, iid, is_mr)) = self.selected_item_ref() else {
+            return;
+        };
+
         let client = self.client.clone();
         let tx = self.async_tx.clone();
         let username = username.to_string();
-        let (project, iid) = match self.view {
-            View::IssueList => {
-                if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
-                    (item.project_path.clone(), item.issue.iid)
-                } else {
-                    return;
-                }
-            }
-            View::IssueDetail => {
-                if let Some(item) = self.current_detail_issue() {
-                    (item.project_path.clone(), item.issue.iid)
-                } else {
-                    return;
-                }
-            }
-            View::MrList => {
-                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
-                    (item.project_path.clone(), item.mr.iid)
-                } else {
-                    return;
-                }
-            }
-            View::MrDetail => {
-                if let Some(item) = self.current_detail_mr() {
-                    (item.project_path.clone(), item.mr.iid)
-                } else {
-                    return;
-                }
-            }
-            _ => return,
-        };
-
         self.loading = true;
         tokio::spawn(async move {
             let users = client.search_users(&username).await;
-            let result = match users {
+            match users {
                 Ok(users) => {
                     if let Some(user) = users.first() {
-                        client
-                            .update_issue_assignees(&project, iid, &[user.id])
-                            .await
-                            .map(|_| format!("Assigned to @{username}"))
+                        let payload = serde_json::json!({"assignee_ids": [user.id]});
+                        if is_mr {
+                            let result = client.update_mr(&project, iid, payload).await;
+                            let _ = tx.send(AsyncMsg::MrUpdated(result, project));
+                        } else {
+                            let result = client.update_issue(&project, iid, payload).await;
+                            let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
+                        }
                     } else {
-                        Err(anyhow::anyhow!("User '{username}' not found"))
+                        let _ = tx.send(AsyncMsg::ActionDone(Err(anyhow::anyhow!(
+                            "User '{username}' not found"
+                        ))));
                     }
                 }
-                Err(e) => Err(e),
-            };
-            let _ = tx.send(AsyncMsg::ActionDone(result));
+                Err(e) => {
+                    let _ = tx.send(AsyncMsg::ActionDone(Err(e)));
+                }
+            }
         });
     }
 
@@ -1200,18 +1259,22 @@ impl App {
 
         self.loading = true;
         tokio::spawn(async move {
-            let result = if is_mr {
-                client
-                    .create_mr_note(&project, iid, &body)
-                    .await
-                    .map(|_| "Comment added".to_string())
+            let create_result = if is_mr {
+                client.create_mr_note(&project, iid, &body).await
             } else {
-                client
-                    .create_issue_note(&project, iid, &body)
-                    .await
-                    .map(|_| "Comment added".to_string())
+                client.create_issue_note(&project, iid, &body).await
             };
-            let _ = tx.send(AsyncMsg::ActionDone(result));
+            if let Err(e) = create_result {
+                let _ = tx.send(AsyncMsg::ActionDone(Err(e)));
+                return;
+            }
+            // Re-fetch notes so the UI shows the new comment
+            let notes = if is_mr {
+                client.list_mr_notes(&project, iid).await
+            } else {
+                client.list_issue_notes(&project, iid).await
+            };
+            let _ = tx.send(AsyncMsg::NotesLoaded(notes));
         });
     }
 

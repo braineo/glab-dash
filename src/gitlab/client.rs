@@ -419,73 +419,33 @@ impl GitLabClient {
         Ok(all)
     }
 
-    pub async fn close_issue(&self, project: &str, iid: u64) -> Result<Issue> {
-        let url = self.api_url(&format!(
-            "/projects/{}/issues/{}",
-            Self::encode_project(project),
-            iid
-        ));
-        let resp = self
-            .client
-            .put(&url)
-            .json(&serde_json::json!({"state_event": "close"}))
-            .send()
-            .await?;
-        Self::handle_response(resp).await
-    }
-
-    pub async fn reopen_issue(&self, project: &str, iid: u64) -> Result<Issue> {
-        let url = self.api_url(&format!(
-            "/projects/{}/issues/{}",
-            Self::encode_project(project),
-            iid
-        ));
-        let resp = self
-            .client
-            .put(&url)
-            .json(&serde_json::json!({"state_event": "reopen"}))
-            .send()
-            .await?;
-        Self::handle_response(resp).await
-    }
-
-    pub async fn update_issue_labels(
+    pub async fn update_issue(
         &self,
         project: &str,
         iid: u64,
-        labels: &[String],
+        payload: serde_json::Value,
     ) -> Result<Issue> {
         let url = self.api_url(&format!(
             "/projects/{}/issues/{}",
             Self::encode_project(project),
             iid
         ));
-        let resp = self
-            .client
-            .put(&url)
-            .json(&serde_json::json!({"labels": labels.join(",")}))
-            .send()
-            .await?;
+        let resp = self.client.put(&url).json(&payload).send().await?;
         Self::handle_response(resp).await
     }
 
-    pub async fn update_issue_assignees(
+    pub async fn update_mr(
         &self,
         project: &str,
         iid: u64,
-        assignee_ids: &[u64],
-    ) -> Result<Issue> {
+        payload: serde_json::Value,
+    ) -> Result<MergeRequest> {
         let url = self.api_url(&format!(
-            "/projects/{}/issues/{}",
+            "/projects/{}/merge_requests/{}",
             Self::encode_project(project),
             iid
         ));
-        let resp = self
-            .client
-            .put(&url)
-            .json(&serde_json::json!({"assignee_ids": assignee_ids}))
-            .send()
-            .await?;
+        let resp = self.client.put(&url).json(&payload).send().await?;
         Self::handle_response(resp).await
     }
 
