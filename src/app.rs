@@ -1054,9 +1054,46 @@ impl App {
     }
 
     fn execute_confirm(&mut self, action: ConfirmAction) {
+        // Optimistic updates
+        match &action {
+            ConfirmAction::CloseIssue(project, iid) => {
+                if let Some(pos) = self
+                    .issues
+                    .iter()
+                    .position(|e| e.issue.iid == *iid && e.project_path == *project)
+                {
+                    self.issues[pos].issue.state = "closed".to_string();
+                    self.refilter_issues();
+                    self.save_cache();
+                }
+            }
+            ConfirmAction::ReopenIssue(project, iid) => {
+                if let Some(pos) = self
+                    .issues
+                    .iter()
+                    .position(|e| e.issue.iid == *iid && e.project_path == *project)
+                {
+                    self.issues[pos].issue.state = "opened".to_string();
+                    self.refilter_issues();
+                    self.save_cache();
+                }
+            }
+            ConfirmAction::MergeMr(project, iid) => {
+                if let Some(pos) = self
+                    .mrs
+                    .iter()
+                    .position(|e| e.mr.iid == *iid && e.project_path == *project)
+                {
+                    self.mrs[pos].mr.state = "merged".to_string();
+                    self.refilter_mrs();
+                    self.save_cache();
+                }
+            }
+            _ => {}
+        }
+
         let client = self.client.clone();
         let tx = self.async_tx.clone();
-        self.loading = true;
         tokio::spawn(async move {
             match action {
                 ConfirmAction::CloseIssue(project, iid) => {
@@ -1104,11 +1141,21 @@ impl App {
             return;
         };
 
+        // Optimistic update
+        if let Some(pos) = self
+            .issues
+            .iter()
+            .position(|e| e.issue.iid == iid && e.project_path == project)
+        {
+            self.issues[pos].issue.custom_status = Some(status_name.to_string());
+            self.refilter_issues();
+            self.save_cache();
+        }
+
         let client = self.client.clone();
         let tx = self.async_tx.clone();
         let project = project.to_string();
         let status_display = status_name.to_string();
-        self.loading = true;
         tokio::spawn(async move {
             let result = client
                 .update_issue_status(issue_id, &status_id)
@@ -1144,36 +1191,47 @@ impl App {
         }
     }
 
-    /// Extract (project_path, iid, is_mr) for the currently selected item.
-    fn selected_item_ref(&self) -> Option<(String, u64, bool)> {
+    /// Return the index into self.issues / self.mrs for the currently selected item,
+    /// plus (project_path, iid, is_mr).
+    fn selected_item_idx(&self) -> Option<(usize, String, u64, bool)> {
         match self.view {
-            View::IssueList => self
-                .issue_list_state
-                .selected_issue(&self.issues)
-                .map(|i| (i.project_path.clone(), i.issue.iid, false)),
-            View::IssueDetail => self
-                .current_detail_issue()
-                .map(|i| (i.project_path.clone(), i.issue.iid, false)),
-            View::MrList => self
-                .mr_list_state
-                .selected_mr(&self.mrs)
-                .map(|m| (m.project_path.clone(), m.mr.iid, true)),
-            View::MrDetail => self
-                .current_detail_mr()
-                .map(|m| (m.project_path.clone(), m.mr.iid, true)),
+            View::IssueList | View::IssueDetail => {
+                let idx = self
+                    .issue_list_state
+                    .table_state
+                    .selected()
+                    .and_then(|sel| self.issue_list_state.filtered_indices.get(sel).copied())?;
+                let item = self.issues.get(idx)?;
+                Some((idx, item.project_path.clone(), item.issue.iid, false))
+            }
+            View::MrList | View::MrDetail => {
+                let idx = self
+                    .mr_list_state
+                    .table_state
+                    .selected()
+                    .and_then(|sel| self.mr_list_state.filtered_indices.get(sel).copied())?;
+                let item = self.mrs.get(idx)?;
+                Some((idx, item.project_path.clone(), item.mr.iid, true))
+            }
             _ => None,
         }
     }
 
     fn update_labels(&mut self, labels: Vec<String>) {
-        let Some((project, iid, is_mr)) = self.selected_item_ref() else {
+        let Some((idx, project, iid, is_mr)) = self.selected_item_idx() else {
             return;
         };
+
+        // Optimistic update
+        if is_mr {
+            self.mrs[idx].mr.labels = labels.clone();
+        } else {
+            self.issues[idx].issue.labels = labels.clone();
+        }
 
         let payload = serde_json::json!({"labels": labels.join(",")});
         let client = self.client.clone();
         let tx = self.async_tx.clone();
-        self.loading = true;
         tokio::spawn(async move {
             if is_mr {
                 let result = client.update_mr(&project, iid, payload).await;
@@ -1186,14 +1244,27 @@ impl App {
     }
 
     fn update_assignee(&mut self, username: &str) {
-        let Some((project, iid, is_mr)) = self.selected_item_ref() else {
+        let Some((idx, project, iid, is_mr)) = self.selected_item_idx() else {
             return;
         };
+
+        // Optimistic update with a placeholder User
+        let placeholder = User {
+            id: 0,
+            username: username.to_string(),
+            name: username.to_string(),
+            avatar_url: None,
+            web_url: String::new(),
+        };
+        if is_mr {
+            self.mrs[idx].mr.assignees = vec![placeholder];
+        } else {
+            self.issues[idx].issue.assignees = vec![placeholder];
+        }
 
         let client = self.client.clone();
         let tx = self.async_tx.clone();
         let username = username.to_string();
-        self.loading = true;
         tokio::spawn(async move {
             let users = client.search_users(&username).await;
             match users {
