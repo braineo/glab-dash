@@ -1,4 +1,5 @@
 mod app;
+mod cache;
 mod config;
 #[cfg(test)]
 mod config_tests;
@@ -52,7 +53,8 @@ async fn main() -> Result<()> {
     // Start event handler
     let mut events = EventHandler::new(Duration::from_millis(100));
 
-    // Initial data fetch
+    // Load cache for instant startup, then fetch fresh data in background
+    app.load_cache();
     app.loading = true;
     app.fetch_all();
 

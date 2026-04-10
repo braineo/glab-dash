@@ -5,6 +5,18 @@ use ratatui::widgets::Paragraph;
 
 use crate::ui::styles;
 
+fn format_age(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s ago")
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86400)
+    }
+}
+
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -13,6 +25,7 @@ pub fn render(
     item_count: usize,
     loading: bool,
     error: Option<&str>,
+    last_fetched_at: Option<u64>,
 ) {
     let view_icon = match view_name {
         "Dashboard" => "◈",
@@ -39,6 +52,18 @@ pub fn render(
         spans.push(Span::styled(
             format!("{item_count} items"),
             ratatui::style::Style::default().fg(styles::TEXT),
+        ));
+    }
+
+    if let Some(ts) = last_fetched_at {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let age = now.saturating_sub(ts);
+        spans.push(Span::styled(
+            format!(" ({})", format_age(age)),
+            styles::help_desc_style(),
         ));
     }
 

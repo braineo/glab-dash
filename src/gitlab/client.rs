@@ -50,23 +50,27 @@ impl GitLabClient {
         state: &str,
         page: u32,
         per_page: u32,
+        updated_after: Option<&str>,
     ) -> Result<Vec<Issue>> {
         let url = self.api_url(&format!(
             "/projects/{}/issues",
             Self::encode_project(project)
         ));
-        let resp = self
+        let per_page_s = per_page.to_string();
+        let page_s = page.to_string();
+        let mut req = self
             .client
             .get(&url)
             .query(&[
                 ("state", state),
-                ("per_page", &per_page.to_string()),
-                ("page", &page.to_string()),
+                ("per_page", per_page_s.as_str()),
+                ("page", page_s.as_str()),
                 ("with_labels_details", "false"),
-            ])
-            .send()
-            .await
-            .context("Failed to fetch project issues")?;
+            ]);
+        if let Some(after) = updated_after {
+            req = req.query(&[("updated_after", after)]);
+        }
+        let resp = req.send().await.context("Failed to fetch project issues")?;
         Self::handle_response(resp).await
     }
 
@@ -76,21 +80,25 @@ impl GitLabClient {
         state: &str,
         page: u32,
         per_page: u32,
+        updated_after: Option<&str>,
     ) -> Result<Vec<Issue>> {
         let url = self.api_url("/issues");
-        let resp = self
+        let per_page_s = per_page.to_string();
+        let page_s = page.to_string();
+        let mut req = self
             .client
             .get(&url)
             .query(&[
                 ("assignee_username", username),
                 ("state", state),
                 ("scope", "all"),
-                ("per_page", &per_page.to_string()),
-                ("page", &page.to_string()),
-            ])
-            .send()
-            .await
-            .context("Failed to fetch assigned issues")?;
+                ("per_page", per_page_s.as_str()),
+                ("page", page_s.as_str()),
+            ]);
+        if let Some(after) = updated_after {
+            req = req.query(&[("updated_after", after)]);
+        }
+        let resp = req.send().await.context("Failed to fetch assigned issues")?;
         Self::handle_response(resp).await
     }
 
@@ -212,22 +220,26 @@ impl GitLabClient {
         state: &str,
         page: u32,
         per_page: u32,
+        updated_after: Option<&str>,
     ) -> Result<Vec<MergeRequest>> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests",
             Self::encode_project(project)
         ));
-        let resp = self
+        let per_page_s = per_page.to_string();
+        let page_s = page.to_string();
+        let mut req = self
             .client
             .get(&url)
             .query(&[
                 ("state", state),
-                ("per_page", &per_page.to_string()),
-                ("page", &page.to_string()),
-            ])
-            .send()
-            .await
-            .context("Failed to fetch project MRs")?;
+                ("per_page", per_page_s.as_str()),
+                ("page", page_s.as_str()),
+            ]);
+        if let Some(after) = updated_after {
+            req = req.query(&[("updated_after", after)]);
+        }
+        let resp = req.send().await.context("Failed to fetch project MRs")?;
         Self::handle_response(resp).await
     }
 
@@ -237,21 +249,25 @@ impl GitLabClient {
         state: &str,
         page: u32,
         per_page: u32,
+        updated_after: Option<&str>,
     ) -> Result<Vec<MergeRequest>> {
         let url = self.api_url("/merge_requests");
-        let resp = self
+        let per_page_s = per_page.to_string();
+        let page_s = page.to_string();
+        let mut req = self
             .client
             .get(&url)
             .query(&[
                 ("assignee_username", username),
                 ("state", state),
                 ("scope", "all"),
-                ("per_page", &per_page.to_string()),
-                ("page", &page.to_string()),
-            ])
-            .send()
-            .await
-            .context("Failed to fetch assigned MRs")?;
+                ("per_page", per_page_s.as_str()),
+                ("page", page_s.as_str()),
+            ]);
+        if let Some(after) = updated_after {
+            req = req.query(&[("updated_after", after)]);
+        }
+        let resp = req.send().await.context("Failed to fetch assigned MRs")?;
         Self::handle_response(resp).await
     }
 
@@ -261,21 +277,25 @@ impl GitLabClient {
         state: &str,
         page: u32,
         per_page: u32,
+        updated_after: Option<&str>,
     ) -> Result<Vec<MergeRequest>> {
         let url = self.api_url("/merge_requests");
-        let resp = self
+        let per_page_s = per_page.to_string();
+        let page_s = page.to_string();
+        let mut req = self
             .client
             .get(&url)
             .query(&[
                 ("reviewer_username", username),
                 ("state", state),
                 ("scope", "all"),
-                ("per_page", &per_page.to_string()),
-                ("page", &page.to_string()),
-            ])
-            .send()
-            .await
-            .context("Failed to fetch reviewer MRs")?;
+                ("per_page", per_page_s.as_str()),
+                ("page", page_s.as_str()),
+            ]);
+        if let Some(after) = updated_after {
+            req = req.query(&[("updated_after", after)]);
+        }
+        let resp = req.send().await.context("Failed to fetch reviewer MRs")?;
         Self::handle_response(resp).await
     }
 
@@ -398,12 +418,16 @@ impl GitLabClient {
 
     // ── Fetch all data for dashboard ──
 
-    pub async fn fetch_tracking_issues(&self, state: &str) -> Result<Vec<TrackedIssue>> {
+    pub async fn fetch_tracking_issues(
+        &self,
+        state: &str,
+        updated_after: Option<&str>,
+    ) -> Result<Vec<TrackedIssue>> {
         let mut all = Vec::new();
         let mut page = 1u32;
         loop {
             let issues = self
-                .list_project_issues(&self.config.tracking_project, state, page, 100)
+                .list_project_issues(&self.config.tracking_project, state, page, 100, updated_after)
                 .await?;
             let done = issues.len() < 100;
             for issue in issues {
@@ -425,12 +449,15 @@ impl GitLabClient {
         &self,
         members: &[String],
         state: &str,
+        updated_after: Option<&str>,
     ) -> Result<Vec<TrackedIssue>> {
         let mut all = Vec::new();
         for member in members {
             let mut page = 1u32;
             loop {
-                let issues = self.list_assigned_issues(member, state, page, 100).await?;
+                let issues = self
+                    .list_assigned_issues(member, state, page, 100, updated_after)
+                    .await?;
                 let done = issues.len() < 100;
                 for issue in issues {
                     // Skip issues from the tracking project
@@ -462,12 +489,16 @@ impl GitLabClient {
         Ok(all)
     }
 
-    pub async fn fetch_tracking_mrs(&self, state: &str) -> Result<Vec<TrackedMergeRequest>> {
+    pub async fn fetch_tracking_mrs(
+        &self,
+        state: &str,
+        updated_after: Option<&str>,
+    ) -> Result<Vec<TrackedMergeRequest>> {
         let mut all = Vec::new();
         let mut page = 1u32;
         loop {
             let mrs = self
-                .list_project_mrs(&self.config.tracking_project, state, page, 100)
+                .list_project_mrs(&self.config.tracking_project, state, page, 100, updated_after)
                 .await?;
             let done = mrs.len() < 100;
             for mr in mrs {
@@ -489,6 +520,7 @@ impl GitLabClient {
         &self,
         members: &[String],
         state: &str,
+        updated_after: Option<&str>,
     ) -> Result<Vec<TrackedMergeRequest>> {
         let mut all = Vec::new();
         for member in members {
@@ -497,9 +529,11 @@ impl GitLabClient {
                 let mut page = 1u32;
                 loop {
                     let mrs = if is_reviewer {
-                        self.list_reviewer_mrs(member, state, page, 100).await?
+                        self.list_reviewer_mrs(member, state, page, 100, updated_after)
+                            .await?
                     } else {
-                        self.list_assigned_mrs(member, state, page, 100).await?
+                        self.list_assigned_mrs(member, state, page, 100, updated_after)
+                            .await?
                     };
                     let done = mrs.len() < 100;
                     for mr in mrs {

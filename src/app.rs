@@ -5,6 +5,9 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Widget;
 use tokio::sync::mpsc;
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::cache;
 use crate::config::Config;
 use crate::filter::{Field, FilterCondition, Op};
 use crate::gitlab::client::GitLabClient;
@@ -51,8 +54,9 @@ pub enum PickerContext {
 
 /// Messages from async operations
 pub enum AsyncMsg {
-    IssuesLoaded(Result<(Vec<TrackedIssue>, Vec<TrackedIssue>)>),
-    MrsLoaded(Result<(Vec<TrackedMergeRequest>, Vec<TrackedMergeRequest>)>),
+    /// (result, is_incremental)
+    IssuesLoaded(Result<(Vec<TrackedIssue>, Vec<TrackedIssue>)>, bool),
+    MrsLoaded(Result<(Vec<TrackedMergeRequest>, Vec<TrackedMergeRequest>)>, bool),
     NotesLoaded(Result<Vec<Note>>),
     ActionDone(Result<String>),
     LabelsLoaded(Result<Vec<ProjectLabel>>),
@@ -84,6 +88,9 @@ pub struct App {
     pub filter_editor_state: filter_editor::FilterEditorState,
     pub picker_state: Option<picker::PickerState>,
     pub comment_input: crate::ui::components::input::InputState,
+
+    // Cache / incremental fetch
+    pub last_fetched_at: Option<u64>,
 
     // Filter state
     pub issue_filters: Vec<FilterCondition>,
@@ -119,11 +126,30 @@ impl App {
             filter_editor_state: filter_editor::FilterEditorState::default(),
             picker_state: None,
             comment_input: crate::ui::components::input::InputState::default(),
+            last_fetched_at: None,
             issue_filters: Vec::new(),
             mr_filters: Vec::new(),
             filter_bar_focused: false,
             filter_bar_selected: 0,
         }
+    }
+
+    /// Load cached data for instant startup display.
+    pub fn load_cache(&mut self) {
+        if let Some(cached) = cache::load() {
+            if cached.team_index == self.active_team {
+                self.last_fetched_at = Some(cached.saved_at);
+                self.issues = cached.issues;
+                self.mrs = cached.mrs;
+                self.labels = cached.labels;
+                self.refilter_issues();
+                self.refilter_mrs();
+            }
+        }
+    }
+
+    fn save_cache(&self) {
+        cache::save(self.active_team, &self.issues, &self.mrs, &self.labels);
     }
 
     pub fn fetch_all(&self) {
@@ -132,18 +158,41 @@ impl App {
         self.fetch_labels();
     }
 
+    /// Convert a unix timestamp to ISO 8601 for the GitLab API, with 60s safety buffer.
+    fn updated_after_param(ts: u64) -> String {
+        let buffered = ts.saturating_sub(60);
+        chrono::DateTime::from_timestamp(buffered as i64, 0)
+            .unwrap_or_default()
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    }
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+
     fn fetch_issues(&self) {
         let client = self.client.clone();
         let members = self.config.team_members(self.active_team);
         let tx = self.async_tx.clone();
+        let updated_after = self.last_fetched_at.map(Self::updated_after_param);
+        let incremental = updated_after.is_some();
         tokio::spawn(async move {
-            let tracking = client.fetch_tracking_issues("opened").await;
-            let external = client.fetch_external_issues(&members, "opened").await;
+            let (state, ua) = if incremental {
+                ("all", updated_after.as_deref())
+            } else {
+                ("opened", None)
+            };
+            let tracking = client.fetch_tracking_issues(state, ua).await;
+            let external = client.fetch_external_issues(&members, state, ua).await;
             let result = match (tracking, external) {
                 (Ok(t), Ok(e)) => Ok((t, e)),
                 (Err(e), _) | (_, Err(e)) => Err(e),
             };
-            let _ = tx.send(AsyncMsg::IssuesLoaded(result));
+            let _ = tx.send(AsyncMsg::IssuesLoaded(result, incremental));
         });
     }
 
@@ -151,14 +200,21 @@ impl App {
         let client = self.client.clone();
         let members = self.config.team_members(self.active_team);
         let tx = self.async_tx.clone();
+        let updated_after = self.last_fetched_at.map(Self::updated_after_param);
+        let incremental = updated_after.is_some();
         tokio::spawn(async move {
-            let tracking = client.fetch_tracking_mrs("opened").await;
-            let external = client.fetch_external_mrs(&members, "opened").await;
+            let (state, ua) = if incremental {
+                ("all", updated_after.as_deref())
+            } else {
+                ("opened", None)
+            };
+            let tracking = client.fetch_tracking_mrs(state, ua).await;
+            let external = client.fetch_external_mrs(&members, state, ua).await;
             let result = match (tracking, external) {
                 (Ok(t), Ok(e)) => Ok((t, e)),
                 (Err(e), _) | (_, Err(e)) => Err(e),
             };
-            let _ = tx.send(AsyncMsg::MrsLoaded(result));
+            let _ = tx.send(AsyncMsg::MrsLoaded(result, incremental));
         });
     }
 
@@ -194,26 +250,57 @@ impl App {
 
     pub fn handle_async_msg(&mut self, msg: AsyncMsg) {
         match msg {
-            AsyncMsg::IssuesLoaded(result) => match result {
+            AsyncMsg::IssuesLoaded(result, incremental) => match result {
                 Ok((tracking, external)) => {
-                    self.issues = tracking;
-                    self.issues.extend(external);
+                    if incremental {
+                        // Merge: upsert changed items, then drop non-opened
+                        for item in tracking.into_iter().chain(external) {
+                            if let Some(pos) =
+                                self.issues.iter().position(|e| e.issue.id == item.issue.id)
+                            {
+                                self.issues[pos] = item;
+                            } else {
+                                self.issues.push(item);
+                            }
+                        }
+                        self.issues.retain(|i| i.issue.state == "opened");
+                    } else {
+                        self.issues = tracking;
+                        self.issues.extend(external);
+                    }
+                    self.last_fetched_at = Some(Self::now_secs());
                     self.loading = false;
                     self.error = None;
                     self.refilter_issues();
+                    self.save_cache();
                 }
                 Err(e) => {
                     self.loading = false;
                     self.show_error(format!("Issues: {e}"));
                 }
             },
-            AsyncMsg::MrsLoaded(result) => match result {
+            AsyncMsg::MrsLoaded(result, incremental) => match result {
                 Ok((tracking, external)) => {
-                    self.mrs = tracking;
-                    self.mrs.extend(external);
+                    if incremental {
+                        for item in tracking.into_iter().chain(external) {
+                            if let Some(pos) =
+                                self.mrs.iter().position(|e| e.mr.id == item.mr.id)
+                            {
+                                self.mrs[pos] = item;
+                            } else {
+                                self.mrs.push(item);
+                            }
+                        }
+                        self.mrs.retain(|m| m.mr.state == "opened");
+                    } else {
+                        self.mrs = tracking;
+                        self.mrs.extend(external);
+                    }
+                    self.last_fetched_at = Some(Self::now_secs());
                     self.loading = false;
                     self.error = None;
                     self.refilter_mrs();
+                    self.save_cache();
                 }
                 Err(e) => {
                     self.loading = false;
@@ -250,6 +337,7 @@ impl App {
             AsyncMsg::LabelsLoaded(result) => {
                 if let Ok(labels) = result {
                     self.labels = labels;
+                    self.save_cache();
                 }
             }
         }
@@ -334,6 +422,7 @@ impl App {
             let num = c.to_digit(10).unwrap_or(0) as usize;
             if num >= 1 && num <= self.config.teams.len() {
                 self.active_team = num - 1;
+                self.last_fetched_at = None; // force full fetch for new team
                 self.loading = true;
                 self.fetch_all();
                 return false;
@@ -1122,6 +1211,7 @@ impl App {
             item_count,
             self.loading,
             self.error.as_deref(),
+            self.last_fetched_at,
         );
 
         // Render overlay on top

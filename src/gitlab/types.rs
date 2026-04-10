@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: u64,
     pub username: String,
@@ -11,7 +11,7 @@ pub struct User {
     pub web_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Label {
     pub id: u64,
     pub name: String,
@@ -19,14 +19,14 @@ pub struct Label {
     pub color: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Milestone {
     pub id: u64,
     pub title: String,
     pub state: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Issue {
     pub id: u64,
     pub iid: u64,
@@ -50,13 +50,13 @@ pub struct Issue {
     pub references: Option<References>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct References {
     #[serde(rename = "full")]
     pub full_ref: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pipeline {
     pub id: u64,
     pub status: String,
@@ -65,7 +65,7 @@ pub struct Pipeline {
     pub web_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRequest {
     pub id: u64,
     pub iid: u64,
@@ -101,12 +101,12 @@ pub struct MergeRequest {
     pub approved_by: Vec<ApprovalUser>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalUser {
     pub user: User,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
     pub id: u64,
     pub body: String,
@@ -116,7 +116,7 @@ pub struct Note {
     pub system: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectLabel {
     pub id: u64,
     pub name: String,
@@ -124,14 +124,14 @@ pub struct ProjectLabel {
     pub color: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRequestApprovals {
     #[serde(default)]
     pub approved_by: Vec<ApprovalUser>,
 }
 
 /// Wrapper that tags items with their source
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ItemSource {
     Tracking,
     External(String), // project path
@@ -146,14 +146,14 @@ impl std::fmt::Display for ItemSource {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackedIssue {
     pub issue: Issue,
     pub source: ItemSource,
     pub project_path: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackedMergeRequest {
     pub mr: MergeRequest,
     pub source: ItemSource,
