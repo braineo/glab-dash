@@ -319,7 +319,7 @@ pub fn render(
         } else {
             for (i, label) in item.mr.labels.iter().enumerate() {
                 if i > 0 {
-                    spans.push(Span::styled("  ", styles::help_desc_style()));
+                    spans.push(Span::raw(" "));
                 }
                 spans.extend(styles::label_spans(label));
             }
