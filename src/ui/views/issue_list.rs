@@ -129,7 +129,7 @@ impl IssueListState {
                     self.searching = true;
                 }
                 KeyCode::Char('r') => return IssueListAction::Refresh,
-                KeyCode::Char('x') => return IssueListAction::ToggleState,
+                KeyCode::Char('s') | KeyCode::Char('x') => return IssueListAction::ToggleState,
                 KeyCode::Char('l') => return IssueListAction::EditLabels,
                 KeyCode::Char('a') => return IssueListAction::EditAssignee,
                 KeyCode::Char('c') => return IssueListAction::Comment,

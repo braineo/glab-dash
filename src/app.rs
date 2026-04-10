@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::filter::{Field, FilterCondition, Op};
 use crate::gitlab::client::GitLabClient;
 use crate::gitlab::types::*;
-use crate::ui::components::{confirm_dialog, error_popup, help, picker};
+use crate::ui::components::{chord_popup, confirm_dialog, error_popup, help, picker};
 use crate::ui::keys;
 use crate::ui::views::{dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list};
 
@@ -32,6 +32,7 @@ pub enum Overlay {
     FilterEditor,
     Confirm(ConfirmAction),
     Picker(PickerContext),
+    Chord(ChordContext),
     CommentInput,
     Error(String),
 }
@@ -54,19 +55,12 @@ pub enum PickerContext {
     Status(String, u64, u64),
 }
 
-/// Pending key chord for quick inline editing (vim-style 2-key combos).
-/// Press a leader key (s=status, a=assignee) then a digit to select instantly.
-#[derive(Debug, Clone)]
-pub enum PendingChord {
-    Status {
-        options: Vec<(char, String)>,
-        project: String,
-        issue_id: u64,
-        iid: u64,
-    },
-    Assignee {
-        options: Vec<(char, String)>,
-    },
+/// Context for the chord popup overlay (what action to perform on selection).
+#[derive(Debug)]
+pub enum ChordContext {
+    /// Set issue status: (project_path, issue_db_id, issue_iid)
+    Status(String, u64, u64),
+    Assignee,
 }
 
 /// Messages from async operations
@@ -119,6 +113,9 @@ pub struct App {
     // Work item statuses per project (project_path -> available statuses)
     pub work_item_statuses: std::collections::HashMap<String, Vec<WorkItemStatus>>,
 
+    // Chord popup state (vim-style easymotion codes)
+    pub chord_state: Option<chord_popup::ChordState>,
+
     // Filter state
     pub issue_filters: Vec<FilterCondition>,
     pub mr_filters: Vec<FilterCondition>,
@@ -156,6 +153,7 @@ impl App {
             comment_input: crate::ui::components::input::InputState::default(),
             last_fetched_at: None,
             work_item_statuses: std::collections::HashMap::new(),
+            chord_state: None,
             issue_filters: Vec::new(),
             mr_filters: Vec::new(),
             filter_bar_focused: false,
@@ -639,6 +637,19 @@ impl App {
         }
     }
 
+    fn handle_chord_result(&mut self, value: String) {
+        let context = std::mem::replace(&mut self.overlay, Overlay::None);
+        match context {
+            Overlay::Chord(ChordContext::Status(project, issue_id, iid)) => {
+                self.set_issue_status(&project, issue_id, iid, &value);
+            }
+            Overlay::Chord(ChordContext::Assignee) => {
+                self.update_assignee(&value);
+            }
+            _ => {}
+        }
+    }
+
     fn handle_issue_list_key(&mut self, key: KeyEvent) {
         // Tab to focus filter bar
         if keys::is_tab(&key) && !self.issue_filters.is_empty() {
@@ -672,6 +683,19 @@ impl App {
                     let project = item.project_path.clone();
                     let issue_id = item.issue.id;
                     let iid = item.issue.iid;
+                    // Chord popup if statuses cached
+                    if let Some(statuses) = self.work_item_statuses.get(&project)
+                        && !statuses.is_empty()
+                    {
+                        let names: Vec<String> =
+                            statuses.iter().map(|s| s.name.clone()).collect();
+                        self.chord_state =
+                            Some(chord_popup::ChordState::new("Set Status", names));
+                        self.overlay =
+                            Overlay::Chord(ChordContext::Status(project, issue_id, iid));
+                        return;
+                    }
+                    // Fall back to fetch + picker/confirm
                     self.fetch_statuses_and_show_picker(project, issue_id, iid);
                 }
             }
@@ -690,8 +714,9 @@ impl App {
             }
             issue_list::IssueListAction::EditAssignee => {
                 let members = self.config.team_members(self.active_team);
-                self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
-                self.overlay = Overlay::Picker(PickerContext::Assignee);
+                self.chord_state =
+                    Some(chord_popup::ChordState::new("Set Assignee", members));
+                self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
             issue_list::IssueListAction::Comment => {
                 self.comment_input = crate::ui::components::input::InputState::default();
@@ -791,8 +816,9 @@ impl App {
             }
             mr_list::MrListAction::EditAssignee => {
                 let members = self.config.team_members(self.active_team);
-                self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
-                self.overlay = Overlay::Picker(PickerContext::Assignee);
+                self.chord_state =
+                    Some(chord_popup::ChordState::new("Set Assignee", members));
+                self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
             mr_list::MrListAction::Comment => {
                 self.comment_input = crate::ui::components::input::InputState::default();
@@ -843,7 +869,7 @@ impl App {
                     self.comment_input = crate::ui::components::input::InputState::default();
                     self.overlay = Overlay::CommentInput;
                 }
-                KeyCode::Char('x') => {
+                KeyCode::Char('s') | KeyCode::Char('x') => {
                     let project = item.project_path.clone();
                     let issue_id = item.issue.id;
                     let iid = item.issue.iid;
@@ -986,6 +1012,22 @@ impl App {
                             self.handle_picker_result(values);
                             self.picker_state = None;
                             self.overlay = Overlay::None;
+                        }
+                    }
+                }
+            }
+            Overlay::Chord(_) => {
+                if let Some(ref mut cs) = self.chord_state {
+                    let action = cs.handle_key(&key);
+                    match action {
+                        chord_popup::ChordAction::Continue => {}
+                        chord_popup::ChordAction::Cancel => {
+                            self.chord_state = None;
+                            self.overlay = Overlay::None;
+                        }
+                        chord_popup::ChordAction::Selected(value) => {
+                            self.chord_state = None;
+                            self.handle_chord_result(value);
                         }
                     }
                 }
@@ -1518,6 +1560,11 @@ impl App {
                     &self.comment_input,
                     "Comment (Enter to submit, Esc to cancel)",
                 );
+            }
+            Overlay::Chord(_) => {
+                if let Some(ref cs) = self.chord_state {
+                    chord_popup::render(frame, area, cs);
+                }
             }
             Overlay::Error(msg) => {
                 error_popup::render(frame, area, msg);
