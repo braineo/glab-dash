@@ -46,6 +46,33 @@ Env var overrides: `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_PROJECT`
 - Overlays: Help, FilterEditor, Picker, ConfirmDialog, CommentInput
 - Filter system: composable conditions applied client-side for instant filtering
 
+### FocusedItem — centralized view context
+
+`FocusedItem` (`src/app.rs`) captures the currently focused issue or MR. It is the **single source of truth** for context-dependent behavior:
+
+- **Key handlers** read `self.focused` to dispatch actions (e.g., `do_set_status()`, `do_toggle_state()` work for any view without knowing which list/detail is active)
+- **Status bar** shows per-view hints derived from `self.view`
+- **Help overlay** shows per-view sections derived from `self.view`
+
+`refresh_focused()` rebuilds `self.focused` from the current view + selection. It must be called after: view changes, list selection changes, data loads.
+
+### Key binding scheme
+
+**Global keys** (all views, skipped during search mode):
+- `q` — back / quit, `Esc` — back, `?` — help, `1-9` — switch team
+- `h` — go to Dashboard, `i` — go to IssueList, `m` — go to MrList
+
+**Issue views** (IssueList, IssueDetail):
+- `s` — set status (chord picker with all statuses)
+- `x` — close/reopen (chord picker filtered to done/canceled category statuses, or simple confirm if none)
+
+**MR views** (MrList, MrDetail):
+- `A` — approve, `M` — merge, `x` — close MR
+
+**Shared list keys**: `j/k` nav, `g/G` top/bottom, `/` search, `r` refresh, `o` browser, `l` labels, `a` assignee, `c` comment, `f/F/p` filters, `Tab` filter bar
+
+When adding new context-dependent behavior, read from `self.focused` instead of looking up items ad-hoc.
+
 ## Key Directories
 
 - `src/app.rs` — Main state machine, view routing, event handling

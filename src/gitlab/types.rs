@@ -144,6 +144,9 @@ pub struct WorkItemStatus {
     pub color: Option<String>,
     #[serde(default)]
     pub position: Option<i32>,
+    /// Status category from GitLab (e.g. "active", "done", "canceled").
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

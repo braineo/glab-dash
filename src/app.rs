@@ -37,10 +37,27 @@ pub enum Overlay {
     Error(String),
 }
 
+/// The item currently under the cursor or open in detail view.
+/// Single source of truth — rebuilt on every view/selection change via `refresh_focused()`.
+/// Key handlers, status bar, and help overlay all read from this.
+#[derive(Debug, Clone)]
+pub enum FocusedItem {
+    Issue {
+        project: String,
+        id: u64,
+        iid: u64,
+    },
+    Mr {
+        project: String,
+        iid: u64,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
     CloseIssue(String, u64),
     ReopenIssue(String, u64),
+    CloseMr(String, u64),
     ApproveMr(String, u64),
     MergeMr(String, u64),
     QuitApp,
@@ -75,7 +92,8 @@ pub enum AsyncMsg {
     /// Issue custom status changed: (project_path, iid, new_status_name).
     IssueStatusUpdated(Result<(String, u64, String)>),
     LabelsLoaded(Result<Vec<ProjectLabel>>),
-    StatusesLoaded(Result<Vec<WorkItemStatus>>, String, u64, u64),
+    /// (statuses, project, issue_db_id, iid, close_only)
+    StatusesLoaded(Result<Vec<WorkItemStatus>>, String, u64, u64, bool),
 }
 
 pub struct App {
@@ -112,6 +130,9 @@ pub struct App {
 
     // Work item statuses per project (project_path -> available statuses)
     pub work_item_statuses: std::collections::HashMap<String, Vec<WorkItemStatus>>,
+
+    // Centralized focused item — single source of truth for key handling & UI
+    pub focused: Option<FocusedItem>,
 
     // Chord popup state (vim-style easymotion codes)
     pub chord_state: Option<chord_popup::ChordState>,
@@ -163,6 +184,7 @@ impl App {
             comment_input: crate::ui::components::input::InputState::default(),
             last_fetched_at: None,
             work_item_statuses: std::collections::HashMap::new(),
+            focused: None,
             chord_state: None,
             issue_filters: Vec::new(),
             mr_filters: Vec::new(),
@@ -187,6 +209,31 @@ impl App {
                 self.refilter_mrs();
             }
         }
+    }
+
+    /// Rebuild `self.focused` from the current view + selection.
+    /// Call after every view change, list selection change, or data load.
+    fn refresh_focused(&mut self) {
+        self.focused = match self.view {
+            View::IssueList | View::IssueDetail => {
+                self.issue_list_state.selected_issue(&self.issues).map(|item| {
+                    FocusedItem::Issue {
+                        project: item.project_path.clone(),
+                        id: item.issue.id,
+                        iid: item.issue.iid,
+                    }
+                })
+            }
+            View::MrList | View::MrDetail => {
+                self.mr_list_state.selected_mr(&self.mrs).map(|item| {
+                    FocusedItem::Mr {
+                        project: item.project_path.clone(),
+                        iid: item.mr.iid,
+                    }
+                })
+            }
+            View::Dashboard => None,
+        };
     }
 
     fn rebuild_label_color_map(&mut self) {
@@ -294,7 +341,9 @@ impl App {
         });
     }
 
-    fn fetch_statuses_and_show_picker(&mut self, project: String, issue_id: u64, iid: u64) {
+    /// Fetch work-item statuses and show a chord popup.
+    /// `close_only`: when true, filter to close-category statuses (for `x` key).
+    fn fetch_statuses_and_show_chord(&mut self, project: String, issue_id: u64, iid: u64, close_only: bool) {
         // If we already have cached statuses for this project, show chord immediately
         if let Some(statuses) = self.work_item_statuses.get(&project) {
             if statuses.is_empty() {
@@ -312,9 +361,7 @@ impl App {
                 };
                 self.overlay = Overlay::Confirm(action);
             } else {
-                let names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
-                self.chord_state = Some(chord_popup::ChordState::new("Set Status", names).with_kind(chord_popup::ChordKind::Status));
-                self.overlay = Overlay::Chord(ChordContext::Status(project, issue_id, iid));
+                self.show_status_chord(&project, issue_id, iid, close_only);
             }
             return;
         }
@@ -326,8 +373,73 @@ impl App {
         self.loading = true;
         tokio::spawn(async move {
             let result = client.fetch_work_item_statuses(&project_clone).await;
-            let _ = tx.send(AsyncMsg::StatusesLoaded(result, project_clone, issue_id, iid));
+            let _ = tx.send(AsyncMsg::StatusesLoaded(result, project_clone, issue_id, iid, close_only));
         });
+    }
+
+    /// Build and display the status chord popup from cached statuses.
+    fn show_status_chord(&mut self, project: &str, issue_id: u64, iid: u64, close_only: bool) {
+        let Some(statuses) = self.work_item_statuses.get(project) else { return };
+        let (title, names): (&str, Vec<String>) = if close_only {
+            // Filter to close-category statuses; show all if category info unavailable
+            let close_names: Vec<String> = statuses
+                .iter()
+                .filter(|s| {
+                    s.category.as_deref().is_some_and(|c| {
+                        matches!(c, "done" | "canceled" | "closed")
+                    })
+                })
+                .map(|s| s.name.clone())
+                .collect();
+            if close_names.is_empty() {
+                // No close-category statuses — fall back to simple close/reopen
+                let item_state = self
+                    .issue_list_state
+                    .selected_issue(&self.issues)
+                    .or_else(|| self.current_detail_issue())
+                    .map(|i| i.issue.state.as_str())
+                    .unwrap_or("opened");
+                let action = if item_state == "opened" {
+                    ConfirmAction::CloseIssue(project.to_string(), iid)
+                } else {
+                    ConfirmAction::ReopenIssue(project.to_string(), iid)
+                };
+                self.overlay = Overlay::Confirm(action);
+                return;
+            } else {
+                ("Close As", close_names)
+            }
+        } else {
+            ("Set Status", statuses.iter().map(|s| s.name.clone()).collect())
+        };
+        self.chord_state = Some(
+            chord_popup::ChordState::new(title, names)
+                .with_kind(chord_popup::ChordKind::Status),
+        );
+        self.overlay = Overlay::Chord(ChordContext::Status(project.to_string(), issue_id, iid));
+    }
+
+    /// `s` key — open full status picker/chord for the focused issue.
+    fn do_set_status(&mut self) {
+        if let Some(FocusedItem::Issue { project, id, iid, .. }) = self.focused.clone() {
+            self.fetch_statuses_and_show_chord(project, id, iid, false);
+        }
+    }
+
+    /// `x` key — close/reopen the focused item.
+    /// Issues: chord picker filtered to close-category statuses (e.g. Done, Won't Do).
+    /// Falls back to simple confirm if no custom statuses exist.
+    /// MRs: simple close confirm.
+    fn do_toggle_state(&mut self) {
+        match self.focused.clone() {
+            Some(FocusedItem::Issue { project, id, iid, .. }) => {
+                self.fetch_statuses_and_show_chord(project, id, iid, true);
+            }
+            Some(FocusedItem::Mr { project, iid, .. }) => {
+                self.overlay = Overlay::Confirm(ConfirmAction::CloseMr(project, iid));
+            }
+            None => {}
+        }
     }
 
     fn fetch_notes_for_mr(&self, project: &str, iid: u64) {
@@ -362,6 +474,7 @@ impl App {
                     self.error = None;
                     self.loading = false;
                     self.refilter_issues();
+                    self.refresh_focused();
                     self.save_cache();
                 }
                 Err(e) => {
@@ -390,6 +503,7 @@ impl App {
                     self.loading = false;
                     self.error = None;
                     self.refilter_mrs();
+                    self.refresh_focused();
                     self.save_cache();
                 }
                 Err(e) => {
@@ -484,7 +598,7 @@ impl App {
                     self.save_cache();
                 }
             }
-            AsyncMsg::StatusesLoaded(result, project, issue_id, iid) => {
+            AsyncMsg::StatusesLoaded(result, project, issue_id, iid, close_only) => {
                 self.loading = false;
                 match result {
                     Ok(statuses) => {
@@ -503,15 +617,10 @@ impl App {
                             };
                             self.overlay = Overlay::Confirm(action);
                         } else {
-                            // Cache and show status chord
-                            let names: Vec<String> =
-                                statuses.iter().map(|s| s.name.clone()).collect();
                             self.work_item_statuses
                                 .insert(project.clone(), statuses);
-                            self.chord_state =
-                                Some(chord_popup::ChordState::new("Set Status", names).with_kind(chord_popup::ChordKind::Status));
-                            self.overlay =
-                                Overlay::Chord(ChordContext::Status(project, issue_id, iid));
+                            self.refresh_focused();
+                            self.show_status_chord(&project, issue_id, iid, close_only);
                         }
                     }
                     Err(e) => {
@@ -717,6 +826,7 @@ impl App {
         if keys::is_quit(&key) {
             if let Some(prev) = self.view_stack.pop() {
                 self.view = prev;
+                self.refresh_focused();
             } else {
                 self.overlay = Overlay::Confirm(ConfirmAction::QuitApp);
             }
@@ -752,8 +862,38 @@ impl App {
         if keys::is_back(&key) && !in_search {
             if let Some(prev) = self.view_stack.pop() {
                 self.view = prev;
+                self.refresh_focused();
             }
             return false;
+        }
+
+        // Global navigation — h/i/m jump between top-level views (skip in search mode)
+        if !in_search && key.modifiers == KeyModifiers::NONE {
+            match key.code {
+                KeyCode::Char('h') => {
+                    self.view_stack.clear();
+                    self.view = View::Dashboard;
+                    self.refresh_focused();
+                    return false;
+                }
+                KeyCode::Char('i') if self.view != View::IssueList => {
+                    self.view_stack.clear();
+                    self.view_stack.push(View::Dashboard);
+                    self.view = View::IssueList;
+                    self.refilter_issues();
+                    self.refresh_focused();
+                    return false;
+                }
+                KeyCode::Char('m') if self.view != View::MrList => {
+                    self.view_stack.clear();
+                    self.view_stack.push(View::Dashboard);
+                    self.view = View::MrList;
+                    self.refilter_mrs();
+                    self.refresh_focused();
+                    return false;
+                }
+                _ => {}
+            }
         }
 
         // View-specific handling
@@ -768,20 +908,8 @@ impl App {
         false
     }
 
-    fn handle_dashboard_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char('i') => {
-                self.view_stack.push(View::Dashboard);
-                self.view = View::IssueList;
-                self.refilter_issues();
-            }
-            KeyCode::Char('m') => {
-                self.view_stack.push(View::Dashboard);
-                self.view = View::MrList;
-                self.refilter_mrs();
-            }
-            _ => {}
-        }
+    fn handle_dashboard_key(&mut self, _key: KeyEvent) {
+        // i/m navigation is now global — see handle_key()
     }
 
     fn handle_chord_result(&mut self, value: String) {
@@ -806,6 +934,7 @@ impl App {
         }
 
         let action = self.issue_list_state.handle_key(&key, self.issues.len());
+        self.refresh_focused();
 
         match action {
             issue_list::IssueListAction::None => {}
@@ -825,26 +954,11 @@ impl App {
                     self.view = View::IssueDetail;
                 }
             }
+            issue_list::IssueListAction::SetStatus => {
+                self.do_set_status();
+            }
             issue_list::IssueListAction::ToggleState => {
-                if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
-                    let project = item.project_path.clone();
-                    let issue_id = item.issue.id;
-                    let iid = item.issue.iid;
-                    // Chord popup if statuses cached
-                    if let Some(statuses) = self.work_item_statuses.get(&project)
-                        && !statuses.is_empty()
-                    {
-                        let names: Vec<String> =
-                            statuses.iter().map(|s| s.name.clone()).collect();
-                        self.chord_state =
-                            Some(chord_popup::ChordState::new("Set Status", names).with_kind(chord_popup::ChordKind::Status));
-                        self.overlay =
-                            Overlay::Chord(ChordContext::Status(project, issue_id, iid));
-                        return;
-                    }
-                    // Fall back to fetch + picker/confirm
-                    self.fetch_statuses_and_show_picker(project, issue_id, iid);
-                }
+                self.do_toggle_state();
             }
             issue_list::IssueListAction::EditLabels => {
                 let label_names: Vec<String> = self.labels.iter().map(|l| l.name.clone()).collect();
@@ -910,6 +1024,7 @@ impl App {
         }
 
         let action = self.mr_list_state.handle_key(&key, self.mrs.len());
+        self.refresh_focused();
 
         match action {
             mr_list::MrListAction::None => {}
@@ -930,26 +1045,17 @@ impl App {
                 }
             }
             mr_list::MrListAction::Approve => {
-                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
-                    let project = item.project_path.clone();
-                    let iid = item.mr.iid;
-                    self.overlay = Overlay::Confirm(ConfirmAction::ApproveMr(project, iid));
+                if let Some(FocusedItem::Mr { ref project, iid, .. }) = self.focused {
+                    self.overlay = Overlay::Confirm(ConfirmAction::ApproveMr(project.clone(), iid));
                 }
             }
             mr_list::MrListAction::Merge => {
-                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
-                    let project = item.project_path.clone();
-                    let iid = item.mr.iid;
-                    self.overlay = Overlay::Confirm(ConfirmAction::MergeMr(project, iid));
+                if let Some(FocusedItem::Mr { ref project, iid, .. }) = self.focused {
+                    self.overlay = Overlay::Confirm(ConfirmAction::MergeMr(project.clone(), iid));
                 }
             }
             mr_list::MrListAction::ToggleState => {
-                // MRs can only be closed
-                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
-                    let project = item.project_path.clone();
-                    let iid = item.mr.iid;
-                    self.overlay = Overlay::Confirm(ConfirmAction::CloseIssue(project, iid));
-                }
+                self.do_toggle_state();
             }
             mr_list::MrListAction::EditLabels => {
                 let label_names: Vec<String> = self.labels.iter().map(|l| l.name.clone()).collect();
@@ -1022,11 +1128,11 @@ impl App {
                     self.comment_input = crate::ui::components::input::InputState::default();
                     self.overlay = Overlay::CommentInput;
                 }
-                KeyCode::Char('s') | KeyCode::Char('x') => {
-                    let project = item.project_path.clone();
-                    let issue_id = item.issue.id;
-                    let iid = item.issue.iid;
-                    self.fetch_statuses_and_show_picker(project, issue_id, iid);
+                KeyCode::Char('s') => {
+                    self.do_set_status();
+                }
+                KeyCode::Char('x') => {
+                    self.do_toggle_state();
                 }
                 KeyCode::Char('o') => {
                     let _ = open::that(&item.issue.web_url);
@@ -1066,16 +1172,17 @@ impl App {
                     self.overlay = Overlay::CommentInput;
                 }
                 KeyCode::Char('A') => {
-                    self.overlay = Overlay::Confirm(ConfirmAction::ApproveMr(
-                        item.project_path.clone(),
-                        item.mr.iid,
-                    ));
+                    if let Some(FocusedItem::Mr { ref project, iid, .. }) = self.focused {
+                        self.overlay = Overlay::Confirm(ConfirmAction::ApproveMr(project.clone(), iid));
+                    }
                 }
                 KeyCode::Char('M') => {
-                    self.overlay = Overlay::Confirm(ConfirmAction::MergeMr(
-                        item.project_path.clone(),
-                        item.mr.iid,
-                    ));
+                    if let Some(FocusedItem::Mr { ref project, iid, .. }) = self.focused {
+                        self.overlay = Overlay::Confirm(ConfirmAction::MergeMr(project.clone(), iid));
+                    }
+                }
+                KeyCode::Char('x') => {
+                    self.do_toggle_state();
                 }
                 KeyCode::Char('o') => {
                     let _ = open::that(&item.mr.web_url);
@@ -1273,6 +1380,17 @@ impl App {
                     self.save_cache();
                 }
             }
+            ConfirmAction::CloseMr(project, iid) => {
+                if let Some(pos) = self
+                    .mrs
+                    .iter()
+                    .position(|e| e.mr.iid == *iid && e.project_path == *project)
+                {
+                    self.mrs[pos].mr.state = "closed".to_string();
+                    self.refilter_mrs();
+                    self.save_cache();
+                }
+            }
             ConfirmAction::MergeMr(project, iid) => {
                 if let Some(pos) = self
                     .mrs
@@ -1306,6 +1424,12 @@ impl App {
                         )
                         .await;
                     let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
+                }
+                ConfirmAction::CloseMr(project, iid) => {
+                    let result = client
+                        .update_mr(&project, iid, serde_json::json!({"state_event": "close"}))
+                        .await;
+                    let _ = tx.send(AsyncMsg::MrUpdated(result, project));
                 }
                 ConfirmAction::ApproveMr(project, iid) => {
                     let result = client
@@ -1675,6 +1799,13 @@ impl App {
             View::MrList => self.mr_list_state.filtered_indices.len(),
             _ => self.issues.len() + self.mrs.len(),
         };
+        let hints: &[(&str, &str)] = match self.view {
+            View::Dashboard => &[("q", "quit"), ("?", "help"), ("i", "issues"), ("m", "mrs")],
+            View::IssueList => &[("q", "back"), ("?", "help"), ("h", "home"), ("/", "search"), ("s", "status"), ("x", "close")],
+            View::MrList => &[("q", "back"), ("?", "help"), ("h", "home"), ("/", "search"), ("A", "approve"), ("M", "merge")],
+            View::IssueDetail => &[("q", "back"), ("?", "help"), ("s", "status"), ("x", "close"), ("c", "comment"), ("o", "open")],
+            View::MrDetail => &[("q", "back"), ("?", "help"), ("A", "approve"), ("M", "merge"), ("c", "comment"), ("o", "open")],
+        };
         crate::ui::components::status_bar::render(
             frame,
             chunks[1],
@@ -1685,18 +1816,14 @@ impl App {
             self.loading_msg,
             self.error.as_deref(),
             self.last_fetched_at,
+            hints,
         );
 
         // Render overlay on top
         match &self.overlay {
             Overlay::None => {}
             Overlay::Help => {
-                let help_ctx = match self.view {
-                    View::IssueList | View::MrList => "list",
-                    View::IssueDetail | View::MrDetail => "detail",
-                    View::Dashboard => "all",
-                };
-                help::render(frame, area, help_ctx);
+                help::render(frame, area, &self.view);
             }
             Overlay::FilterEditor => {
                 filter_editor::render(
@@ -1713,6 +1840,9 @@ impl App {
                     }
                     ConfirmAction::ReopenIssue(_, iid) => {
                         ("Reopen Issue", format!("Reopen issue #{iid}?"))
+                    }
+                    ConfirmAction::CloseMr(_, iid) => {
+                        ("Close MR", format!("Close MR !{iid}?"))
                     }
                     ConfirmAction::ApproveMr(_, iid) => {
                         ("Approve MR", format!("Approve MR !{iid}?"))

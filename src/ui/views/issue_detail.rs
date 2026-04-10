@@ -110,7 +110,7 @@ pub fn render(
         ]),
         Line::from(labels_line_spans),
         Line::from(vec![Span::styled(
-            "  [c]omment [x]close/reopen [l]abels [a]ssign [o]pen [Esc]back",
+            "  [s]tatus [x]close/reopen [c]omment [l]abels [a]ssign [o]pen [Esc]back",
             styles::help_desc_style(),
         )]),
     ];

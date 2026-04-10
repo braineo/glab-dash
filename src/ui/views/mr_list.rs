@@ -141,7 +141,7 @@ impl MrListState {
                 KeyCode::Char('r') => return MrListAction::Refresh,
                 KeyCode::Char('A') => return MrListAction::Approve,
                 KeyCode::Char('M') => return MrListAction::Merge,
-                KeyCode::Char('s') | KeyCode::Char('x') => return MrListAction::ToggleState,
+                KeyCode::Char('x') => return MrListAction::ToggleState,
                 KeyCode::Char('l') => return MrListAction::EditLabels,
                 KeyCode::Char('a') => return MrListAction::EditAssignee,
                 KeyCode::Char('c') => return MrListAction::Comment,

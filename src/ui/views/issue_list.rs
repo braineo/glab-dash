@@ -137,7 +137,8 @@ impl IssueListState {
                     self.searching = true;
                 }
                 KeyCode::Char('r') => return IssueListAction::Refresh,
-                KeyCode::Char('s') | KeyCode::Char('x') => return IssueListAction::ToggleState,
+                KeyCode::Char('s') => return IssueListAction::SetStatus,
+                KeyCode::Char('x') => return IssueListAction::ToggleState,
                 KeyCode::Char('l') => return IssueListAction::EditLabels,
                 KeyCode::Char('a') => return IssueListAction::EditAssignee,
                 KeyCode::Char('c') => return IssueListAction::Comment,
@@ -159,6 +160,7 @@ pub enum IssueListAction {
     Refilter,
     OpenDetail,
     Refresh,
+    SetStatus,
     ToggleState,
     EditLabels,
     EditAssignee,
