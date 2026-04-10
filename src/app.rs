@@ -78,6 +78,8 @@ pub enum ChordContext {
     /// Set issue status: (project_path, issue_db_id, issue_iid)
     Status(String, u64, u64),
     Assignee,
+    /// Move issue to iteration: (issue_index in self.issues)
+    Iteration(usize),
 }
 
 /// Messages from async operations
@@ -474,21 +476,32 @@ impl App {
     pub fn handle_async_msg(&mut self, msg: AsyncMsg) {
         match msg {
             AsyncMsg::IssuesLoaded(result, incremental) => match result {
-                Ok(items) => {
+                Ok(issues) => {
                     if incremental {
-                        for item in items {
+                        for item in issues {
                             if let Some(pos) =
-                                self.issues.iter().position(|e| e.issue.id == item.issue.id)
+                                self.issues.iter().position(|i| i.issue.id == item.issue.id)
                             {
-                                self.issues[pos] = item;
+                                if self.issues[pos].issue.updated_at <= item.issue.updated_at {
+                                    self.issues[pos] = item;
+                                }
                             } else {
                                 self.issues.push(item);
                             }
                         }
-                        self.issues.retain(|i| i.issue.state == "opened");
                     } else {
-                        self.issues = items;
+                        let mut new_issues = issues;
+                        for new_iss in &mut new_issues {
+                            if let Some(pos) = self.issues.iter().position(|i| i.issue.id == new_iss.issue.id) {
+                                let old_iss = &self.issues[pos];
+                                if old_iss.issue.updated_at > new_iss.issue.updated_at {
+                                    *new_iss = old_iss.clone();
+                                }
+                            }
+                        }
+                        self.issues = new_issues;
                     }
+                    self.issues.retain(|i| i.issue.state == "opened");
                     self.last_fetched_at = Some(Self::now_secs());
                     self.error = None;
                     self.loading = false;
@@ -504,21 +517,30 @@ impl App {
             },
             AsyncMsg::MrsLoaded(result, incremental) => match result {
                 Ok((tracking, external)) => {
+                    let mrs: Vec<_> = tracking.into_iter().chain(external).collect();
                     if incremental {
-                        for item in tracking.into_iter().chain(external) {
-                            if let Some(pos) =
-                                self.mrs.iter().position(|e| e.mr.id == item.mr.id)
-                            {
-                                self.mrs[pos] = item;
+                        for item in mrs {
+                            if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == item.mr.id) {
+                                if self.mrs[pos].mr.updated_at <= item.mr.updated_at {
+                                    self.mrs[pos] = item;
+                                }
                             } else {
                                 self.mrs.push(item);
                             }
                         }
-                        self.mrs.retain(|m| m.mr.state == "opened");
                     } else {
-                        self.mrs = tracking;
-                        self.mrs.extend(external);
+                        let mut new_mrs = mrs;
+                        for new_mr in &mut new_mrs {
+                            if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == new_mr.mr.id) {
+                                let old_mr = &self.mrs[pos];
+                                if old_mr.mr.updated_at > new_mr.mr.updated_at {
+                                    *new_mr = old_mr.clone();
+                                }
+                            }
+                        }
+                        self.mrs = new_mrs;
                     }
+                    self.mrs.retain(|m| m.mr.state == "opened");
                     self.last_fetched_at = Some(Self::now_secs());
                     self.loading = false;
                     self.error = None;
@@ -1022,6 +1044,9 @@ impl App {
             Overlay::Chord(ChordContext::Assignee) => {
                 self.update_assignee(&value);
             }
+            Overlay::Chord(ChordContext::Iteration(issue_idx)) => {
+                self.apply_iteration_move(issue_idx, &value);
+            }
             _ => {}
         }
     }
@@ -1374,22 +1399,14 @@ impl App {
                     let _ = open::that(&item.issue.web_url);
                 }
             }
-            PlanningAction::GoHome => {
-                self.view_stack.clear();
-                self.view = View::Dashboard;
-                self.refresh_focused();
-            }
-            PlanningAction::MoveToNext => {
-                self.move_issue_to_iteration(true);
-            }
-            PlanningAction::MoveToPrev => {
-                self.move_issue_to_iteration(false);
+            PlanningAction::MoveIteration => {
+                self.show_iteration_chord();
             }
         }
         self.refresh_focused();
     }
 
-    fn move_issue_to_iteration(&mut self, to_next: bool) {
+    fn show_iteration_chord(&mut self) {
         let col = self.planning_state.focused_column;
         let sel = match self.planning_state.column_states[col].selected() {
             Some(s) => s,
@@ -1400,10 +1417,33 @@ impl App {
             None => return,
         };
 
-        let target = if to_next {
+        // Build choices: prev / current / next / remove
+        let mut labels = Vec::new();
+        if let Some(iter) = &self.planning_state.prev_iteration {
+            labels.push(format!("◁ {}", planning::iteration_label(iter)));
+        }
+        if let Some(iter) = &self.planning_state.current_iteration {
+            labels.push(format!("● {}", planning::iteration_label(iter)));
+        }
+        if let Some(iter) = &self.planning_state.next_iteration {
+            labels.push(format!("▷ {}", planning::iteration_label(iter)));
+        }
+        labels.push("⊘ Remove iteration".to_string());
+
+        self.chord_state = Some(chord_popup::ChordState::new("Move to iteration", labels));
+        self.overlay = Overlay::Chord(ChordContext::Iteration(issue_idx));
+    }
+
+    fn apply_iteration_move(&mut self, issue_idx: usize, choice: &str) {
+        let target = if choice.starts_with('◁') {
+            self.planning_state.prev_iteration.clone()
+        } else if choice.starts_with('●') {
+            self.planning_state.current_iteration.clone()
+        } else if choice.starts_with('▷') {
             self.planning_state.next_iteration.clone()
         } else {
-            self.planning_state.prev_iteration.clone()
+            // Remove iteration
+            None
         };
 
         let issue_id = self.issues[issue_idx].issue.id;
@@ -1411,9 +1451,9 @@ impl App {
 
         // Optimistic update
         self.issues[issue_idx].issue.iteration = target.clone();
+        self.issues[issue_idx].issue.updated_at = chrono::Utc::now();
         self.refilter_planning();
 
-        // Spawn async
         let client = self.client.clone();
         let tx = self.async_tx.clone();
         let target_gid = target.as_ref().map(|i| i.id.clone());
@@ -1579,9 +1619,10 @@ impl App {
                 if let Some(pos) = self
                     .issues
                     .iter()
-                    .position(|e| e.issue.iid == *iid && e.project_path == *project)
+                    .position(|i| i.project_path == *project && i.issue.iid == *iid)
                 {
                     self.issues[pos].issue.state = "closed".to_string();
+                    self.issues[pos].issue.updated_at = chrono::Utc::now();
                     self.refilter_issues();
                     self.save_cache();
                 }
@@ -1593,6 +1634,7 @@ impl App {
                     .position(|e| e.issue.iid == *iid && e.project_path == *project)
                 {
                     self.issues[pos].issue.state = "opened".to_string();
+                    self.issues[pos].issue.updated_at = chrono::Utc::now();
                     self.refilter_issues();
                     self.save_cache();
                 }
@@ -1601,9 +1643,10 @@ impl App {
                 if let Some(pos) = self
                     .mrs
                     .iter()
-                    .position(|e| e.mr.iid == *iid && e.project_path == *project)
+                    .position(|m| m.project_path == *project && m.mr.iid == *iid)
                 {
                     self.mrs[pos].mr.state = "closed".to_string();
+                    self.mrs[pos].mr.updated_at = chrono::Utc::now();
                     self.refilter_mrs();
                     self.save_cache();
                 }
@@ -1612,9 +1655,10 @@ impl App {
                 if let Some(pos) = self
                     .mrs
                     .iter()
-                    .position(|e| e.mr.iid == *iid && e.project_path == *project)
+                    .position(|m| m.project_path == *project && m.mr.iid == *iid)
                 {
                     self.mrs[pos].mr.state = "merged".to_string();
+                    self.mrs[pos].mr.updated_at = chrono::Utc::now();
                     self.refilter_mrs();
                     self.save_cache();
                 }

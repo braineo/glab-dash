@@ -1,13 +1,13 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
 use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 
 use crate::config::Config;
 use crate::gitlab::types::{Iteration, TrackedIssue};
-use crate::sort::{self, SortSpec, SortDirection, SortField};
+use crate::sort::{self, SortDirection, SortField, SortSpec};
 use crate::ui::{RenderCtx, keys, styles};
 
 use std::collections::HashMap;
@@ -35,7 +35,11 @@ impl Default for PlanningViewState {
     fn default() -> Self {
         Self {
             focused_column: 1, // start on current
-            column_states: [TableState::default(), TableState::default(), TableState::default()],
+            column_states: [
+                TableState::default(),
+                TableState::default(),
+                TableState::default(),
+            ],
             column_indices: [Vec::new(), Vec::new(), Vec::new()],
             column_visible: [true, true, true],
             prev_iteration: None,
@@ -60,9 +64,8 @@ pub enum PlanningAction {
     EditAssignee,
     Comment,
     OpenBrowser,
-    GoHome,
-    MoveToNext,
-    MoveToPrev,
+    /// Show chord popup to pick target iteration (or remove)
+    MoveIteration,
 }
 
 impl PlanningViewState {
@@ -90,18 +93,13 @@ impl PlanningViewState {
             }
         }
 
-        // Column navigation: h/l/Left/Right
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        // Column navigation: [ / ]
         match key.code {
-            // H (shift+h) → go to Dashboard
-            KeyCode::Char('H') if shift => return PlanningAction::GoHome,
-            // h / Left → previous column
-            KeyCode::Char('h') | KeyCode::Left => {
+            KeyCode::Char('[') => {
                 self.move_focus_left();
                 return PlanningAction::None;
             }
-            // l / Right → next column
-            KeyCode::Char('l') | KeyCode::Right => {
+            KeyCode::Char(']') => {
                 self.move_focus_right();
                 return PlanningAction::None;
             }
@@ -118,12 +116,12 @@ impl PlanningViewState {
                     PlanningAction::None
                 }
                 KeyCode::Char('r') => PlanningAction::Refresh,
-                KeyCode::Char('[') => {
+                KeyCode::Char('<') => {
                     self.column_visible[0] = !self.column_visible[0];
                     self.clamp_focus();
                     PlanningAction::None
                 }
-                KeyCode::Char(']') => {
+                KeyCode::Char('>') => {
                     self.column_visible[2] = !self.column_visible[2];
                     self.clamp_focus();
                     PlanningAction::None
@@ -160,20 +158,11 @@ impl PlanningViewState {
                 KeyCode::Char('r') => return PlanningAction::Refresh,
                 KeyCode::Char('s') => return PlanningAction::SetStatus,
                 KeyCode::Char('x') => return PlanningAction::ToggleState,
-                KeyCode::Char('L') => return PlanningAction::EditLabels,
+                KeyCode::Char('l') => return PlanningAction::EditLabels,
                 KeyCode::Char('a') => return PlanningAction::EditAssignee,
                 KeyCode::Char('c') => return PlanningAction::Comment,
                 KeyCode::Char('o') => return PlanningAction::OpenBrowser,
-                KeyCode::Char('>') => return PlanningAction::MoveToNext,
-                KeyCode::Char('<') => return PlanningAction::MoveToPrev,
-                KeyCode::Char('[') => {
-                    self.column_visible[0] = !self.column_visible[0];
-                    self.clamp_focus();
-                }
-                KeyCode::Char(']') => {
-                    self.column_visible[2] = !self.column_visible[2];
-                    self.clamp_focus();
-                }
+                KeyCode::Char('I') => return PlanningAction::MoveIteration,
                 KeyCode::Char('v') => {
                     self.toggle_layout();
                     return PlanningAction::Refilter;
@@ -309,8 +298,7 @@ impl PlanningViewState {
             } else if let Some(sel) = self.column_states[i].selected()
                 && sel >= self.column_indices[i].len()
             {
-                self.column_states[i]
-                    .select(Some(self.column_indices[i].len() - 1));
+                self.column_states[i].select(Some(self.column_indices[i].len() - 1));
             }
         }
     }
@@ -355,11 +343,8 @@ pub fn render(
 
     // Search bar takes 1 row if searching
     let search_height = if state.searching { 1 } else { 0 };
-    let main_chunks = Layout::vertical([
-        Constraint::Length(search_height),
-        Constraint::Min(1),
-    ])
-    .split(area);
+    let main_chunks =
+        Layout::vertical([Constraint::Length(search_height), Constraint::Min(1)]).split(area);
 
     if state.searching {
         let search_line = Line::from(vec![
@@ -417,7 +402,9 @@ fn render_column(
     let header = format!("{title}  ({count} issues, {total_weight}w)");
 
     let border_style = if is_focused {
-        Style::default().fg(styles::BLUE).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(styles::BLUE)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(styles::TEXT_DIM)
     };
@@ -428,7 +415,9 @@ fn render_column(
         .title(Span::styled(
             header,
             if is_focused {
-                Style::default().fg(styles::TEXT_BRIGHT).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(styles::TEXT_BRIGHT)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(styles::TEXT)
             },
@@ -443,13 +432,14 @@ fn render_column(
 
     // Reserve space for member stats footer
     let stats = member_stats(&state.column_indices[col_idx], issues, team_members);
-    let stats_height = if stats.is_empty() { 0 } else { (stats.len() as u16).min(inner.height.saturating_sub(2)) };
+    let stats_height = if stats.is_empty() {
+        0
+    } else {
+        (stats.len() as u16).min(inner.height.saturating_sub(2))
+    };
 
-    let parts = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(stats_height),
-    ])
-    .split(inner);
+    let parts =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(stats_height)]).split(inner);
 
     // Issue table
     let indices = &state.column_indices[col_idx];
@@ -475,11 +465,20 @@ fn render_column(
             let title = &item.issue.title;
 
             Row::new(vec![
-                Cell::from(Span::styled(status_icon, styles::status_style(
-                    item.issue.custom_status.as_deref().unwrap_or(&item.issue.state),
-                ))),
+                Cell::from(Span::styled(
+                    status_icon,
+                    styles::status_style(
+                        item.issue
+                            .custom_status
+                            .as_deref()
+                            .unwrap_or(&item.issue.state),
+                    ),
+                )),
                 Cell::from(Span::styled(iid, Style::default().fg(styles::TEXT_DIM))),
-                Cell::from(Span::styled(title.as_str(), Style::default().fg(styles::TEXT))),
+                Cell::from(Span::styled(
+                    title.as_str(),
+                    Style::default().fg(styles::TEXT),
+                )),
                 Cell::from(Span::styled(assignee, Style::default().fg(styles::CYAN))),
                 Cell::from(Span::styled(weight, Style::default().fg(styles::YELLOW))),
             ])
@@ -494,8 +493,7 @@ fn render_column(
         Constraint::Length(4),  // weight
     ];
 
-    let table = Table::new(rows, widths)
-        .row_highlight_style(styles::selected_style());
+    let table = Table::new(rows, widths).row_highlight_style(styles::selected_style());
 
     frame.render_stateful_widget(table, parts[0], &mut state.column_states[col_idx]);
 
@@ -505,14 +503,8 @@ fn render_column(
             .iter()
             .map(|(name, count, weight)| {
                 Line::from(vec![
-                    Span::styled(
-                        format!(" {name}"),
-                        Style::default().fg(styles::CYAN),
-                    ),
-                    Span::styled(
-                        format!(": {count}"),
-                        Style::default().fg(styles::TEXT),
-                    ),
+                    Span::styled(format!(" {name}"), Style::default().fg(styles::CYAN)),
+                    Span::styled(format!(": {count}"), Style::default().fg(styles::TEXT)),
                     Span::styled(
                         format!(" ({weight}w)"),
                         Style::default().fg(styles::TEXT_DIM),
@@ -525,7 +517,7 @@ fn render_column(
     }
 }
 
-fn iteration_label(iter: &Iteration) -> String {
+pub fn iteration_label(iter: &Iteration) -> String {
     if !iter.title.is_empty() {
         return iter.title.clone();
     }
