@@ -37,7 +37,7 @@ async fn debug_fetch() -> Result<()> {
     let client = GitLabClient::new(&config).context("Failed to create GitLab client")?;
     let members = config.team_members(0);
 
-    println!("Fetching tracking issues from {} ...", config.tracking_project);
+    println!("Fetching tracking issues from {} ...", config.tracking_projects.join(", "));
     match client.fetch_tracking_issues(Some("opened"), None).await {
         Ok(issues) => {
             println!("  OK: {} tracking issues", issues.len());
@@ -73,7 +73,7 @@ async fn debug_fetch() -> Result<()> {
 
     println!("Fetching work item statuses ...");
     match client
-        .fetch_work_item_statuses(&config.tracking_project)
+        .fetch_work_item_statuses(config.primary_tracking_project())
         .await
     {
         Ok(statuses) => {

@@ -7,7 +7,7 @@ fn test_generate_yaml_roundtrip() {
         gitlab_url: "https://gitlab.example.com".to_string(),
         token: "glpat-test123".to_string(),
         me: "binbin".to_string(),
-        tracking_project: "org/tracker".to_string(),
+        tracking_projects: vec!["org/tracker".to_string()],
         refresh_interval_secs: 60,
         teams: vec![
             crate::config::TeamConfig {
@@ -39,7 +39,7 @@ fn test_generate_yaml_roundtrip() {
     assert_eq!(parsed.gitlab_url, "https://gitlab.example.com");
     assert_eq!(parsed.token, "glpat-test123");
     assert_eq!(parsed.me, "binbin");
-    assert_eq!(parsed.tracking_project, "org/tracker");
+    assert_eq!(parsed.tracking_projects, vec!["org/tracker"]);
     assert_eq!(parsed.refresh_interval_secs, 60);
     assert_eq!(parsed.teams.len(), 2);
     assert_eq!(parsed.teams[0].name, "frontend");
@@ -56,7 +56,7 @@ fn test_generate_yaml_contains_all_fields() {
         gitlab_url: "https://gitlab.com".to_string(),
         token: "glpat-abc".to_string(),
         me: "user".to_string(),
-        tracking_project: "a/b".to_string(),
+        tracking_projects: vec!["a/b".to_string()],
         refresh_interval_secs: 120,
         teams: vec![],
         filters: vec![],
@@ -68,7 +68,7 @@ fn test_generate_yaml_contains_all_fields() {
     assert!(yaml.contains("gitlab_url:"));
     assert!(yaml.contains("token:"));
     assert!(yaml.contains("me:"));
-    assert!(yaml.contains("tracking_project:"));
+    assert!(yaml.contains("tracking_projects:"));
     assert!(yaml.contains("refresh_interval_secs: 120"));
     assert!(yaml.contains("teams:"));
 }

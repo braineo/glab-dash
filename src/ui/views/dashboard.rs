@@ -12,7 +12,7 @@ pub fn render(
     frame: &mut Frame,
     area: Rect,
     config: &Config,
-    active_team: usize,
+    active_team: Option<usize>,
     issues: &[TrackedIssue],
     mrs: &[TrackedMergeRequest],
     loading: bool,
@@ -24,18 +24,18 @@ pub fn render(
     .split(area);
 
     // Header
-    let team_name = config
-        .teams
-        .get(active_team)
+    let team_name = active_team
+        .and_then(|idx| config.teams.get(idx))
         .map(|t| t.name.as_str())
         .unwrap_or("all");
+    let tracking_display = config.tracking_projects.join(", ");
     let header_text = Line::from(vec![
         Span::styled(" ◈ glab-dash", styles::title_style()),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
         Span::styled(format!("Team: {team_name}"), Style::default().fg(styles::TEAL)),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
         Span::styled(
-            format!("Tracking: {}", config.tracking_project),
+            format!("Tracking: {tracking_display}"),
             styles::help_desc_style(),
         ),
     ]);
@@ -59,11 +59,14 @@ fn render_member_summary(
     frame: &mut Frame,
     area: Rect,
     config: &Config,
-    active_team: usize,
+    active_team: Option<usize>,
     issues: &[TrackedIssue],
     mrs: &[TrackedMergeRequest],
 ) {
-    let members = config.team_members(active_team);
+    let members = match active_team {
+        Some(idx) => config.team_members(idx),
+        None => config.all_members(),
+    };
     let rows: Vec<Row> = members
         .iter()
         .enumerate()
@@ -129,11 +132,11 @@ fn render_quick_stats(
 ) {
     let tracking_issues = issues
         .iter()
-        .filter(|i| i.project_path == config.tracking_project)
+        .filter(|i| config.is_tracking_project(&i.project_path))
         .count();
     let external_issues = issues
         .iter()
-        .filter(|i| i.project_path != config.tracking_project)
+        .filter(|i| !config.is_tracking_project(&i.project_path))
         .count();
     let unassigned_issues = issues
         .iter()

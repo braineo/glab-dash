@@ -1,19 +1,20 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::gitlab::types::{ProjectLabel, TrackedIssue, TrackedMergeRequest};
+use crate::gitlab::types::{ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus};
 
 #[derive(Serialize, Deserialize)]
 pub struct CacheData {
     /// Unix timestamp (seconds) when cache was written
     pub saved_at: u64,
-    pub team_index: usize,
     pub issues: Vec<TrackedIssue>,
     pub mrs: Vec<TrackedMergeRequest>,
     pub labels: Vec<ProjectLabel>,
+    pub work_item_statuses: HashMap<String, Vec<WorkItemStatus>>,
 }
 
 fn cache_path() -> Option<PathBuf> {
@@ -35,17 +36,22 @@ pub fn load() -> Option<CacheData> {
 }
 
 /// Save data to cache. Errors are silently ignored (cache is best-effort).
-pub fn save(team_index: usize, issues: &[TrackedIssue], mrs: &[TrackedMergeRequest], labels: &[ProjectLabel]) {
+pub fn save(
+    issues: &[TrackedIssue],
+    mrs: &[TrackedMergeRequest],
+    labels: &[ProjectLabel],
+    work_item_statuses: &HashMap<String, Vec<WorkItemStatus>>,
+) {
     let Some(path) = cache_path() else { return };
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let data = CacheData {
         saved_at: now_secs(),
-        team_index,
         issues: issues.to_vec(),
         mrs: mrs.to_vec(),
         labels: labels.to_vec(),
+        work_item_statuses: work_item_statuses.clone(),
     };
     if let Ok(json) = serde_json::to_string(&data) {
         let _ = fs::write(&path, json);

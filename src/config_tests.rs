@@ -6,7 +6,8 @@ fn test_parse_config() {
 gitlab_url: "https://gitlab.example.com"
 token: "glpat-test"
 me: "binbin"
-tracking_project: "org/tracker"
+tracking_projects:
+  - "org/tracker"
 teams:
   - name: "frontend"
     members: ["alice", "bob"]
@@ -25,7 +26,9 @@ filters:
     assert_eq!(config.gitlab_url, "https://gitlab.example.com");
     assert_eq!(config.token, "glpat-test");
     assert_eq!(config.me, "binbin");
-    assert_eq!(config.tracking_project, "org/tracker");
+    assert_eq!(config.tracking_projects, vec!["org/tracker"]);
+    assert!(config.is_tracking_project("org/tracker"));
+    assert!(!config.is_tracking_project("other/repo"));
     assert_eq!(config.teams.len(), 2);
     assert_eq!(config.teams[0].name, "frontend");
     assert_eq!(config.teams[0].members, vec!["alice", "bob"]);
@@ -39,12 +42,31 @@ filters:
 }
 
 #[test]
+fn test_parse_config_multi_project() {
+    let yaml = r#"
+gitlab_url: "https://gitlab.com"
+token: "test"
+me: "binbin"
+tracking_projects:
+  - "org/tracker"
+  - "org/other-tracker"
+teams: []
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(config.tracking_projects.len(), 2);
+    assert!(config.is_tracking_project("org/tracker"));
+    assert!(config.is_tracking_project("org/other-tracker"));
+    assert!(!config.is_tracking_project("org/unrelated"));
+    assert_eq!(config.primary_tracking_project(), "org/tracker");
+}
+
+#[test]
 fn test_team_members_includes_me() {
     let yaml = r#"
 gitlab_url: "https://gitlab.com"
 token: "test"
 me: "binbin"
-tracking_project: "org/repo"
+tracking_projects: ["org/repo"]
 teams:
   - name: "team"
     members: ["alice", "bob"]
@@ -62,7 +84,7 @@ fn test_team_members_no_duplicate_me() {
 gitlab_url: "https://gitlab.com"
 token: "test"
 me: "alice"
-tracking_project: "org/repo"
+tracking_projects: ["org/repo"]
 teams:
   - name: "team"
     members: ["alice", "bob"]
@@ -78,7 +100,7 @@ fn test_team_members_invalid_index() {
 gitlab_url: "https://gitlab.com"
 token: "test"
 me: "binbin"
-tracking_project: "org/repo"
+tracking_projects: ["org/repo"]
 teams: []
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();

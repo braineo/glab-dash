@@ -7,7 +7,7 @@ pub struct Config {
     pub gitlab_url: String,
     pub token: String,
     pub me: String,
-    pub tracking_project: String,
+    pub tracking_projects: Vec<String>,
     #[serde(default = "default_refresh")]
     pub refresh_interval_secs: u64,
     #[serde(default)]
@@ -23,6 +23,7 @@ pub struct Config {
 fn default_refresh() -> u64 {
     60
 }
+
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TeamConfig {
@@ -76,7 +77,7 @@ impl Config {
         let path = config_path()?;
         if !path.exists() {
             anyhow::bail!(
-                "Config file not found at {}.\nCreate it with gitlab_url, token, me, tracking_project, and teams.",
+                "Config file not found at {}.\nCreate it with gitlab_url, token, me, tracking_projects, and teams.",
                 path.display()
             );
         }
@@ -93,10 +94,23 @@ impl Config {
             config.token = token;
         }
         if let Ok(project) = std::env::var("GITLAB_PROJECT") {
-            config.tracking_project = project;
+            config.tracking_projects = vec![project];
+        }
+
+        if config.tracking_projects.is_empty() {
+            anyhow::bail!("tracking_projects must not be empty");
         }
 
         Ok(config)
+    }
+
+    pub fn is_tracking_project(&self, path: &str) -> bool {
+        self.tracking_projects.iter().any(|p| p == path)
+    }
+
+    /// The first tracking project (used as primary for iterations, statuses, etc.)
+    pub fn primary_tracking_project(&self) -> &str {
+        self.tracking_projects.first().map(|s| s.as_str()).unwrap_or("")
     }
 
     pub fn all_members(&self) -> Vec<String> {
