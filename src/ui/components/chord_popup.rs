@@ -56,11 +56,7 @@ impl ChordState {
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> ChordAction {
         match key.code {
-            KeyCode::Esc => ChordAction::Cancel,
-            KeyCode::Char(c) => {
-                if !CHORD_KEYS.contains(&c) {
-                    return ChordAction::Cancel;
-                }
+            KeyCode::Char(c) if CHORD_KEYS.contains(&c) => {
                 self.input.push(c);
                 if self.input.len() >= self.code_len {
                     // Full code entered
@@ -94,7 +90,7 @@ fn generate_codes(count: usize, code_len: usize) -> Vec<String> {
     if code_len == 1 {
         CHORD_KEYS[..count]
             .iter()
-            .map(|c| c.to_string())
+            .map(ToString::to_string)
             .collect()
     } else {
         let mut codes = Vec::with_capacity(count);
@@ -159,8 +155,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
                 if state.kind == ChordKind::Status && is_active {
                     let icon = styles::status_icon(label);
                     let sty = styles::status_style(label);
-                    let padded =
-                        format!("{icon} {label:<w$}", w = max_label_len);
+                    let padded = format!("{icon} {label:<max_label_len$}");
                     spans.push(Span::styled(padded, sty));
                 } else {
                     let label_style = if is_active {

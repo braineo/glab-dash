@@ -133,10 +133,7 @@ pub fn render(frame: &mut Frame, area: Rect, view: &View) {
 fn help_line<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
     Line::from(vec![
         Span::raw("  "),
-        Span::styled(
-            format!("{key:>12}"),
-            styles::overlay_key_style(),
-        ),
+        Span::styled(format!("{key:>12}"), styles::overlay_key_style()),
         Span::styled("  ·  ", styles::overlay_desc_style()),
         Span::styled(desc, styles::overlay_desc_style()),
     ])

@@ -29,8 +29,7 @@ pub fn render(frame: &mut Frame, area: Rect, message: &str) {
         styles::overlay_desc_style(),
     )));
 
-    let block = styles::overlay_block("Error")
-        .border_style(Style::default().fg(styles::RED));
+    let block = styles::overlay_block("Error").border_style(Style::default().fg(styles::RED));
 
     let paragraph = Paragraph::new(lines)
         .block(block)

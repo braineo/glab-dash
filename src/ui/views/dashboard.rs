@@ -26,13 +26,15 @@ pub fn render(
     // Header
     let team_name = active_team
         .and_then(|idx| config.teams.get(idx))
-        .map(|t| t.name.as_str())
-        .unwrap_or("all");
+        .map_or("all", |t| t.name.as_str());
     let tracking_display = config.tracking_projects.join(", ");
     let header_text = Line::from(vec![
         Span::styled(" ◈ glab-dash", styles::title_style()),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
-        Span::styled(format!("Team: {team_name}"), Style::default().fg(styles::TEAL)),
+        Span::styled(
+            format!("Team: {team_name}"),
+            Style::default().fg(styles::TEAL),
+        ),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
         Span::styled(
             format!("Tracking: {tracking_display}"),
@@ -160,12 +162,10 @@ fn render_quick_stats(
 
     let lines = vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                format!("  ● Issues{loading_indicator}"),
-                styles::section_header_style(),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            format!("  ● Issues{loading_indicator}"),
+            styles::section_header_style(),
+        )]),
         Line::from(vec![
             Span::styled("    Tracking repo:   ", styles::help_desc_style()),
             Span::styled(
@@ -187,10 +187,7 @@ fn render_quick_stats(
         Line::from(if unassigned_issues > 0 {
             vec![
                 Span::styled("    Unassigned:      ", styles::help_desc_style()),
-                Span::styled(
-                    unassigned_issues.to_string(),
-                    styles::error_style(),
-                ),
+                Span::styled(unassigned_issues.to_string(), styles::error_style()),
             ]
         } else {
             vec![

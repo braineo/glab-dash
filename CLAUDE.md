@@ -10,29 +10,53 @@ cargo build --release    # optimized release build
 cargo run                # run (requires config)
 cargo test               # run all tests
 cargo fmt                # format code
-cargo clippy             # lint
+cargo clippy             # lint (pedantic, must pass with zero warnings)
+typos                    # spell check
 ```
+
+## Code Quality
+
+All code must pass these checks before committing (enforced by CI):
+
+1. **`cargo fmt --check`** — all code formatted
+2. **`cargo clippy`** — zero warnings; `clippy::pedantic` is enabled in `Cargo.toml` with `warnings = "deny"` in `[lints.rust]`
+3. **`cargo build`** — zero warnings (dead code, unused imports, etc.)
+4. **`cargo test`** — all tests pass
+5. **`typos`** — no spelling errors (`_typos.toml` has exceptions)
+
+Pedantic lint exceptions are configured in `[lints.clippy]` in `Cargo.toml`. Do not add new `#[allow(...)]` attributes without good reason — prefer fixing the lint.
 
 ## Config
 
-Config file: `~/.config/glab-dash/config.yaml` (or set `GLAB_DASH_CONFIG` env var)
+Config file: `~/.config/glab-dash/config.toml` (or set `GLAB_DASH_CONFIG` env var)
 
-```yaml
-gitlab_url: "https://gitlab.com"
-token: "glpat-xxx"
-me: "username"
-tracking_project: "org/team-tracker"
-teams:
-  - name: "team1"
-    members: ["alice", "bob"]
-  - name: "team2"
-    members: ["charlie", "dave"]
-filters:
-  - name: "My open MRs"
-    kind: merge_request
-    conditions:
-      - { field: author, op: eq, value: "$me" }
-      - { field: state, op: eq, value: opened }
+```toml
+gitlab_url = "https://gitlab.com"
+token = "glpat-xxx"
+me = "username"
+tracking_project = "org/team-tracker"
+
+[[teams]]
+name = "team1"
+members = ["alice", "bob"]
+
+[[teams]]
+name = "team2"
+members = ["charlie", "dave"]
+
+[[filters]]
+name = "My open MRs"
+kind = "merge_request"
+
+[[filters.conditions]]
+field = "author"
+op = "eq"
+value = "$me"
+
+[[filters.conditions]]
+field = "state"
+op = "eq"
+value = "opened"
 ```
 
 Env var overrides: `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_PROJECT`
@@ -100,4 +124,4 @@ When adding new context-dependent behavior, read from `self.focused` instead of 
 
 ## Tests
 
-Tests are in `src/filter/tests.rs` and `src/config_tests.rs`. Run with `cargo test`.
+Tests are in `src/filter/tests.rs`, `src/config_tests.rs`, and `src/onboarding_tests.rs`. Run with `cargo test`.

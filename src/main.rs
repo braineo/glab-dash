@@ -6,10 +6,10 @@ mod config_tests;
 mod event;
 mod filter;
 mod gitlab;
-mod sort;
 mod onboarding;
 #[cfg(test)]
 mod onboarding_tests;
+mod sort;
 mod ui;
 
 use std::io;
@@ -37,14 +37,19 @@ async fn debug_fetch() -> Result<()> {
     let client = GitLabClient::new(&config).context("Failed to create GitLab client")?;
     let members = config.team_members(0);
 
-    println!("Fetching tracking issues from {} ...", config.tracking_projects.join(", "));
+    println!(
+        "Fetching tracking issues from {} ...",
+        config.tracking_projects.join(", ")
+    );
     match client.fetch_tracking_issues(Some("opened"), None).await {
         Ok(issues) => {
             println!("  OK: {} tracking issues", issues.len());
             for item in issues.iter().take(3) {
                 println!(
                     "  #{} [{}] {:?} {}",
-                    item.issue.iid, item.issue.state, item.issue.custom_status,
+                    item.issue.iid,
+                    item.issue.state,
+                    item.issue.custom_status,
                     item.issue.title.chars().take(40).collect::<String>(),
                 );
             }
@@ -62,7 +67,9 @@ async fn debug_fetch() -> Result<()> {
             for item in issues.iter().take(3) {
                 println!(
                     "  #{} [{}] {:?} {} ({})",
-                    item.issue.iid, item.issue.state, item.issue.custom_status,
+                    item.issue.iid,
+                    item.issue.state,
+                    item.issue.custom_status,
                     item.issue.title.chars().take(40).collect::<String>(),
                     item.project_path
                 );
@@ -89,8 +96,14 @@ async fn debug_fetch() -> Result<()> {
     println!("\nSimulating app flow ...");
     let (async_tx, _async_rx) = mpsc::unbounded_channel();
     let mut app = App::new(config, client, async_tx);
-    let tracking = app.client.fetch_tracking_issues(Some("opened"), None).await?;
-    let assigned = app.client.fetch_assigned_issues(&members, Some("opened"), None).await?;
+    let tracking = app
+        .client
+        .fetch_tracking_issues(Some("opened"), None)
+        .await?;
+    let assigned = app
+        .client
+        .fetch_assigned_issues(&members, Some("opened"), None)
+        .await?;
     println!("  tracking={} assigned={}", tracking.len(), assigned.len());
     app.issues = tracking;
     app.issues.extend(assigned);
@@ -164,11 +177,8 @@ async fn main() -> Result<()> {
                                 break; // quit
                             }
                     }
-                    Event::Resize(_, _) => {
-                        // Terminal auto-handles resize on next draw
-                    }
-                    Event::Tick => {
-                        // Could add periodic refresh here
+                    Event::Resize(_, _) | Event::Tick => {
+                        // Terminal auto-handles resize on next draw; tick is a no-op
                     }
                 }
             }

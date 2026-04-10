@@ -42,12 +42,16 @@ pub fn render(
             styles::title_style().bg(styles::HIGHLIGHT),
         ),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
-        Span::styled(format!("{team_name}"), styles::source_tracking_style()),
+        Span::styled(team_name.to_string(), styles::source_tracking_style()),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
     ];
 
     if loading {
-        let msg = if loading_msg.is_empty() { "Loading..." } else { loading_msg };
+        let msg = if loading_msg.is_empty() {
+            "Loading..."
+        } else {
+            loading_msg
+        };
         spans.push(Span::styled(format!("⟳ {msg}"), styles::draft_style()));
     } else if let Some(err) = error {
         spans.push(Span::styled(format!("✗ {err}"), styles::error_style()));
@@ -76,8 +80,8 @@ pub fn render(
         hints_spans.push(Span::styled(*key, styles::help_key_style()));
         hints_spans.push(Span::styled(format!(":{desc} "), styles::help_desc_style()));
     }
-    let hints_width: usize = hints_spans.iter().map(|s| s.width()).sum();
-    let left_width: usize = spans.iter().map(|s| s.width()).sum();
+    let hints_width: usize = hints_spans.iter().map(Span::width).sum();
+    let left_width: usize = spans.iter().map(Span::width).sum();
     let padding = (area.width as usize).saturating_sub(left_width + hints_width);
     spans.push(Span::raw(" ".repeat(padding)));
     spans.extend(hints_spans);

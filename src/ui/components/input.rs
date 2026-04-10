@@ -12,6 +12,7 @@ pub struct InputState {
 }
 
 impl InputState {
+    #[allow(dead_code)]
     pub fn new(initial: &str) -> Self {
         Self {
             cursor: initial.len(),
@@ -25,24 +26,18 @@ impl InputState {
                 self.value.insert(self.cursor, c);
                 self.cursor += 1;
             }
-            KeyCode::Backspace => {
-                if self.cursor > 0 {
-                    self.cursor -= 1;
-                    self.value.remove(self.cursor);
-                }
+            KeyCode::Backspace if self.cursor > 0 => {
+                self.cursor -= 1;
+                self.value.remove(self.cursor);
             }
-            KeyCode::Delete => {
-                if self.cursor < self.value.len() {
-                    self.value.remove(self.cursor);
-                }
+            KeyCode::Delete if self.cursor < self.value.len() => {
+                self.value.remove(self.cursor);
             }
             KeyCode::Left => {
                 self.cursor = self.cursor.saturating_sub(1);
             }
-            KeyCode::Right => {
-                if self.cursor < self.value.len() {
-                    self.cursor += 1;
-                }
+            KeyCode::Right if self.cursor < self.value.len() => {
+                self.cursor += 1;
             }
             KeyCode::Home => {
                 self.cursor = 0;
@@ -54,6 +49,7 @@ impl InputState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.value.clear();
         self.cursor = 0;

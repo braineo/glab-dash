@@ -96,10 +96,11 @@ impl PickerState {
         if let Some(scope) = label.split_once("::").map(|(s, _)| s) {
             // Deselect any other label with the same scope
             for (i, item) in self.items.iter().enumerate() {
-                if i != idx && self.selected[i] {
-                    if item.split_once("::").map(|(s, _)| s) == Some(scope) {
-                        self.selected[i] = false;
-                    }
+                if i != idx
+                    && self.selected[i]
+                    && item.split_once("::").map(|(s, _)| s) == Some(scope)
+                {
+                    self.selected[i] = false;
                 }
             }
         }
@@ -120,7 +121,7 @@ impl PickerState {
                         .map(|score| (i, score))
                 })
                 .collect();
-            scored.sort_by(|a, b| b.1.cmp(&a.1));
+            scored.sort_by_key(|item| std::cmp::Reverse(item.1));
             self.filtered = scored.into_iter().map(|(i, _)| i).collect();
         }
         if self.filtered.is_empty() {
@@ -176,7 +177,12 @@ pub enum PickerAction {
     Cancel,
 }
 
-pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState, ctx: &crate::ui::RenderCtx<'_>) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    state: &mut PickerState,
+    ctx: &crate::ui::RenderCtx<'_>,
+) {
     let label_colors = ctx.label_colors;
     let popup = centered_rect(50, 60, area);
     frame.render_widget(Clear, popup);
@@ -212,7 +218,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut PickerState, ctx: &crat
             }
             // Render labels with scoped styling in the Labels picker
             if state.title == "Labels" {
-                let color = label_colors.get(&state.items[idx]).map(|s| s.as_str());
+                let color = label_colors.get(&state.items[idx]).map(String::as_str);
                 spans.extend(styles::label_spans(&state.items[idx], color));
             } else if state.title == "Set Status" {
                 let name = &state.items[idx];

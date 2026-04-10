@@ -4,7 +4,10 @@ use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::Deserialize;
 
 use crate::config::Config;
-use crate::gitlab::types::*;
+use crate::gitlab::types::{
+    Issue, Iteration, MergeRequest, MergeRequestApprovals, Milestone, Note, ProjectLabel,
+    References, TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
+};
 
 // ── GraphQL response types (serde-driven) ──
 
@@ -19,10 +22,9 @@ fn deserialize_string_u64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64,
     let v = serde_json::Value::deserialize(d)?;
     match &v {
         serde_json::Value::String(s) => s.parse().map_err(serde::de::Error::custom),
-        serde_json::Value::Number(n) => {
-            n.as_u64()
-                .ok_or_else(|| serde::de::Error::custom("not u64"))
-        }
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .ok_or_else(|| serde::de::Error::custom("not u64")),
         _ => Err(serde::de::Error::custom("expected string or number")),
     }
 }
@@ -43,7 +45,10 @@ struct GqlConnection<T> {
 
 impl<T> Default for GqlConnection<T> {
     fn default() -> Self {
-        Self { nodes: Vec::new(), page_info: None }
+        Self {
+            nodes: Vec::new(),
+            page_info: None,
+        }
     }
 }
 
@@ -84,12 +89,14 @@ struct GqlWorkItem {
     #[serde(default)]
     reference: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     namespace: Option<GqlItemNamespace>,
     #[serde(default)]
     widgets: Vec<GqlWidget>,
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct GqlItemNamespace {
     #[serde(rename = "fullPath")]
     full_path: String,
@@ -173,7 +180,14 @@ struct GqlAllowedStatus {
 
 impl From<GqlAllowedStatus> for WorkItemStatus {
     fn from(s: GqlAllowedStatus) -> Self {
-        WorkItemStatus { id: s.id, name: s.name, icon_name: s.icon_name, color: s.color, position: s.position, category: s.category }
+        WorkItemStatus {
+            id: s.id,
+            name: s.name,
+            icon_name: s.icon_name,
+            color: s.color,
+            position: s.position,
+            category: s.category,
+        }
     }
 }
 
@@ -377,7 +391,7 @@ impl GitLabClient {
 
     // ── Issues (GraphQL via namespace.workItems) ──
 
-    const WORK_ITEM_QUERY: &str = r#"
+    const WORK_ITEM_QUERY: &str = r"
         query($path: ID!, $state: IssuableState, $assigneeUsernames: [String!], $updatedAfter: Time, $after: String) {
             namespace(fullPath: $path) {
                 workItems(
@@ -424,7 +438,7 @@ impl GitLabClient {
                 }
             }
         }
-    "#;
+    ";
 
     /// Fetch work items from a namespace with optional filters.
     /// Single method used for both tracking and external issue queries.
@@ -547,14 +561,11 @@ impl GitLabClient {
         ));
         let per_page_s = per_page.to_string();
         let page_s = page.to_string();
-        let mut req = self
-            .client
-            .get(&url)
-            .query(&[
-                ("state", state),
-                ("per_page", per_page_s.as_str()),
-                ("page", page_s.as_str()),
-            ]);
+        let mut req = self.client.get(&url).query(&[
+            ("state", state),
+            ("per_page", per_page_s.as_str()),
+            ("page", page_s.as_str()),
+        ]);
         if let Some(after) = updated_after {
             req = req.query(&[("updated_after", after)]);
         }
@@ -573,16 +584,13 @@ impl GitLabClient {
         let url = self.api_url("/merge_requests");
         let per_page_s = per_page.to_string();
         let page_s = page.to_string();
-        let mut req = self
-            .client
-            .get(&url)
-            .query(&[
-                ("assignee_username", username),
-                ("state", state),
-                ("scope", "all"),
-                ("per_page", per_page_s.as_str()),
-                ("page", page_s.as_str()),
-            ]);
+        let mut req = self.client.get(&url).query(&[
+            ("assignee_username", username),
+            ("state", state),
+            ("scope", "all"),
+            ("per_page", per_page_s.as_str()),
+            ("page", page_s.as_str()),
+        ]);
         if let Some(after) = updated_after {
             req = req.query(&[("updated_after", after)]);
         }
@@ -601,16 +609,13 @@ impl GitLabClient {
         let url = self.api_url("/merge_requests");
         let per_page_s = per_page.to_string();
         let page_s = page.to_string();
-        let mut req = self
-            .client
-            .get(&url)
-            .query(&[
-                ("reviewer_username", username),
-                ("state", state),
-                ("scope", "all"),
-                ("per_page", per_page_s.as_str()),
-                ("page", page_s.as_str()),
-            ]);
+        let mut req = self.client.get(&url).query(&[
+            ("reviewer_username", username),
+            ("state", state),
+            ("scope", "all"),
+            ("per_page", per_page_s.as_str()),
+            ("page", page_s.as_str()),
+        ]);
         if let Some(after) = updated_after {
             req = req.query(&[("updated_after", after)]);
         }
@@ -618,6 +623,7 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
+    #[allow(dead_code)]
     pub async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}",
@@ -688,6 +694,7 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
+    #[allow(dead_code)]
     pub async fn get_mr_approvals(&self, project: &str, iid: u64) -> Result<MergeRequestApprovals> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}/approvals",
@@ -707,31 +714,31 @@ impl GitLabClient {
     async fn graphql_post(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
         let resp = self
             .client
-            .post(&self.graphql_url())
+            .post(self.graphql_url())
             .json(body)
             .send()
             .await?;
         let json: serde_json::Value = Self::handle_response(resp).await?;
         // Surface top-level GraphQL errors
-        if let Some(errors) = json.get("errors").and_then(|v| v.as_array()) {
-            if !errors.is_empty() {
-                let msgs: Vec<String> = errors
-                    .iter()
-                    .filter_map(|e| {
-                        e.get("message")
-                            .and_then(|m| m.as_str())
-                            .map(|s| s.to_string())
-                    })
-                    .collect();
-                anyhow::bail!("GraphQL: {}", msgs.join(", "));
-            }
+        if let Some(errors) = json.get("errors").and_then(|v| v.as_array())
+            && !errors.is_empty()
+        {
+            let msgs: Vec<String> = errors
+                .iter()
+                .filter_map(|e| {
+                    e.get("message")
+                        .and_then(|m| m.as_str())
+                        .map(std::string::ToString::to_string)
+                })
+                .collect();
+            anyhow::bail!("GraphQL: {}", msgs.join(", "));
         }
         Ok(json)
     }
 
     /// Fetch available work item statuses for a project via GraphQL.
     pub async fn fetch_work_item_statuses(&self, project: &str) -> Result<Vec<WorkItemStatus>> {
-        let query = r#"
+        let query = r"
             query fetchStatuses($path: ID!) {
                 namespace(fullPath: $path) {
                     workItemTypes(name: ISSUE) {
@@ -746,7 +753,7 @@ impl GitLabClient {
                     }
                 }
             }
-        "#;
+        ";
         let variables = serde_json::json!({ "path": project });
         let body = serde_json::json!({ "query": query, "variables": variables });
         let json = self.graphql_post(&body).await?;
@@ -759,13 +766,19 @@ impl GitLabClient {
             .and_then(|v| v.as_array());
         if let Some(nodes) = nodes {
             for type_node in nodes {
-                if let Some(widgets) = type_node.get("widgetDefinitions").and_then(|v| v.as_array()) {
+                if let Some(widgets) = type_node
+                    .get("widgetDefinitions")
+                    .and_then(|v| v.as_array())
+                {
                     for widget in widgets {
                         if let Some(statuses_val) = widget.get("allowedStatuses") {
                             let statuses: Vec<GqlAllowedStatus> =
                                 serde_json::from_value(statuses_val.clone())?;
                             if !statuses.is_empty() {
-                                return Ok(statuses.into_iter().map(WorkItemStatus::from).collect());
+                                return Ok(statuses
+                                    .into_iter()
+                                    .map(WorkItemStatus::from)
+                                    .collect());
                             }
                         }
                     }
@@ -777,18 +790,14 @@ impl GitLabClient {
     }
 
     /// Update a work item's status via GraphQL.
-    pub async fn update_issue_status(
-        &self,
-        issue_id: u64,
-        status_id: &str,
-    ) -> Result<()> {
-        let query = r#"
+    pub async fn update_issue_status(&self, issue_id: u64, status_id: &str) -> Result<()> {
+        let query = r"
             mutation workItemUpdate($input: WorkItemUpdateInput!) {
                 workItemUpdate(input: $input) {
                     errors
                 }
             }
-        "#;
+        ";
         let gid = format!("gid://gitlab/WorkItem/{issue_id}");
         let variables = serde_json::json!({
             "input": {
@@ -805,14 +814,13 @@ impl GitLabClient {
         if let Some(errors) = json
             .pointer("/data/workItemUpdate/errors")
             .and_then(|v| v.as_array())
+            && !errors.is_empty()
         {
-            if !errors.is_empty() {
-                let msgs: Vec<String> = errors
-                    .iter()
-                    .filter_map(|e| e.as_str().map(|s| s.to_string()))
-                    .collect();
-                anyhow::bail!("{}", msgs.join(", "));
-            }
+            let msgs: Vec<String> = errors
+                .iter()
+                .filter_map(|e| e.as_str().map(std::string::ToString::to_string))
+                .collect();
+            anyhow::bail!("{}", msgs.join(", "));
         }
 
         Ok(())
@@ -822,7 +830,7 @@ impl GitLabClient {
 
     /// Fetch iterations for the tracking namespace.
     pub async fn fetch_iterations(&self) -> Result<Vec<Iteration>> {
-        let query = r#"
+        let query = r"
             query($path: ID!, $after: String) {
                 group(fullPath: $path) {
                     iterations(
@@ -835,7 +843,7 @@ impl GitLabClient {
                     }
                 }
             }
-        "#;
+        ";
 
         #[derive(Deserialize)]
         struct Resp {
@@ -850,8 +858,7 @@ impl GitLabClient {
         let primary = self.config.primary_tracking_project();
         let group_path = primary
             .rsplit_once('/')
-            .map(|(g, _)| g)
-            .unwrap_or(primary);
+            .map_or(primary, |(g, _)| g);
 
         let mut all = Vec::new();
         let mut cursor: Option<String> = None;
@@ -893,13 +900,13 @@ impl GitLabClient {
         issue_id: u64,
         iteration_gid: Option<&str>,
     ) -> Result<()> {
-        let query = r#"
+        let query = r"
             mutation workItemUpdate($input: WorkItemUpdateInput!) {
                 workItemUpdate(input: $input) {
                     errors
                 }
             }
-        "#;
+        ";
         let gid = format!("gid://gitlab/WorkItem/{issue_id}");
         let variables = serde_json::json!({
             "input": {
@@ -916,14 +923,13 @@ impl GitLabClient {
         if let Some(errors) = json
             .pointer("/data/workItemUpdate/errors")
             .and_then(|v| v.as_array())
+            && !errors.is_empty()
         {
-            if !errors.is_empty() {
-                let msgs: Vec<String> = errors
-                    .iter()
-                    .filter_map(|e| e.as_str().map(|s| s.to_string()))
-                    .collect();
-                anyhow::bail!("{}", msgs.join(", "));
-            }
+            let msgs: Vec<String> = errors
+                .iter()
+                .filter_map(|e| e.as_str().map(std::string::ToString::to_string))
+                .collect();
+            anyhow::bail!("{}", msgs.join(", "));
         }
 
         Ok(())
@@ -978,20 +984,14 @@ impl GitLabClient {
         let mut seen_ids = std::collections::HashSet::new();
         for project in &self.config.tracking_projects {
             let issues = self
-                .graphql_list_work_items(
-                    project,
-                    state,
-                    None,
-                    updated_after,
-                )
+                .graphql_list_work_items(project, state, None, updated_after)
                 .await?;
 
             for issue in issues {
                 let project_path = issue
                     .references
                     .as_ref()
-                    .map(|r| extract_project_from_ref(&r.full_ref))
-                    .unwrap_or_else(|| project.clone());
+                    .map_or_else(|| project.clone(), |r| extract_project_from_ref(&r.full_ref));
                 if seen_ids.insert(issue.id) {
                     all.push(TrackedIssue { issue, project_path });
                 }
@@ -1006,7 +1006,7 @@ impl GitLabClient {
         &self,
         members: &[String],
         state: Option<&str>,
-        updated_after: Option<&str>,
+        _updated_after: Option<&str>,
     ) -> Result<Vec<TrackedIssue>> {
         let gql_state = match state {
             Some("opened") => serde_json::json!("opened"),
@@ -1014,7 +1014,7 @@ impl GitLabClient {
             _ => serde_json::Value::Null,
         };
 
-        let query = r#"
+        let query = r"
             query($assigneeUsernames: [String!], $state: IssuableState, $types: [IssueType!], $after: String) {
                 issues(
                     assigneeUsernames: $assigneeUsernames
@@ -1039,7 +1039,7 @@ impl GitLabClient {
                     pageInfo { hasNextPage endCursor }
                 }
             }
-        "#;
+        ";
 
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
@@ -1055,8 +1055,8 @@ impl GitLabClient {
                 });
                 let body = serde_json::json!({ "query": query, "variables": variables });
                 let json = self.graphql_post(&body).await?;
-                let resp: GqlResponse<GqlRootIssuesData> =
-                    serde_json::from_value(json).context("failed to deserialize assigned issues")?;
+                let resp: GqlResponse<GqlRootIssuesData> = serde_json::from_value(json)
+                    .context("failed to deserialize assigned issues")?;
 
                 let connection = resp.data.issues;
                 for issue in connection.nodes.into_iter().map(Issue::from) {
@@ -1071,7 +1071,10 @@ impl GitLabClient {
                         continue;
                     }
 
-                    all.push(TrackedIssue { issue, project_path });
+                    all.push(TrackedIssue {
+                        issue,
+                        project_path,
+                    });
                 }
 
                 match connection.page_info {

@@ -86,13 +86,7 @@ fn make_tracked_mr(
 
 #[test]
 fn test_filter_assignee_eq() {
-    let issue = make_tracked_issue(
-        "Test issue",
-        "opened",
-        &["alice"],
-        &[],
-        "org/repo",
-    );
+    let issue = make_tracked_issue("Test issue", "opened", &["alice"], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Assignee,
         op: Op::Eq,
@@ -110,13 +104,7 @@ fn test_filter_assignee_eq() {
 
 #[test]
 fn test_filter_assignee_none() {
-    let issue = make_tracked_issue(
-        "Unassigned",
-        "opened",
-        &[],
-        &[],
-        "org/repo",
-    );
+    let issue = make_tracked_issue("Unassigned", "opened", &[], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Assignee,
         op: Op::Eq,
@@ -127,13 +115,7 @@ fn test_filter_assignee_none() {
 
 #[test]
 fn test_filter_state() {
-    let issue = make_tracked_issue(
-        "Closed",
-        "closed",
-        &[],
-        &[],
-        "org/repo",
-    );
+    let issue = make_tracked_issue("Closed", "closed", &[], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::State,
         op: Op::Eq,
@@ -151,13 +133,7 @@ fn test_filter_state() {
 
 #[test]
 fn test_filter_label_contains() {
-    let issue = make_tracked_issue(
-        "Bug",
-        "opened",
-        &["alice"],
-        &["bug", "urgent"],
-        "org/repo",
-    );
+    let issue = make_tracked_issue("Bug", "opened", &["alice"], &["bug", "urgent"], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Label,
         op: Op::Contains,
@@ -175,13 +151,7 @@ fn test_filter_label_contains() {
 
 #[test]
 fn test_filter_me_variable() {
-    let issue = make_tracked_issue(
-        "My issue",
-        "opened",
-        &["binbin"],
-        &[],
-        "org/repo",
-    );
+    let issue = make_tracked_issue("My issue", "opened", &["binbin"], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Assignee,
         op: Op::Eq,
@@ -193,13 +163,7 @@ fn test_filter_me_variable() {
 
 #[test]
 fn test_filter_multiple_conditions() {
-    let issue = make_tracked_issue(
-        "Important bug",
-        "opened",
-        &["alice"],
-        &["bug"],
-        "org/repo",
-    );
+    let issue = make_tracked_issue("Important bug", "opened", &["alice"], &["bug"], "org/repo");
 
     // All conditions must match (AND)
     let conditions = vec![
@@ -239,13 +203,7 @@ fn test_filter_multiple_conditions() {
 
 #[test]
 fn test_filter_title() {
-    let issue = make_tracked_issue(
-        "Fix authentication bug",
-        "opened",
-        &[],
-        &[],
-        "org/repo",
-    );
+    let issue = make_tracked_issue("Fix authentication bug", "opened", &[], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Title,
         op: Op::Contains,
@@ -336,13 +294,7 @@ fn test_mr_filter_reviewer() {
 
 #[test]
 fn test_empty_conditions_matches_all() {
-    let issue = make_tracked_issue(
-        "Anything",
-        "opened",
-        &[],
-        &[],
-        "org/repo",
-    );
+    let issue = make_tracked_issue("Anything", "opened", &[], &[], "org/repo");
     assert!(matches_issue(&issue, &[], "me", &[]));
 }
 
@@ -386,13 +338,7 @@ fn test_condition_display() {
 
 #[test]
 fn test_filter_project() {
-    let issue = make_tracked_issue(
-        "Bug",
-        "opened",
-        &[],
-        &[],
-        "other/project",
-    );
+    let issue = make_tracked_issue("Bug", "opened", &[], &[], "other/project");
     let conditions = vec![FilterCondition {
         field: Field::Project,
         op: Op::Eq,

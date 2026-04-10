@@ -10,7 +10,7 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+toml = "0.8"
 dirs = "6"
 anyhow = "1"
 fuzzy-matcher = "0.3"
@@ -19,6 +19,30 @@ chrono = { version = "0.4", features = ["serde"] }
 unicode-width = "0.2"
 rpassword = "7"
 comrak = "0.52.0"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Allow noisy pedantic lints that don't improve this codebase
+cast_possible_truncation = "allow"  # TUI code casts usize<->u16 constantly
+cast_possible_wrap = "allow"        # i64/u64 conversions in API layer
+cast_sign_loss = "allow"            # f64->u8 in color math
+too_many_lines = "allow"            # large match-based event handlers are idiomatic
+similar_names = "allow"
+many_single_char_names = "allow"    # GraphQL parsing uses short names
+struct_excessive_bools = "allow"    # config/state structs
+items_after_statements = "allow"
+module_name_repetitions = "allow"
+doc_markdown = "allow"              # internal code, not a library
+wildcard_imports = "allow"          # crate uses glob imports by convention
+needless_pass_by_value = "allow"    # changing signatures is API churn
+too_many_arguments = "allow"        # render functions need many params
+used_underscore_binding = "allow"   # conflicts with dead_code allows
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+cast_precision_loss = "allow"       # f64 precision loss in color math
+
+[lints.rust]
+warnings = "deny"
 
 [profile.release]
 opt-level = 'z'

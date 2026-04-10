@@ -71,7 +71,7 @@ pub fn render(
             if i > 0 {
                 labels_line_spans.push(Span::raw(" "));
             }
-            let color = label_colors.get(label.as_str()).map(|s| s.as_str());
+            let color = label_colors.get(label.as_str()).map(String::as_str);
             labels_line_spans.extend(styles::label_spans(label, color));
         }
     }

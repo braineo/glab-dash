@@ -6,13 +6,13 @@ use anyhow::{Context, Result};
 use crate::config::Config;
 use crate::gitlab::client::GitLabClient;
 
-const LOGO: &str = r#"
+const LOGO: &str = r"
    __ _  _       _             _           _
   / _` || |__ _ | |__  ___  __| | __ _ ___| |_
  | (_| || / _` || '_ \|___/ _` |/ _` |(_-<| ' \
   \__, ||_\__,_||_.__/   \__,_|\__,_|/__/|_||_|
   |___/
-"#;
+";
 
 pub fn needs_onboarding() -> bool {
     match config_path() {
@@ -147,11 +147,11 @@ pub async fn run_onboarding() -> Result<Config> {
 
     // Step 8: Write config file
     let config_path = config_path()?;
-    let yaml = generate_yaml(&config);
+    let toml_str = generate_toml(&config);
 
     println!("\n  Configuration preview:");
     println!("  ─────────────────────");
-    for line in yaml.lines() {
+    for line in toml_str.lines() {
         println!("  {line}");
     }
     println!("  ─────────────────────");
@@ -159,17 +159,17 @@ pub async fn run_onboarding() -> Result<Config> {
     println!();
     let save = prompt_with_default(&format!("Save to {}? [Y/n]", config_path.display()), "Y")?;
 
-    if save.to_lowercase() != "n" {
+    if save.to_lowercase() == "n" {
+        println!("\n  Config not saved. You can create it manually at:");
+        println!("    {}", config_path.display());
+    } else {
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create {}", parent.display()))?;
         }
-        std::fs::write(&config_path, &yaml)
+        std::fs::write(&config_path, &toml_str)
             .with_context(|| format!("Failed to write {}", config_path.display()))?;
         println!("\n  Config saved to {}", config_path.display());
-    } else {
-        println!("\n  Config not saved. You can create it manually at:");
-        println!("    {}", config_path.display());
     }
 
     println!("\n  Starting glab-dash...\n");
@@ -177,44 +177,8 @@ pub async fn run_onboarding() -> Result<Config> {
     Ok(config)
 }
 
-pub fn generate_yaml(config: &Config) -> String {
-    let mut yaml = String::new();
-
-    yaml.push_str(&format!("gitlab_url: \"{}\"\n", config.gitlab_url));
-    yaml.push_str(&format!("token: \"{}\"\n", config.token));
-    yaml.push_str(&format!("me: \"{}\"\n", config.me));
-    yaml.push_str("tracking_projects:\n");
-    for project in &config.tracking_projects {
-        yaml.push_str(&format!("  - \"{project}\"\n"));
-    }
-    yaml.push_str(&format!(
-        "refresh_interval_secs: {}\n",
-        config.refresh_interval_secs
-    ));
-
-    yaml.push_str("\nteams:\n");
-    for team in &config.teams {
-        yaml.push_str(&format!("  - name: \"{}\"\n", team.name));
-        let members: Vec<String> = team.members.iter().map(|m| format!("\"{m}\"")).collect();
-        yaml.push_str(&format!("    members: [{}]\n", members.join(", ")));
-    }
-
-    if !config.filters.is_empty() {
-        yaml.push_str("\nfilters:\n");
-        for filter in &config.filters {
-            yaml.push_str(&format!("  - name: \"{}\"\n", filter.name));
-            yaml.push_str(&format!("    kind: \"{}\"\n", filter.kind));
-            yaml.push_str("    conditions:\n");
-            for cond in &filter.conditions {
-                yaml.push_str(&format!(
-                    "      - {{ field: \"{}\", op: \"{}\", value: \"{}\" }}\n",
-                    cond.field, cond.op, cond.value
-                ));
-            }
-        }
-    }
-
-    yaml
+pub fn generate_toml(config: &Config) -> String {
+    toml::to_string_pretty(config).expect("Config should be serializable to TOML")
 }
 
 pub fn default_filter_presets() -> Vec<crate::config::FilterPreset> {
@@ -305,7 +269,7 @@ async fn fetch_current_user(client: &GitLabClient) -> Result<String> {
     let user: serde_json::Value = client.get_authenticated_user().await?;
     user.get("username")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .context("No username in response")
 }
 
@@ -362,5 +326,5 @@ fn config_path() -> Result<PathBuf> {
         return Ok(PathBuf::from(p));
     }
     let config_dir = dirs::config_dir().context("Could not determine config directory")?;
-    Ok(config_dir.join("glab-dash").join("config.yaml"))
+    Ok(config_dir.join("glab-dash").join("config.toml"))
 }

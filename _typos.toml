@@ -1,0 +1,8 @@
+[default.extend-words]
+# Crate name
+ratatui = "ratatui"
+# Keyboard shortcut hints: [s]tatus, [a]ssign, etc.
+tatus = "tatus"
+ssign = "ssign"
+omment = "omment"
+abels = "abels"

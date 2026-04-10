@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub gitlab_url: String,
     pub token: String,
@@ -24,14 +24,13 @@ fn default_refresh() -> u64 {
     60
 }
 
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamConfig {
     pub name: String,
     pub members: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterPreset {
     pub name: String,
     pub kind: String,
@@ -39,21 +38,21 @@ pub struct FilterPreset {
     pub conditions: Vec<PresetCondition>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresetCondition {
     pub field: String,
     pub op: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SortPreset {
     pub name: String,
     pub kind: String,
     pub specs: Vec<SortSpecConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SortSpecConfig {
     pub field: String,
     #[serde(default = "default_desc")]
@@ -66,7 +65,7 @@ fn default_desc() -> String {
     "desc".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabelSortOrderConfig {
     pub scope: String,
     pub values: Vec<String>,
@@ -84,7 +83,7 @@ impl Config {
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read config at {}", path.display()))?;
         let mut config: Config =
-            serde_yaml::from_str(&contents).context("Failed to parse config YAML")?;
+            toml::from_str(&contents).context("Failed to parse config TOML")?;
 
         // Environment variable overrides
         if let Ok(url) = std::env::var("GITLAB_URL") {
@@ -110,7 +109,9 @@ impl Config {
 
     /// The first tracking project (used as primary for iterations, statuses, etc.)
     pub fn primary_tracking_project(&self) -> &str {
-        self.tracking_projects.first().map(|s| s.as_str()).unwrap_or("")
+        self.tracking_projects
+            .first()
+            .map_or("", |s| s.as_str())
     }
 
     pub fn all_members(&self) -> Vec<String> {
@@ -142,5 +143,5 @@ fn config_path() -> Result<PathBuf> {
         return Ok(PathBuf::from(p));
     }
     let config_dir = dirs::config_dir().context("Could not determine config directory")?;
-    Ok(config_dir.join("glab-dash").join("config.yaml"))
+    Ok(config_dir.join("glab-dash").join("config.toml"))
 }

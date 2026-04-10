@@ -11,10 +11,15 @@ use crate::cache;
 use crate::config::Config;
 use crate::filter::{Field, FilterCondition, Op};
 use crate::gitlab::client::GitLabClient;
-use crate::gitlab::types::*;
+use crate::gitlab::types::{
+    Issue, Iteration, MergeRequest, Note, ProjectLabel, TrackedIssue, TrackedMergeRequest, User,
+    WorkItemStatus,
+};
 use crate::ui::components::{chord_popup, confirm_dialog, error_popup, help, picker};
 use crate::ui::keys;
-use crate::ui::views::{dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning};
+use crate::ui::views::{
+    dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
@@ -43,15 +48,8 @@ pub enum Overlay {
 /// Key handlers, status bar, and help overlay all read from this.
 #[derive(Debug, Clone)]
 pub enum FocusedItem {
-    Issue {
-        project: String,
-        id: u64,
-        iid: u64,
-    },
-    Mr {
-        project: String,
-        iid: u64,
-    },
+    Issue { project: String, id: u64, iid: u64 },
+    Mr { project: String, iid: u64 },
 }
 
 #[derive(Debug, Clone)]
@@ -75,30 +73,33 @@ pub enum PickerContext {
 /// Context for the chord popup overlay (what action to perform on selection).
 #[derive(Debug)]
 pub enum ChordContext {
-    /// Set issue status: (project_path, issue_db_id, issue_iid)
+    /// Set issue status: (`project_path`, `issue_db_id`, `issue_iid`)
     Status(String, u64, u64),
     Assignee,
-    /// Move issue to iteration: (issue_index in self.issues)
+    /// Move issue to iteration: (`issue_index` in self.issues)
     Iteration(usize),
 }
 
 /// Messages from async operations
 pub enum AsyncMsg {
     IssuesLoaded(Result<Vec<TrackedIssue>>, bool),
-    MrsLoaded(Result<(Vec<TrackedMergeRequest>, Vec<TrackedMergeRequest>)>, bool),
+    MrsLoaded(
+        Result<(Vec<TrackedMergeRequest>, Vec<TrackedMergeRequest>)>,
+        bool,
+    ),
     NotesLoaded(Result<Vec<Note>>),
     ActionDone(Result<String>),
     /// An issue was mutated; carry the updated object and project path.
     IssueUpdated(Result<Issue>, String),
     /// A merge request was mutated; carry the updated object and project path.
     MrUpdated(Result<MergeRequest>, String),
-    /// Issue custom status changed: (project_path, iid, new_status_name).
+    /// Issue custom status changed: (`project_path`, iid, `new_status_name`).
     IssueStatusUpdated(Result<(String, u64, String)>),
     LabelsLoaded(Result<Vec<ProjectLabel>>),
-    /// (statuses, project, issue_db_id, iid, close_only)
+    /// (statuses, project, `issue_db_id`, iid, `close_only`)
     StatusesLoaded(Result<Vec<WorkItemStatus>>, String, u64, u64, bool),
     IterationsLoaded(Result<Vec<Iteration>>),
-    /// Iteration update result: (result, issue_id, new_iteration)
+    /// Iteration update result: (result, `issue_id`, `new_iteration`)
     IterationUpdated(Result<()>, u64, Option<Iteration>),
 }
 
@@ -229,32 +230,30 @@ impl App {
     /// Call after every view change, list selection change, or data load.
     fn refresh_focused(&mut self) {
         self.focused = match self.view {
-            View::IssueList | View::IssueDetail => {
-                self.issue_list_state.selected_issue(&self.issues).map(|item| {
-                    FocusedItem::Issue {
-                        project: item.project_path.clone(),
-                        id: item.issue.id,
-                        iid: item.issue.iid,
-                    }
-                })
-            }
+            View::IssueList | View::IssueDetail => self
+                .issue_list_state
+                .selected_issue(&self.issues)
+                .map(|item| FocusedItem::Issue {
+                    project: item.project_path.clone(),
+                    id: item.issue.id,
+                    iid: item.issue.iid,
+                }),
             View::MrList | View::MrDetail => {
-                self.mr_list_state.selected_mr(&self.mrs).map(|item| {
-                    FocusedItem::Mr {
+                self.mr_list_state
+                    .selected_mr(&self.mrs)
+                    .map(|item| FocusedItem::Mr {
                         project: item.project_path.clone(),
                         iid: item.mr.iid,
-                    }
-                })
+                    })
             }
-            View::Planning => {
-                self.planning_state.selected_issue(&self.issues).map(|item| {
-                    FocusedItem::Issue {
-                        project: item.project_path.clone(),
-                        id: item.issue.id,
-                        iid: item.issue.iid,
-                    }
-                })
-            }
+            View::Planning => self
+                .planning_state
+                .selected_issue(&self.issues)
+                .map(|item| FocusedItem::Issue {
+                    project: item.project_path.clone(),
+                    id: item.issue.id,
+                    iid: item.issue.iid,
+                }),
             View::Dashboard => None,
         };
     }
@@ -385,7 +384,13 @@ impl App {
 
     /// Fetch work-item statuses and show a chord popup.
     /// `close_only`: when true, filter to close-category statuses (for `x` key).
-    fn fetch_statuses_and_show_chord(&mut self, project: String, issue_id: u64, iid: u64, close_only: bool) {
+    fn fetch_statuses_and_show_chord(
+        &mut self,
+        project: String,
+        issue_id: u64,
+        iid: u64,
+        close_only: bool,
+    ) {
         // If we already have cached statuses for this project, show chord immediately
         if let Some(statuses) = self.work_item_statuses.get(&project) {
             if statuses.is_empty() {
@@ -394,8 +399,7 @@ impl App {
                     .issue_list_state
                     .selected_issue(&self.issues)
                     .or_else(|| self.current_detail_issue())
-                    .map(|i| i.issue.state.as_str())
-                    .unwrap_or("opened");
+                    .map_or("opened", |i| i.issue.state.as_str());
                 let action = if item_state == "opened" {
                     ConfirmAction::CloseIssue(project, iid)
                 } else {
@@ -415,21 +419,29 @@ impl App {
         self.loading = true;
         tokio::spawn(async move {
             let result = client.fetch_work_item_statuses(&project_clone).await;
-            let _ = tx.send(AsyncMsg::StatusesLoaded(result, project_clone, issue_id, iid, close_only));
+            let _ = tx.send(AsyncMsg::StatusesLoaded(
+                result,
+                project_clone,
+                issue_id,
+                iid,
+                close_only,
+            ));
         });
     }
 
     /// Build and display the status chord popup from cached statuses.
     fn show_status_chord(&mut self, project: &str, issue_id: u64, iid: u64, close_only: bool) {
-        let Some(statuses) = self.work_item_statuses.get(project) else { return };
+        let Some(statuses) = self.work_item_statuses.get(project) else {
+            return;
+        };
         let (title, names): (&str, Vec<String>) = if close_only {
             // Filter to close-category statuses; show all if category info unavailable
             let close_names: Vec<String> = statuses
                 .iter()
                 .filter(|s| {
-                    s.category.as_deref().is_some_and(|c| {
-                        matches!(c, "done" | "canceled" | "closed")
-                    })
+                    s.category
+                        .as_deref()
+                        .is_some_and(|c| matches!(c, "done" | "canceled" | "closed"))
                 })
                 .map(|s| s.name.clone())
                 .collect();
@@ -439,8 +451,7 @@ impl App {
                     .issue_list_state
                     .selected_issue(&self.issues)
                     .or_else(|| self.current_detail_issue())
-                    .map(|i| i.issue.state.as_str())
-                    .unwrap_or("opened");
+                    .map_or("opened", |i| i.issue.state.as_str());
                 let action = if item_state == "opened" {
                     ConfirmAction::CloseIssue(project.to_string(), iid)
                 } else {
@@ -448,22 +459,26 @@ impl App {
                 };
                 self.overlay = Overlay::Confirm(action);
                 return;
-            } else {
-                ("Close As", close_names)
             }
+            ("Close As", close_names)
         } else {
-            ("Set Status", statuses.iter().map(|s| s.name.clone()).collect())
+            (
+                "Set Status",
+                statuses.iter().map(|s| s.name.clone()).collect(),
+            )
         };
         self.chord_state = Some(
-            chord_popup::ChordState::new(title, names)
-                .with_kind(chord_popup::ChordKind::Status),
+            chord_popup::ChordState::new(title, names).with_kind(chord_popup::ChordKind::Status),
         );
         self.overlay = Overlay::Chord(ChordContext::Status(project.to_string(), issue_id, iid));
     }
 
     /// `s` key — open full status picker/chord for the focused issue.
     fn do_set_status(&mut self) {
-        if let Some(FocusedItem::Issue { project, id, iid, .. }) = self.focused.clone() {
+        if let Some(FocusedItem::Issue {
+            project, id, iid, ..
+        }) = self.focused.clone()
+        {
             self.fetch_statuses_and_show_chord(project, id, iid, false);
         }
     }
@@ -474,7 +489,9 @@ impl App {
     /// MRs: simple close confirm.
     fn do_toggle_state(&mut self) {
         match self.focused.clone() {
-            Some(FocusedItem::Issue { project, id, iid, .. }) => {
+            Some(FocusedItem::Issue {
+                project, id, iid, ..
+            }) => {
                 self.fetch_statuses_and_show_chord(project, id, iid, true);
             }
             Some(FocusedItem::Mr { project, iid, .. }) => {
@@ -513,7 +530,11 @@ impl App {
                     } else {
                         let mut new_issues = issues;
                         for new_iss in &mut new_issues {
-                            if let Some(pos) = self.issues.iter().position(|i| i.issue.id == new_iss.issue.id) {
+                            if let Some(pos) = self
+                                .issues
+                                .iter()
+                                .position(|i| i.issue.id == new_iss.issue.id)
+                            {
                                 let old_iss = &self.issues[pos];
                                 if old_iss.issue.updated_at > new_iss.issue.updated_at {
                                     *new_iss = old_iss.clone();
@@ -552,7 +573,8 @@ impl App {
                     } else {
                         let mut new_mrs = mrs;
                         for new_mr in &mut new_mrs {
-                            if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == new_mr.mr.id) {
+                            if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == new_mr.mr.id)
+                            {
                                 let old_mr = &self.mrs[pos];
                                 if old_mr.mr.updated_at > new_mr.mr.updated_at {
                                     *new_mr = old_mr.clone();
@@ -626,9 +648,11 @@ impl App {
                 self.loading = false;
                 match result {
                     Ok(mr) => {
-                        if let Some(pos) = self.mrs.iter().position(|e| {
-                            e.mr.iid == mr.iid && e.project_path == project_path
-                        }) {
+                        if let Some(pos) = self
+                            .mrs
+                            .iter()
+                            .position(|e| e.mr.iid == mr.iid && e.project_path == project_path)
+                        {
                             self.mrs[pos].mr = mr;
                         }
                         self.error = None;
@@ -642,9 +666,11 @@ impl App {
                 self.loading = false;
                 match result {
                     Ok((project_path, iid, status_name)) => {
-                        if let Some(pos) = self.issues.iter().position(|e| {
-                            e.issue.iid == iid && e.project_path == project_path
-                        }) {
+                        if let Some(pos) = self
+                            .issues
+                            .iter()
+                            .position(|e| e.issue.iid == iid && e.project_path == project_path)
+                        {
                             self.issues[pos].issue.custom_status = Some(status_name);
                         }
                         self.error = None;
@@ -671,8 +697,7 @@ impl App {
                                 .issue_list_state
                                 .selected_issue(&self.issues)
                                 .or_else(|| self.current_detail_issue())
-                                .map(|i| i.issue.state.as_str())
-                                .unwrap_or("opened");
+                                .map_or("opened", |i| i.issue.state.as_str());
                             let action = if item_state == "opened" {
                                 ConfirmAction::CloseIssue(project, iid)
                             } else {
@@ -692,19 +717,17 @@ impl App {
                     }
                 }
             }
-            AsyncMsg::IterationsLoaded(result) => {
-                match result {
-                    Ok(iters) => {
-                        self.iterations = iters;
-                        self.classify_iterations();
-                        self.refilter_planning();
-                        self.refresh_focused();
-                    }
-                    Err(e) => {
-                        self.show_error(format!("Iterations: {e}"));
-                    }
+            AsyncMsg::IterationsLoaded(result) => match result {
+                Ok(iters) => {
+                    self.iterations = iters;
+                    self.classify_iterations();
+                    self.refilter_planning();
+                    self.refresh_focused();
                 }
-            }
+                Err(e) => {
+                    self.show_error(format!("Iterations: {e}"));
+                }
+            },
             AsyncMsg::IterationUpdated(result, issue_id, new_iteration) => {
                 self.loading = false;
                 match result {
@@ -754,13 +777,9 @@ impl App {
         // Iterations come sorted by CADENCE_AND_DUE_DATE_ASC.
         // States: "closed", "current", "upcoming".
         // Find current, then adjacent entries are previous/next.
-        let current_pos = self
-            .iterations
-            .iter()
-            .position(|i| i.state == "current");
+        let current_pos = self.iterations.iter().position(|i| i.state == "current");
 
-        self.planning_state.current_iteration =
-            current_pos.map(|pos| self.iterations[pos].clone());
+        self.planning_state.current_iteration = current_pos.map(|pos| self.iterations[pos].clone());
 
         self.planning_state.prev_iteration = current_pos
             .and_then(|pos| pos.checked_sub(1))
@@ -794,7 +813,10 @@ impl App {
                 for statuses in self.work_item_statuses.values() {
                     for s in statuses {
                         let name = s.name.to_lowercase();
-                        if !states.iter().any(|existing| existing.to_lowercase() == name) {
+                        if !states
+                            .iter()
+                            .any(|existing| existing.to_lowercase() == name)
+                        {
                             states.push(s.name.clone());
                         }
                     }
@@ -880,8 +902,7 @@ impl App {
                         .iter()
                         .filter_map(|s| {
                             let field = crate::sort::SortField::from_str(&s.field)?;
-                            let direction =
-                                crate::sort::SortDirection::from_str(&s.direction)?;
+                            let direction = crate::sort::SortDirection::from_str(&s.direction)?;
                             Some(crate::sort::SortSpec {
                                 field,
                                 direction,
@@ -892,9 +913,9 @@ impl App {
                 })
                 .unwrap_or_default()
         } else if let Some(rest) = name.strip_prefix("↓ ") {
-            self.parse_inline_sort(rest, crate::sort::SortDirection::Desc)
+            Self::parse_inline_sort(rest, crate::sort::SortDirection::Desc)
         } else if let Some(rest) = name.strip_prefix("↑ ") {
-            self.parse_inline_sort(rest, crate::sort::SortDirection::Asc)
+            Self::parse_inline_sort(rest, crate::sort::SortDirection::Asc)
         } else {
             return;
         };
@@ -913,7 +934,6 @@ impl App {
     }
 
     fn parse_inline_sort(
-        &self,
         text: &str,
         direction: crate::sort::SortDirection,
     ) -> Vec<crate::sort::SortSpec> {
@@ -1046,7 +1066,7 @@ impl App {
 
         // View-specific handling
         match self.view {
-            View::Dashboard => self.handle_dashboard_key(key),
+            View::Dashboard => {}
             View::IssueList => self.handle_issue_list_key(key),
             View::IssueDetail => self.handle_issue_detail_key(key),
             View::MrList => self.handle_mr_list_key(key),
@@ -1055,10 +1075,6 @@ impl App {
         }
 
         false
-    }
-
-    fn handle_dashboard_key(&mut self, _key: KeyEvent) {
-        // i/m navigation is now global — see handle_key()
     }
 
     fn handle_chord_result(&mut self, value: String) {
@@ -1197,12 +1213,18 @@ impl App {
                 }
             }
             mr_list::MrListAction::Approve => {
-                if let Some(FocusedItem::Mr { ref project, iid, .. }) = self.focused {
+                if let Some(FocusedItem::Mr {
+                    ref project, iid, ..
+                }) = self.focused
+                {
                     self.overlay = Overlay::Confirm(ConfirmAction::ApproveMr(project.clone(), iid));
                 }
             }
             mr_list::MrListAction::Merge => {
-                if let Some(FocusedItem::Mr { ref project, iid, .. }) = self.focused {
+                if let Some(FocusedItem::Mr {
+                    ref project, iid, ..
+                }) = self.focused
+                {
                     self.overlay = Overlay::Confirm(ConfirmAction::MergeMr(project.clone(), iid));
                 }
             }
@@ -1324,13 +1346,21 @@ impl App {
                     self.overlay = Overlay::CommentInput;
                 }
                 KeyCode::Char('A') => {
-                    if let Some(FocusedItem::Mr { ref project, iid, .. }) = self.focused {
-                        self.overlay = Overlay::Confirm(ConfirmAction::ApproveMr(project.clone(), iid));
+                    if let Some(FocusedItem::Mr {
+                        ref project, iid, ..
+                    }) = self.focused
+                    {
+                        self.overlay =
+                            Overlay::Confirm(ConfirmAction::ApproveMr(project.clone(), iid));
                     }
                 }
                 KeyCode::Char('M') => {
-                    if let Some(FocusedItem::Mr { ref project, iid, .. }) = self.focused {
-                        self.overlay = Overlay::Confirm(ConfirmAction::MergeMr(project.clone(), iid));
+                    if let Some(FocusedItem::Mr {
+                        ref project, iid, ..
+                    }) = self.focused
+                    {
+                        self.overlay =
+                            Overlay::Confirm(ConfirmAction::MergeMr(project.clone(), iid));
                     }
                 }
                 KeyCode::Char('x') => {
@@ -1376,11 +1406,18 @@ impl App {
                     if let Some(sel) = self.planning_state.column_states[col].selected()
                         && let Some(&idx) = self.planning_state.column_indices[col].get(sel)
                     {
-                        if let Some(pos) = self.issue_list_state.filtered_indices.iter().position(|&i| i == idx) {
+                        if let Some(pos) = self
+                            .issue_list_state
+                            .filtered_indices
+                            .iter()
+                            .position(|&i| i == idx)
+                        {
                             self.issue_list_state.table_state.select(Some(pos));
                         } else {
                             self.issue_list_state.filtered_indices.push(idx);
-                            self.issue_list_state.table_state.select(Some(self.issue_list_state.filtered_indices.len() - 1));
+                            self.issue_list_state
+                                .table_state
+                                .select(Some(self.issue_list_state.filtered_indices.len() - 1));
                         }
                     }
                     self.issue_detail_state.reset();
@@ -1434,13 +1471,11 @@ impl App {
 
     fn show_iteration_chord(&mut self) {
         let col = self.planning_state.focused_column;
-        let sel = match self.planning_state.column_states[col].selected() {
-            Some(s) => s,
-            None => return,
+        let Some(sel) = self.planning_state.column_states[col].selected() else {
+            return;
         };
-        let issue_idx = match self.planning_state.column_indices[col].get(sel) {
-            Some(&idx) => idx,
-            None => return,
+        let Some(&issue_idx) = self.planning_state.column_indices[col].get(sel) else {
+            return;
         };
 
         // Build choices: prev / current / next / remove
@@ -1476,7 +1511,7 @@ impl App {
         let old_iteration = self.issues[issue_idx].issue.iteration.clone();
 
         // Optimistic update
-        self.issues[issue_idx].issue.iteration = target.clone();
+        self.issues[issue_idx].issue.iteration.clone_from(&target);
         self.issues[issue_idx].issue.updated_at = chrono::Utc::now();
         self.refilter_planning();
 
@@ -1484,7 +1519,9 @@ impl App {
         let tx = self.async_tx.clone();
         let target_gid = target.as_ref().map(|i| i.id.clone());
         tokio::spawn(async move {
-            let result = client.update_issue_iteration(issue_id, target_gid.as_deref()).await;
+            let result = client
+                .update_issue_iteration(issue_id, target_gid.as_deref())
+                .await;
             let _ = tx.send(AsyncMsg::IterationUpdated(result, issue_id, old_iteration));
         });
     }
@@ -1502,8 +1539,7 @@ impl App {
                 if self.filter_editor_state.step == filter_editor::EditorStep::EnterValue
                     && self.filter_editor_state.suggestions.is_empty()
                 {
-                    self.filter_editor_state.suggestions =
-                        self.get_filter_suggestions();
+                    self.filter_editor_state.suggestions = self.get_filter_suggestions();
                 }
                 match action {
                     filter_editor::FilterEditorAction::Continue => {}
@@ -1529,7 +1565,7 @@ impl App {
             Overlay::Confirm(action) => {
                 let action = action.clone();
                 match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    KeyCode::Char('y' | 'Y') => {
                         if matches!(action, ConfirmAction::QuitApp) {
                             return true;
                         }
@@ -1704,11 +1740,7 @@ impl App {
                 }
                 ConfirmAction::ReopenIssue(project, iid) => {
                     let result = client
-                        .update_issue(
-                            &project,
-                            iid,
-                            serde_json::json!({"state_event": "reopen"}),
-                        )
+                        .update_issue(&project, iid, serde_json::json!({"state_event": "reopen"}))
                         .await;
                     let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
                 }
@@ -1722,7 +1754,7 @@ impl App {
                     let result = client
                         .approve_mr(&project, iid)
                         .await
-                        .map(|_| format!("Approved !{iid}"));
+                        .map(|()| format!("Approved !{iid}"));
                     let _ = tx.send(AsyncMsg::ActionDone(result));
                 }
                 ConfirmAction::MergeMr(project, iid) => {
@@ -1766,7 +1798,7 @@ impl App {
             let result = client
                 .update_issue_status(issue_id, &status_id)
                 .await
-                .map(|_| (project, iid, status_display));
+                .map(|()| (project, iid, status_display));
             let _ = tx.send(AsyncMsg::IssueStatusUpdated(result));
         });
     }
@@ -1798,7 +1830,7 @@ impl App {
     }
 
     /// Return the index into self.issues / self.mrs for the currently selected item,
-    /// plus (project_path, iid, is_mr).
+    /// plus (`project_path`, iid, `is_mr`).
     fn selected_item_idx(&self) -> Option<(usize, String, u64, bool)> {
         match self.view {
             View::IssueList | View::IssueDetail => {
@@ -1827,7 +1859,7 @@ impl App {
                 let item = self.mrs.get(idx)?;
                 Some((idx, item.project_path.clone(), item.mr.iid, true))
             }
-            _ => None,
+            View::Dashboard => None,
         }
     }
 
@@ -1838,9 +1870,9 @@ impl App {
 
         // Optimistic update
         if is_mr {
-            self.mrs[idx].mr.labels = labels.clone();
+            self.mrs[idx].mr.labels.clone_from(&labels);
         } else {
-            self.issues[idx].issue.labels = labels.clone();
+            self.issues[idx].issue.labels.clone_from(&labels);
         }
 
         let payload = serde_json::json!({"labels": labels.join(",")});
@@ -1944,7 +1976,7 @@ impl App {
                     return;
                 }
             }
-            _ => return,
+            View::Dashboard => return,
         };
 
         self.loading = true;
@@ -2046,13 +2078,7 @@ impl App {
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
-                    issue_detail::render(
-                        frame,
-                        chunks[0],
-                        &item,
-                        &self.issue_detail_state,
-                        &ctx,
-                    );
+                    issue_detail::render(frame, chunks[0], &item, &self.issue_detail_state, &ctx);
                 }
             }
             View::MrList => {
@@ -2069,13 +2095,7 @@ impl App {
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(
-                        frame,
-                        chunks[0],
-                        &item,
-                        &self.mr_detail_state,
-                        &ctx,
-                    );
+                    mr_detail::render(frame, chunks[0], &item, &self.mr_detail_state, &ctx);
                 }
             }
             View::Planning => {
@@ -2095,8 +2115,7 @@ impl App {
         let team_name = self
             .active_team
             .and_then(|idx| self.config.teams.get(idx))
-            .map(|t| t.name.as_str())
-            .unwrap_or("all");
+            .map_or("all", |t| t.name.as_str());
         let view_name = match self.view {
             View::Dashboard => "Dashboard",
             View::IssueList => "Issues",
@@ -2108,16 +2127,62 @@ impl App {
         let item_count = match self.view {
             View::IssueList => self.issue_list_state.filtered_indices.len(),
             View::MrList => self.mr_list_state.filtered_indices.len(),
-            View::Planning => self.planning_state.column_indices.iter().map(|c| c.len()).sum(),
+            View::Planning => self
+                .planning_state
+                .column_indices
+                .iter()
+                .map(std::vec::Vec::len)
+                .sum(),
             _ => self.issues.len() + self.mrs.len(),
         };
         let hints: &[(&str, &str)] = match self.view {
-            View::Dashboard => &[("q", "quit"), ("?", "help"), ("i", "issues"), ("m", "mrs"), ("p", "planning")],
-            View::IssueList => &[("q", "back"), ("?", "help"), ("h", "home"), ("/", "search"), ("s", "status"), ("x", "close")],
-            View::MrList => &[("q", "back"), ("?", "help"), ("h", "home"), ("/", "search"), ("A", "approve"), ("M", "merge")],
-            View::IssueDetail => &[("q", "back"), ("?", "help"), ("s", "status"), ("x", "close"), ("c", "comment"), ("o", "open")],
-            View::MrDetail => &[("q", "back"), ("?", "help"), ("A", "approve"), ("M", "merge"), ("c", "comment"), ("o", "open")],
-            View::Planning => &[("q", "back"), ("?", "help"), ("H", "home"), (">/<", "move iter"), ("v", "layout"), ("[/]", "toggle col")],
+            View::Dashboard => &[
+                ("q", "quit"),
+                ("?", "help"),
+                ("i", "issues"),
+                ("m", "mrs"),
+                ("p", "planning"),
+            ],
+            View::IssueList => &[
+                ("q", "back"),
+                ("?", "help"),
+                ("h", "home"),
+                ("/", "search"),
+                ("s", "status"),
+                ("x", "close"),
+            ],
+            View::MrList => &[
+                ("q", "back"),
+                ("?", "help"),
+                ("h", "home"),
+                ("/", "search"),
+                ("A", "approve"),
+                ("M", "merge"),
+            ],
+            View::IssueDetail => &[
+                ("q", "back"),
+                ("?", "help"),
+                ("s", "status"),
+                ("x", "close"),
+                ("c", "comment"),
+                ("o", "open"),
+            ],
+            View::MrDetail => &[
+                ("q", "back"),
+                ("?", "help"),
+                ("A", "approve"),
+                ("M", "merge"),
+                ("c", "comment"),
+                ("o", "open"),
+            ],
+            View::Planning => &[
+                ("q", "back"),
+                ("?", "help"),
+                ("H", "home"),
+                (">/<", "move iter"),
+                ("v", "layout"),
+                ("[/]", "toggle col"),
+            ],
         };
         crate::ui::components::status_bar::render(
             frame,
@@ -2139,12 +2204,7 @@ impl App {
                 help::render(frame, area, &self.view);
             }
             Overlay::FilterEditor => {
-                filter_editor::render(
-                    frame,
-                    area,
-                    &mut self.filter_editor_state,
-                    &ctx,
-                );
+                filter_editor::render(frame, area, &mut self.filter_editor_state, &ctx);
             }
             Overlay::Confirm(action) => {
                 let (title, msg) = match action {
@@ -2154,9 +2214,7 @@ impl App {
                     ConfirmAction::ReopenIssue(_, iid) => {
                         ("Reopen Issue", format!("Reopen issue #{iid}?"))
                     }
-                    ConfirmAction::CloseMr(_, iid) => {
-                        ("Close MR", format!("Close MR !{iid}?"))
-                    }
+                    ConfirmAction::CloseMr(_, iid) => ("Close MR", format!("Close MR !{iid}?")),
                     ConfirmAction::ApproveMr(_, iid) => {
                         ("Approve MR", format!("Approve MR !{iid}?"))
                     }

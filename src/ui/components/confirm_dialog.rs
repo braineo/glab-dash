@@ -26,8 +26,7 @@ pub fn render(frame: &mut Frame, area: Rect, title: &str, message: &str) {
         ]),
     ];
 
-    let block = styles::overlay_block(title)
-        .border_style(Style::default().fg(styles::ORANGE));
+    let block = styles::overlay_block(title).border_style(Style::default().fg(styles::ORANGE));
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, popup);

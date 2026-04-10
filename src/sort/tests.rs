@@ -17,12 +17,7 @@ fn make_user(username: &str) -> User {
     }
 }
 
-fn make_issue(
-    iid: u64,
-    title: &str,
-    labels: &[&str],
-    updated_days_ago: i64,
-) -> TrackedIssue {
+fn make_issue(iid: u64, title: &str, labels: &[&str], updated_days_ago: i64) -> TrackedIssue {
     TrackedIssue {
         issue: Issue {
             id: iid,
@@ -172,10 +167,7 @@ fn test_label_scope_missing_sorts_last() {
         make_issue(3, "Has label", &["p::low"], 0),
     ];
     let mut label_orders = HashMap::new();
-    label_orders.insert(
-        "p".to_string(),
-        vec!["high".to_string(), "low".to_string()],
-    );
+    label_orders.insert("p".to_string(), vec!["high".to_string(), "low".to_string()]);
     let mut indices: Vec<usize> = vec![0, 1, 2];
     let specs = vec![SortSpec {
         field: SortField::Label,
@@ -212,10 +204,7 @@ fn test_compare_by_label_scope_direct() {
 
 #[test]
 fn test_empty_specs_preserves_order() {
-    let issues = vec![
-        make_issue(3, "C", &[], 0),
-        make_issue(1, "A", &[], 0),
-    ];
+    let issues = vec![make_issue(3, "C", &[], 0), make_issue(1, "A", &[], 0)];
     let mut indices: Vec<usize> = vec![0, 1];
     sort_issues(&mut indices, &issues, &[], &HashMap::new());
     assert_eq!(indices, vec![0, 1]); // unchanged

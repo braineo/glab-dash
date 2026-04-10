@@ -342,7 +342,7 @@ pub fn render(
     }
 
     // Search bar takes 1 row if searching
-    let search_height = if state.searching { 1 } else { 0 };
+    let search_height = u16::from(state.searching);
     let main_chunks =
         Layout::vertical([Constraint::Length(search_height), Constraint::Min(1)]).split(area);
 
@@ -455,14 +455,13 @@ fn render_column(
         .iter()
         .filter_map(|&i| issues.get(i))
         .map(|item| {
-            let status_icon = status_icon_for(&item.issue.custom_status);
+            let status_icon = status_icon_for(item.issue.custom_status.as_ref());
             let iid = format!("#{}", item.issue.iid);
             let assignee = item
                 .issue
                 .assignees
                 .first()
-                .map(|u| u.username.as_str())
-                .unwrap_or("-");
+                .map_or("-", |u| u.username.as_str());
             let weight = item
                 .issue
                 .weight
@@ -541,37 +540,33 @@ pub fn iteration_label(iter: &Iteration) -> String {
 fn column_title(state: &PlanningViewState, col_idx: usize) -> String {
     match state.layout_mode {
         PlanningLayout::ThreeColumn => match col_idx {
-            0 => state
-                .prev_iteration
-                .as_ref()
-                .map(|i| format!("◁ {}", iteration_label(i)))
-                .unwrap_or_else(|| "◁ Previous".to_string()),
-            1 => state
-                .current_iteration
-                .as_ref()
-                .map(|i| format!("● {}", iteration_label(i)))
-                .unwrap_or_else(|| "● Current".to_string()),
-            2 => state
-                .next_iteration
-                .as_ref()
-                .map(|i| format!("▷ {}", iteration_label(i)))
-                .unwrap_or_else(|| "▷ Next".to_string()),
+            0 => state.prev_iteration.as_ref().map_or_else(
+                || "◁ Previous".to_string(),
+                |i| format!("◁ {}", iteration_label(i)),
+            ),
+            1 => state.current_iteration.as_ref().map_or_else(
+                || "● Current".to_string(),
+                |i| format!("● {}", iteration_label(i)),
+            ),
+            2 => state.next_iteration.as_ref().map_or_else(
+                || "▷ Next".to_string(),
+                |i| format!("▷ {}", iteration_label(i)),
+            ),
             _ => String::new(),
         },
         PlanningLayout::TwoColumn => match col_idx {
             0 => "Other".to_string(),
-            1 => state
-                .current_iteration
-                .as_ref()
-                .map(|i| format!("● {}", iteration_label(i)))
-                .unwrap_or_else(|| "● Current".to_string()),
+            1 => state.current_iteration.as_ref().map_or_else(
+                || "● Current".to_string(),
+                |i| format!("● {}", iteration_label(i)),
+            ),
             _ => String::new(),
         },
     }
 }
 
-fn status_icon_for(custom_status: &Option<String>) -> &'static str {
-    match custom_status.as_deref() {
+fn status_icon_for(custom_status: Option<&String>) -> &'static str {
+    match custom_status.map(String::as_str) {
         Some(s) if s.to_lowercase().contains("done") => "✓",
         Some(s) if s.to_lowercase().contains("progress") => "▶",
         Some(s) if s.to_lowercase().contains("review") => "◉",

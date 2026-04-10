@@ -28,7 +28,7 @@ pub struct Milestone {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Iteration {
-    /// GitLab GID, e.g. "gid://gitlab/Iteration/123"
+    /// GitLab GID, e.g. "<gid://gitlab/Iteration/123>"
     pub id: String,
     pub title: String,
     #[serde(default)]

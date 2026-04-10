@@ -1,8 +1,8 @@
 use crate::config::Config;
-use crate::onboarding::generate_yaml;
+use crate::onboarding::generate_toml;
 
 #[test]
-fn test_generate_yaml_roundtrip() {
+fn test_generate_toml_roundtrip() {
     let config = Config {
         gitlab_url: "https://gitlab.example.com".to_string(),
         token: "glpat-test123".to_string(),
@@ -32,10 +32,10 @@ fn test_generate_yaml_roundtrip() {
         label_sort_orders: Vec::new(),
     };
 
-    let yaml = generate_yaml(&config);
+    let toml_str = generate_toml(&config);
 
     // Parse back and verify
-    let parsed: Config = serde_yaml::from_str(&yaml).expect("Generated YAML should be parseable");
+    let parsed: Config = toml::from_str(&toml_str).expect("Generated TOML should be parseable");
     assert_eq!(parsed.gitlab_url, "https://gitlab.example.com");
     assert_eq!(parsed.token, "glpat-test123");
     assert_eq!(parsed.me, "binbin");
@@ -51,7 +51,7 @@ fn test_generate_yaml_roundtrip() {
 }
 
 #[test]
-fn test_generate_yaml_contains_all_fields() {
+fn test_generate_toml_contains_all_fields() {
     let config = Config {
         gitlab_url: "https://gitlab.com".to_string(),
         token: "glpat-abc".to_string(),
@@ -64,13 +64,12 @@ fn test_generate_yaml_contains_all_fields() {
         label_sort_orders: Vec::new(),
     };
 
-    let yaml = generate_yaml(&config);
-    assert!(yaml.contains("gitlab_url:"));
-    assert!(yaml.contains("token:"));
-    assert!(yaml.contains("me:"));
-    assert!(yaml.contains("tracking_projects:"));
-    assert!(yaml.contains("refresh_interval_secs: 120"));
-    assert!(yaml.contains("teams:"));
+    let toml_str = generate_toml(&config);
+    assert!(toml_str.contains("gitlab_url"));
+    assert!(toml_str.contains("token"));
+    assert!(toml_str.contains("me"));
+    assert!(toml_str.contains("tracking_projects"));
+    assert!(toml_str.contains("refresh_interval_secs = 120"));
 }
 
 #[test]

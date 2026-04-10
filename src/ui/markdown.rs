@@ -78,11 +78,6 @@ fn render_node<'a>(
     ctx: &mut InlineCtx,
 ) {
     match &node.data.borrow().value {
-        NodeValue::Document => {
-            for child in node.children() {
-                render_node(child, lines, indent, ctx);
-            }
-        }
         NodeValue::Paragraph => {
             let mut spans = vec![Span::raw(indent.to_string())];
             collect_inline(node, &mut spans, ctx);
@@ -107,7 +102,12 @@ fn render_node<'a>(
         }
         NodeValue::CodeBlock(cb) => {
             let code_bg = Color::Rgb(35, 38, 52);
-            if !cb.info.is_empty() {
+            if cb.info.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::raw(indent.to_string()),
+                    Span::styled("╭───", Style::default().fg(styles::BORDER)),
+                ]));
+            } else {
                 lines.push(Line::from(vec![
                     Span::raw(indent.to_string()),
                     Span::styled(
@@ -115,21 +115,13 @@ fn render_node<'a>(
                         Style::default().fg(styles::BORDER),
                     ),
                 ]));
-            } else {
-                lines.push(Line::from(vec![
-                    Span::raw(indent.to_string()),
-                    Span::styled("╭───", Style::default().fg(styles::BORDER)),
-                ]));
             }
             for code_line in cb.literal.trim_end().lines() {
                 let expanded = code_line.replace('\t', "    ");
                 lines.push(Line::from(vec![
                     Span::raw(indent.to_string()),
                     Span::styled("│ ", Style::default().fg(styles::BORDER)),
-                    Span::styled(
-                        expanded,
-                        Style::default().fg(styles::ORANGE).bg(code_bg),
-                    ),
+                    Span::styled(expanded, Style::default().fg(styles::ORANGE).bg(code_bg)),
                 ]));
             }
             lines.push(Line::from(vec![
@@ -141,7 +133,7 @@ fn render_node<'a>(
         NodeValue::List(list) => {
             let mut item_num = list.start;
             for child in node.children() {
-                render_list_item(child, lines, indent, ctx, &list.list_type, item_num);
+                render_list_item(child, lines, indent, ctx, list.list_type, item_num);
                 if list.list_type == ListType::Ordered {
                     item_num += 1;
                 }
@@ -190,10 +182,7 @@ fn render_node<'a>(
             for line in hb.literal.lines() {
                 lines.push(Line::from(vec![
                     Span::raw(indent.to_string()),
-                    Span::styled(
-                        line.to_string(),
-                        Style::default().fg(styles::TEXT_DIM),
-                    ),
+                    Span::styled(line.to_string(), Style::default().fg(styles::TEXT_DIM)),
                 ]));
             }
         }
@@ -210,7 +199,7 @@ fn render_list_item<'a>(
     lines: &mut Vec<Line<'static>>,
     indent: &str,
     ctx: &mut InlineCtx,
-    list_type: &ListType,
+    list_type: ListType,
     num: usize,
 ) {
     let bullet = match list_type {
@@ -266,11 +255,7 @@ fn render_list_item<'a>(
     }
 }
 
-fn collect_inline<'a>(
-    node: &'a AstNode<'a>,
-    spans: &mut Vec<Span<'static>>,
-    ctx: &mut InlineCtx,
-) {
+fn collect_inline<'a>(node: &'a AstNode<'a>, spans: &mut Vec<Span<'static>>, ctx: &mut InlineCtx) {
     match &node.data.borrow().value {
         NodeValue::Text(text) => {
             spans.push(Span::styled(text.to_string(), ctx.style()));
@@ -336,7 +321,11 @@ fn collect_inline<'a>(
                 collect_inline(child, &mut text_spans, ctx);
             }
             let alt: String = text_spans.iter().map(|s| s.content.as_ref()).collect();
-            let label = if alt.is_empty() { "image".to_string() } else { alt };
+            let label = if alt.is_empty() {
+                "image".to_string()
+            } else {
+                alt
+            };
             spans.push(Span::styled(
                 format!("[{label}]"),
                 Style::default()
@@ -352,11 +341,6 @@ fn collect_inline<'a>(
                 html.clone(),
                 Style::default().fg(styles::TEXT_DIM),
             ));
-        }
-        NodeValue::Paragraph => {
-            for child in node.children() {
-                collect_inline(child, spans, ctx);
-            }
         }
         _ => {
             for child in node.children() {
@@ -390,7 +374,7 @@ fn render_table<'a>(
         rows.push(row);
     }
 
-    let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let col_count = rows.iter().map(Vec::len).max().unwrap_or(0);
     let mut widths = vec![0usize; col_count];
     for row in &rows {
         for (i, cell) in row.iter().enumerate() {

@@ -221,7 +221,7 @@ fn compare_issue(
         ),
         SortField::Label => {
             let scope = spec.label_scope.as_deref().unwrap_or("");
-            let priority = label_orders.get(scope).map(|v| v.as_slice()).unwrap_or(&[]);
+            let priority = label_orders.get(scope).map_or([].as_slice(), Vec::as_slice);
             compare_by_label_scope(&a.issue.labels, &b.issue.labels, scope, priority)
         }
         SortField::Milestone => cmp_optional_str(
@@ -266,7 +266,7 @@ fn compare_mr(
         ),
         SortField::Label => {
             let scope = spec.label_scope.as_deref().unwrap_or("");
-            let priority = label_orders.get(scope).map(|v| v.as_slice()).unwrap_or(&[]);
+            let priority = label_orders.get(scope).map_or([].as_slice(), Vec::as_slice);
             compare_by_label_scope(&a.mr.labels, &b.mr.labels, scope, priority)
         }
         SortField::Milestone => cmp_optional_str(

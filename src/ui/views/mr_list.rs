@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
 use ratatui::style::Style;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Row, Table, TableState};
 
 use std::collections::HashMap;
@@ -57,7 +57,12 @@ impl MrListState {
             .collect();
 
         // Sort
-        sort::sort_mrs(&mut self.filtered_indices, mrs, &self.active_sort, label_orders);
+        sort::sort_mrs(
+            &mut self.filtered_indices,
+            mrs,
+            &self.active_sort,
+            label_orders,
+        );
 
         if self.filtered_indices.is_empty() {
             self.table_state.select(None);
@@ -214,19 +219,13 @@ pub fn render(
                 let p = &item.project_path;
                 p.rsplit('/').next().unwrap_or(p).to_string()
             };
-            let author = item
-                .mr
-                .author
-                .as_ref()
-                .map(|a| a.username.as_str())
-                .unwrap_or("-");
+            let author = item.mr.author.as_ref().map_or("-", |a| a.username.as_str());
 
             let pipeline_status = item
                 .mr
                 .head_pipeline
                 .as_ref()
-                .map(|p| p.status.as_str())
-                .unwrap_or("-");
+                .map_or("-", |p| p.status.as_str());
             let pipeline_icon = match pipeline_status {
                 "success" | "passed" => styles::ICON_PIPELINE_OK,
                 "failed" => styles::ICON_PIPELINE_FAIL,
@@ -286,12 +285,32 @@ pub fn render(
 
     let table_block = if state.searching {
         let title_line = Line::from(vec![
-            Span::styled(" MRs /", Style::default().fg(styles::CYAN).add_modifier(ratatui::style::Modifier::BOLD)),
-            Span::styled(&state.search_query, Style::default().fg(styles::TEXT_BRIGHT).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                " MRs /",
+                Style::default()
+                    .fg(styles::CYAN)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
+            Span::styled(
+                &state.search_query,
+                Style::default()
+                    .fg(styles::TEXT_BRIGHT)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled("▎", Style::default().fg(styles::CYAN)),
-            Span::styled(" Enter", Style::default().fg(styles::YELLOW).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                " Enter",
+                Style::default()
+                    .fg(styles::YELLOW)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled(":accept ", Style::default().fg(styles::TEXT_DIM)),
-            Span::styled("Esc", Style::default().fg(styles::YELLOW).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                "Esc",
+                Style::default()
+                    .fg(styles::YELLOW)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled(":cancel ", Style::default().fg(styles::TEXT_DIM)),
         ]);
         ratatui::widgets::Block::default()
@@ -301,8 +320,18 @@ pub fn render(
             .title(title_line)
     } else if !state.search_query.is_empty() {
         let title_line = Line::from(vec![
-            Span::styled(" MRs /", Style::default().fg(styles::CYAN).add_modifier(ratatui::style::Modifier::BOLD)),
-            Span::styled(&state.search_query, Style::default().fg(styles::TEXT_BRIGHT).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                " MRs /",
+                Style::default()
+                    .fg(styles::CYAN)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
+            Span::styled(
+                &state.search_query,
+                Style::default()
+                    .fg(styles::TEXT_BRIGHT)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled(" ", Style::default()),
         ]);
         ratatui::widgets::Block::default()
@@ -324,9 +353,7 @@ pub fn render(
 
     // Preview pane: show full labels and details of selected MR
     if let Some(item) = state.selected_mr(mrs) {
-        let mut spans: Vec<Span> = vec![
-            Span::styled(" Labels: ", styles::help_desc_style()),
-        ];
+        let mut spans: Vec<Span> = vec![Span::styled(" Labels: ", styles::help_desc_style())];
         if item.mr.labels.is_empty() {
             spans.push(Span::styled("none", styles::help_desc_style()));
         } else {
@@ -334,7 +361,7 @@ pub fn render(
                 if i > 0 {
                     spans.push(Span::raw(" "));
                 }
-                let color = label_colors.get(label.as_str()).map(|s| s.as_str());
+                let color = label_colors.get(label.as_str()).map(String::as_str);
                 spans.extend(styles::label_spans(label, color));
             }
         }
@@ -342,8 +369,7 @@ pub fn render(
             .mr
             .head_pipeline
             .as_ref()
-            .map(|p| p.status.as_str())
-            .unwrap_or("none");
+            .map_or("none", |p| p.status.as_str());
         let preview = Paragraph::new(vec![
             Line::from(spans),
             Line::from(vec![

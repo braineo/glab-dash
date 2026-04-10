@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 #[derive(Debug)]
 pub enum Event {
     Key(KeyEvent),
-    Resize(u16, u16),
+    Resize(#[allow(dead_code)] u16, #[allow(dead_code)] u16),
     Tick,
 }
 
@@ -24,15 +24,11 @@ impl EventHandler {
             loop {
                 if event::poll(tick_rate).unwrap_or(false) {
                     match event::read() {
-                        Ok(CEvent::Key(key)) => {
-                            if tx.send(Event::Key(key)).is_err() {
-                                return;
-                            }
+                        Ok(CEvent::Key(key)) if tx.send(Event::Key(key)).is_err() => {
+                            return;
                         }
-                        Ok(CEvent::Resize(w, h)) => {
-                            if tx.send(Event::Resize(w, h)).is_err() {
-                                return;
-                            }
+                        Ok(CEvent::Resize(w, h)) if tx.send(Event::Resize(w, h)).is_err() => {
+                            return;
                         }
                         _ => {}
                     }

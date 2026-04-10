@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
 use ratatui::style::Style;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState};
 
 use std::collections::HashMap;
@@ -57,7 +57,12 @@ impl IssueListState {
             .collect();
 
         // Sort
-        sort::sort_issues(&mut self.filtered_indices, issues, &self.active_sort, label_orders);
+        sort::sort_issues(
+            &mut self.filtered_indices,
+            issues,
+            &self.active_sort,
+            label_orders,
+        );
 
         // Clamp selection
         if self.filtered_indices.is_empty() {
@@ -185,8 +190,8 @@ pub fn render(
     let label_colors = ctx.label_colors;
     let has_selection = state.table_state.selected().is_some();
     let chunks = Layout::vertical([
-        Constraint::Length(1), // Filter bar
-        Constraint::Min(1),    // Table
+        Constraint::Length(1),                                 // Filter bar
+        Constraint::Min(1),                                    // Table
         Constraint::Length(if has_selection { 2 } else { 0 }), // Preview
     ])
     .split(area);
@@ -225,17 +230,16 @@ pub fn render(
             let age = format_age(&item.issue.updated_at);
 
             // Show custom status if available, otherwise fall back to state
-            let (state_icon, state_text) =
-                if let Some(ref status) = item.issue.custom_status {
-                    (styles::status_icon(status), status.clone())
-                } else {
-                    let icon = match item.issue.state.as_str() {
-                        "opened" => styles::ICON_OPEN,
-                        "closed" => styles::ICON_CLOSED,
-                        _ => " ",
-                    };
-                    (icon, item.issue.state.clone())
+            let (state_icon, state_text) = if let Some(ref status) = item.issue.custom_status {
+                (styles::status_icon(status), status.clone())
+            } else {
+                let icon = match item.issue.state.as_str() {
+                    "opened" => styles::ICON_OPEN,
+                    "closed" => styles::ICON_CLOSED,
+                    _ => " ",
                 };
+                (icon, item.issue.state.clone())
+            };
 
             let state_style = if item.issue.custom_status.is_some() {
                 styles::status_style(&state_text)
@@ -287,12 +291,32 @@ pub fn render(
 
     let table_block = if state.searching {
         let title_line = Line::from(vec![
-            Span::styled(" Issues /", Style::default().fg(styles::CYAN).add_modifier(ratatui::style::Modifier::BOLD)),
-            Span::styled(&state.search_query, Style::default().fg(styles::TEXT_BRIGHT).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                " Issues /",
+                Style::default()
+                    .fg(styles::CYAN)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
+            Span::styled(
+                &state.search_query,
+                Style::default()
+                    .fg(styles::TEXT_BRIGHT)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled("▎", Style::default().fg(styles::CYAN)),
-            Span::styled(" Enter", Style::default().fg(styles::YELLOW).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                " Enter",
+                Style::default()
+                    .fg(styles::YELLOW)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled(":accept ", Style::default().fg(styles::TEXT_DIM)),
-            Span::styled("Esc", Style::default().fg(styles::YELLOW).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                "Esc",
+                Style::default()
+                    .fg(styles::YELLOW)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled(":cancel ", Style::default().fg(styles::TEXT_DIM)),
         ]);
         ratatui::widgets::Block::default()
@@ -302,8 +326,18 @@ pub fn render(
             .title(title_line)
     } else if !state.search_query.is_empty() {
         let title_line = Line::from(vec![
-            Span::styled(" Issues /", Style::default().fg(styles::CYAN).add_modifier(ratatui::style::Modifier::BOLD)),
-            Span::styled(&state.search_query, Style::default().fg(styles::TEXT_BRIGHT).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                " Issues /",
+                Style::default()
+                    .fg(styles::CYAN)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
+            Span::styled(
+                &state.search_query,
+                Style::default()
+                    .fg(styles::TEXT_BRIGHT)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled(" ", Style::default()),
         ]);
         ratatui::widgets::Block::default()
@@ -324,9 +358,7 @@ pub fn render(
 
     // Preview pane: show full labels of selected item
     if let Some(item) = state.selected_issue(issues) {
-        let mut spans: Vec<Span> = vec![
-            Span::styled(" Labels: ", styles::help_desc_style()),
-        ];
+        let mut spans: Vec<Span> = vec![Span::styled(" Labels: ", styles::help_desc_style())];
         if item.issue.labels.is_empty() {
             spans.push(Span::styled("none", styles::help_desc_style()));
         } else {
@@ -334,7 +366,7 @@ pub fn render(
                 if i > 0 {
                     spans.push(Span::raw(" "));
                 }
-                let color = label_colors.get(label.as_str()).map(|s| s.as_str());
+                let color = label_colors.get(label.as_str()).map(String::as_str);
                 spans.extend(styles::label_spans(label, color));
             }
         }

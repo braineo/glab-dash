@@ -83,28 +83,30 @@ const PL: &str = "\u{E0B0}";
 
 /// Curated palette of (fg, bg) chip colors tuned for the Tokyo Night theme.
 /// Hand-picked for readability (WCAG AA), visual harmony, and distinctness.
-const CHIP_PALETTE: &[((u8, u8, u8), (u8, u8, u8))] = &[
-    ((148, 200, 240), (25, 45, 70)),  // cerulean
-    ((170, 220, 195), (22, 52, 42)),  // jade
-    ((195, 175, 230), (42, 32, 65)),  // wisteria
-    ((235, 185, 165), (60, 35, 28)),  // apricot
-    ((180, 210, 155), (34, 50, 25)),  // fern
-    ((235, 200, 150), (58, 46, 24)),  // marigold
-    ((160, 195, 220), (26, 42, 58)),  // glacier
-    ((215, 175, 200), (52, 28, 42)),  // orchid
-    ((155, 215, 210), (22, 50, 48)),  // seafoam
-    ((195, 185, 225), (40, 34, 60)),  // periwinkle
-    ((220, 200, 165), (50, 44, 26)),  // wheat
-    ((175, 215, 190), (28, 48, 38)),  // eucalyptus
-    ((200, 195, 150), (45, 42, 25)),  // lichen
-    ((180, 200, 230), (30, 42, 62)),  // cornflower
-    ((210, 180, 185), (50, 30, 34)),  // dusty rose
-    ((165, 210, 180), (25, 48, 34)),  // sage
+type ChipColor = ((u8, u8, u8), (u8, u8, u8));
+const CHIP_PALETTE: &[ChipColor] = &[
+    ((148, 200, 240), (25, 45, 70)), // cerulean
+    ((170, 220, 195), (22, 52, 42)), // jade
+    ((195, 175, 230), (42, 32, 65)), // wisteria
+    ((235, 185, 165), (60, 35, 28)), // apricot
+    ((180, 210, 155), (34, 50, 25)), // fern
+    ((235, 200, 150), (58, 46, 24)), // marigold
+    ((160, 195, 220), (26, 42, 58)), // glacier
+    ((215, 175, 200), (52, 28, 42)), // orchid
+    ((155, 215, 210), (22, 50, 48)), // seafoam
+    ((195, 185, 225), (40, 34, 60)), // periwinkle
+    ((220, 200, 165), (50, 44, 26)), // wheat
+    ((175, 215, 190), (28, 48, 38)), // eucalyptus
+    ((200, 195, 150), (45, 42, 25)), // lichen
+    ((180, 200, 230), (30, 42, 62)), // cornflower
+    ((210, 180, 185), (50, 30, 34)), // dusty rose
+    ((165, 210, 180), (25, 48, 34)), // sage
 ];
 
 fn djb2(text: &str) -> u32 {
-    text.bytes()
-        .fold(5381u32, |h, b| h.wrapping_mul(33).wrapping_add(b as u32))
+    text.bytes().fold(5381u32, |h, b| {
+        h.wrapping_mul(33).wrapping_add(u32::from(b))
+    })
 }
 
 /// Select a (fg, bg) pair from the curated palette using a deterministic hash.
@@ -153,12 +155,12 @@ fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
 }
 
 fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
-    let r = r as f64 / 255.0;
-    let g = g as f64 / 255.0;
-    let b = b as f64 / 255.0;
+    let r = f64::from(r) / 255.0;
+    let g = f64::from(g) / 255.0;
+    let b = f64::from(b) / 255.0;
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
-    let l = (max + min) / 2.0;
+    let l = f64::midpoint(max, min);
     if (max - min).abs() < f64::EPSILON {
         return (0.0, 0.0, l);
     }
@@ -239,10 +241,7 @@ pub fn label_spans(label: &str, server_color: Option<&str>) -> Vec<Span<'static>
     for (i, seg) in segments.iter().enumerate() {
         let (fg, bg) = colors[i];
         let style = if i == 0 {
-            Style::default()
-                .fg(fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(fg).bg(bg)
         };
@@ -269,11 +268,7 @@ fn label_chip_width(label: &str) -> usize {
 }
 
 /// Render labels as chip-style spans for table cells, truncating to fit width.
-pub fn labels_compact(
-    labels: &[String],
-    max_width: usize,
-    colors: &LabelColors,
-) -> Line<'static> {
+pub fn labels_compact(labels: &[String], max_width: usize, colors: &LabelColors) -> Line<'static> {
     if labels.is_empty() {
         return Line::from("");
     }
@@ -281,7 +276,7 @@ pub fn labels_compact(
     let mut used = 0usize;
     let mut remaining = labels.len();
     for (i, label) in labels.iter().enumerate() {
-        let gap = if i > 0 { 1 } else { 0 };
+        let gap = usize::from(i > 0);
         let chip_w = label_chip_width(label);
         remaining -= 1;
         let suffix_len = if remaining > 0 {
@@ -300,7 +295,7 @@ pub fn labels_compact(
             spans.push(Span::raw(" "));
             used += 1;
         }
-        let color = colors.get(label).map(|s| s.as_str());
+        let color = colors.get(label).map(String::as_str);
         spans.extend(label_spans(label, color));
         used += chip_w;
     }
@@ -321,9 +316,7 @@ pub fn selected_style() -> Style {
 }
 
 pub fn header_style() -> Style {
-    Style::default()
-        .fg(BLUE)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(BLUE).add_modifier(Modifier::BOLD)
 }
 
 pub fn status_bar_style() -> Style {
@@ -331,9 +324,7 @@ pub fn status_bar_style() -> Style {
 }
 
 pub fn filter_chip_style() -> Style {
-    Style::default()
-        .fg(YELLOW)
-        .bg(Color::Rgb(56, 52, 34))
+    Style::default().fg(YELLOW).bg(Color::Rgb(56, 52, 34))
 }
 
 pub fn filter_chip_selected_style() -> Style {
@@ -344,9 +335,7 @@ pub fn filter_chip_selected_style() -> Style {
 }
 
 pub fn sort_chip_style() -> Style {
-    Style::default()
-        .fg(MAGENTA)
-        .bg(Color::Rgb(48, 36, 56))
+    Style::default().fg(MAGENTA).bg(Color::Rgb(48, 36, 56))
 }
 
 pub fn state_style(state: &str) -> Style {
@@ -363,6 +352,7 @@ pub fn state_style(state: &str) -> Style {
 /// Style for work item custom status names.
 /// Colors are chosen based on the status color returned from GitLab when
 /// available; otherwise we fall back to keyword matching.
+#[allow(dead_code)]
 pub fn status_style_from_color(color: Option<&str>) -> Option<Style> {
     let hex = color?.trim_start_matches('#');
     if hex.len() != 6 {
@@ -406,9 +396,8 @@ pub fn status_icon(status: &str) -> &'static str {
         ICON_CHECK
     } else if lower.contains("progress") {
         ICON_PIPELINE_RUN
-    } else if lower.contains("won't do") || lower.contains("wont do") {
-        ICON_CLOSED
-    } else if lower.contains("duplicate") {
+    } else if lower.contains("won't do") || lower.contains("wont do") || lower.contains("duplicate")
+    {
         ICON_CLOSED
     } else if lower.contains("block") {
         "⊘"
@@ -421,6 +410,7 @@ pub fn status_icon(status: &str) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 pub fn label_style() -> Style {
     Style::default().fg(TEAL)
 }
@@ -443,9 +433,7 @@ pub fn help_desc_style() -> Style {
 
 // Overlay-specific help styles (higher contrast for WCAG AA on OVERLAY bg)
 pub fn overlay_key_style() -> Style {
-    Style::default()
-        .fg(CYAN)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
 }
 
 pub fn overlay_desc_style() -> Style {

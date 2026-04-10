@@ -131,8 +131,7 @@ impl FilterEditorState {
         if keys::is_nav_down(key) && !self.filtered_suggestions.is_empty() {
             let current = self.suggestion_state.selected().unwrap_or(0);
             let max = self.filtered_suggestions.len().saturating_sub(1);
-            self.suggestion_state
-                .select(Some((current + 1).min(max)));
+            self.suggestion_state.select(Some((current + 1).min(max)));
             return FilterEditorAction::Continue;
         }
         match key.code {
@@ -143,10 +142,10 @@ impl FilterEditorState {
             KeyCode::Enter => {
                 // If a suggestion is highlighted, use it
                 let value = if let Some(sel) = self.suggestion_state.selected() {
-                    self.filtered_suggestions
-                        .get(sel)
-                        .map(|&idx| self.suggestions[idx].clone())
-                        .unwrap_or_else(|| self.value_input.clone())
+                    self.filtered_suggestions.get(sel).map_or_else(
+                        || self.value_input.clone(),
+                        |&idx| self.suggestions[idx].clone(),
+                    )
                 } else {
                     self.value_input.clone()
                 };
@@ -163,11 +162,11 @@ impl FilterEditorState {
             }
             KeyCode::Tab => {
                 // Accept highlighted suggestion into input
-                if let Some(sel) = self.suggestion_state.selected() {
-                    if let Some(&idx) = self.filtered_suggestions.get(sel) {
-                        self.value_input = self.suggestions[idx].clone();
-                        self.refilter_suggestions();
-                    }
+                if let Some(sel) = self.suggestion_state.selected()
+                    && let Some(&idx) = self.filtered_suggestions.get(sel)
+                {
+                    self.value_input = self.suggestions[idx].clone();
+                    self.refilter_suggestions();
                 }
                 FilterEditorAction::Continue
             }
@@ -258,10 +257,12 @@ pub fn render(
         EditorStep::SelectField => {
             let items: Vec<ListItem> = Field::all()
                 .iter()
-                .map(|f| ListItem::new(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(f.name(), styles::overlay_text_style()),
-                ])))
+                .map(|f| {
+                    ListItem::new(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(f.name(), styles::overlay_text_style()),
+                    ]))
+                })
                 .collect();
             let list = List::new(items)
                 .highlight_style(styles::selected_style())
@@ -278,11 +279,7 @@ pub fn render(
             frame.render_widget(Paragraph::new(step_indicator(&state.step)), indicator_area);
         }
         EditorStep::SelectOp => {
-            let field_name = state
-                .selected_field
-                .as_ref()
-                .map(|f| f.name())
-                .unwrap_or("?");
+            let field_name = state.selected_field.as_ref().map_or("?", Field::name);
             let items: Vec<ListItem> = Op::all()
                 .iter()
                 .map(|o| {
@@ -320,16 +317,8 @@ pub fn render(
             frame.render_widget(Paragraph::new(step_indicator(&state.step)), indicator_area);
         }
         EditorStep::EnterValue => {
-            let field_name = state
-                .selected_field
-                .as_ref()
-                .map(|f| f.name())
-                .unwrap_or("?");
-            let op_sym = state
-                .selected_op
-                .as_ref()
-                .map(|o| o.symbol())
-                .unwrap_or("?");
+            let field_name = state.selected_field.as_ref().map_or("?", Field::name);
+            let op_sym = state.selected_op.as_ref().map_or("?", Op::symbol);
 
             let has_suggestions = !state.suggestions.is_empty();
 
@@ -354,8 +343,7 @@ pub fn render(
                                 &state.value_input
                             },
                             if state.value_input.is_empty() {
-                                styles::overlay_desc_style()
-                                    .add_modifier(Modifier::ITALIC)
+                                styles::overlay_desc_style().add_modifier(Modifier::ITALIC)
                             } else {
                                 styles::title_style()
                             },
@@ -374,7 +362,7 @@ pub fn render(
                     .map(|&idx| {
                         let label = &state.suggestions[idx];
                         let mut spans = vec![Span::raw("  ")];
-                        let color = label_colors.get(label.as_str()).map(|s| s.as_str());
+                        let color = label_colors.get(label.as_str()).map(String::as_str);
                         spans.extend(styles::label_spans(label, color));
                         ListItem::new(Line::from(spans))
                     })
@@ -404,8 +392,7 @@ pub fn render(
                                 &state.value_input
                             },
                             if state.value_input.is_empty() {
-                                styles::overlay_desc_style()
-                                    .add_modifier(Modifier::ITALIC)
+                                styles::overlay_desc_style().add_modifier(Modifier::ITALIC)
                             } else {
                                 styles::title_style()
                             },

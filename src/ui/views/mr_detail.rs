@@ -66,8 +66,7 @@ pub fn render(
         .mr
         .head_pipeline
         .as_ref()
-        .map(|p| p.status.as_str())
-        .unwrap_or("none");
+        .map_or("none", |p| p.status.as_str());
 
     let pipeline_icon = match pipeline_status {
         "success" | "passed" => styles::ICON_PIPELINE_OK,
@@ -114,15 +113,12 @@ pub fn render(
                 styles::pipeline_style(pipeline_status),
             ),
             Span::raw("  "),
+            Span::styled(&item.mr.source_branch, Style::default().fg(styles::TEAL)),
             Span::styled(
-                &item.mr.source_branch,
-                Style::default().fg(styles::TEAL),
+                format!(" {} ", styles::ICON_ARROW),
+                styles::help_desc_style(),
             ),
-            Span::styled(format!(" {} ", styles::ICON_ARROW), styles::help_desc_style()),
-            Span::styled(
-                &item.mr.target_branch,
-                Style::default().fg(styles::TEAL),
-            ),
+            Span::styled(&item.mr.target_branch, Style::default().fg(styles::TEAL)),
         ]),
         Line::from(vec![
             Span::styled("Assignees: ", styles::help_desc_style()),
@@ -154,7 +150,7 @@ pub fn render(
                     if i > 0 {
                         spans.push(Span::raw(" "));
                     }
-                    let color = label_colors.get(label.as_str()).map(|s| s.as_str());
+                    let color = label_colors.get(label.as_str()).map(String::as_str);
                     spans.extend(styles::label_spans(label, color));
                 }
             }
