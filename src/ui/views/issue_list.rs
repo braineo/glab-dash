@@ -168,7 +168,9 @@ pub fn render(
     conditions: &[FilterCondition],
     filter_focused: bool,
     filter_selected: usize,
+    ctx: &crate::ui::RenderCtx<'_>,
 ) {
+    let label_colors = ctx.label_colors;
     let has_selection = state.table_state.selected().is_some();
     let chunks = Layout::vertical([
         Constraint::Length(1), // Filter bar
@@ -205,7 +207,7 @@ pub fn render(
                 .map(|a| a.username.as_str())
                 .collect::<Vec<_>>()
                 .join(",");
-            let labels = styles::labels_compact(&item.issue.labels, 30);
+            let labels = styles::labels_compact(&item.issue.labels, 30, label_colors);
             let age = format_age(&item.issue.updated_at);
 
             // Show custom status if available, otherwise fall back to state
@@ -308,7 +310,8 @@ pub fn render(
                 if i > 0 {
                     spans.push(Span::raw(" "));
                 }
-                spans.extend(styles::label_spans(label));
+                let color = label_colors.get(label.as_str()).map(|s| s.as_str());
+                spans.extend(styles::label_spans(label, color));
             }
         }
         let preview = Paragraph::new(vec![

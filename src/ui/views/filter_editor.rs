@@ -244,7 +244,13 @@ fn step_indicator(step: &EditorStep) -> Line<'static> {
     ])
 }
 
-pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    state: &mut FilterEditorState,
+    ctx: &crate::ui::RenderCtx<'_>,
+) {
+    let label_colors = ctx.label_colors;
     let popup = centered_rect(50, 60, area);
     frame.render_widget(Clear, popup);
 
@@ -368,7 +374,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut FilterEditorState) {
                     .map(|&idx| {
                         let label = &state.suggestions[idx];
                         let mut spans = vec![Span::raw("  ")];
-                        spans.extend(styles::label_spans(label));
+                        let color = label_colors.get(label.as_str()).map(|s| s.as_str());
+                        spans.extend(styles::label_spans(label, color));
                         ListItem::new(Line::from(spans))
                     })
                     .collect();

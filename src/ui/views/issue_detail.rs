@@ -30,7 +30,14 @@ impl IssueDetailState {
     }
 }
 
-pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueDetailState) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    item: &TrackedIssue,
+    state: &IssueDetailState,
+    ctx: &crate::ui::RenderCtx<'_>,
+) {
+    let label_colors = ctx.label_colors;
     let chunks = Layout::vertical([
         Constraint::Length(5), // Header
         Constraint::Min(1),    // Body + comments
@@ -64,7 +71,8 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedIssue, state: &IssueD
             if i > 0 {
                 labels_line_spans.push(Span::raw(" "));
             }
-            labels_line_spans.extend(styles::label_spans(label));
+            let color = label_colors.get(label.as_str()).map(|s| s.as_str());
+            labels_line_spans.extend(styles::label_spans(label, color));
         }
     }
     labels_line_spans.push(Span::raw("  "));

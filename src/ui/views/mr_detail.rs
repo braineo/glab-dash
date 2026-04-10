@@ -30,7 +30,14 @@ impl MrDetailState {
     }
 }
 
-pub fn render(frame: &mut Frame, area: Rect, item: &TrackedMergeRequest, state: &MrDetailState) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    item: &TrackedMergeRequest,
+    state: &MrDetailState,
+    ctx: &crate::ui::RenderCtx<'_>,
+) {
+    let label_colors = ctx.label_colors;
     let chunks = Layout::vertical([Constraint::Length(7), Constraint::Min(1)]).split(area);
 
     // Header
@@ -147,7 +154,8 @@ pub fn render(frame: &mut Frame, area: Rect, item: &TrackedMergeRequest, state: 
                     if i > 0 {
                         spans.push(Span::raw(" "));
                     }
-                    spans.extend(styles::label_spans(label));
+                    let color = label_colors.get(label.as_str()).map(|s| s.as_str());
+                    spans.extend(styles::label_spans(label, color));
                 }
             }
             Line::from(spans)
