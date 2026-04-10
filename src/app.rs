@@ -313,7 +313,7 @@ impl App {
                 self.overlay = Overlay::Confirm(action);
             } else {
                 let names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
-                self.chord_state = Some(chord_popup::ChordState::new("Set Status", names));
+                self.chord_state = Some(chord_popup::ChordState::new("Set Status", names).with_kind(chord_popup::ChordKind::Status));
                 self.overlay = Overlay::Chord(ChordContext::Status(project, issue_id, iid));
             }
             return;
@@ -509,7 +509,7 @@ impl App {
                             self.work_item_statuses
                                 .insert(project.clone(), statuses);
                             self.chord_state =
-                                Some(chord_popup::ChordState::new("Set Status", names));
+                                Some(chord_popup::ChordState::new("Set Status", names).with_kind(chord_popup::ChordKind::Status));
                             self.overlay =
                                 Overlay::Chord(ChordContext::Status(project, issue_id, iid));
                         }
@@ -837,7 +837,7 @@ impl App {
                         let names: Vec<String> =
                             statuses.iter().map(|s| s.name.clone()).collect();
                         self.chord_state =
-                            Some(chord_popup::ChordState::new("Set Status", names));
+                            Some(chord_popup::ChordState::new("Set Status", names).with_kind(chord_popup::ChordKind::Status));
                         self.overlay =
                             Overlay::Chord(ChordContext::Status(project, issue_id, iid));
                         return;

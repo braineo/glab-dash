@@ -10,11 +10,19 @@ use crate::ui::styles;
 /// Home-row keys used as chord codes (9 keys: 9 single, 81 two-key combos).
 const CHORD_KEYS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum ChordKind {
+    #[default]
+    Generic,
+    Status,
+}
+
 pub struct ChordState {
     pub title: String,
     pub options: Vec<(String, String)>, // (code, label)
     pub input: String,
     pub code_len: usize, // 1 or 2
+    pub kind: ChordKind,
 }
 
 pub enum ChordAction {
@@ -37,7 +45,13 @@ impl ChordState {
             options,
             input: String::new(),
             code_len,
+            kind: ChordKind::Generic,
         }
+    }
+
+    pub fn with_kind(mut self, kind: ChordKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> ChordAction {
@@ -136,19 +150,27 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
                 } else {
                     Style::default().fg(styles::OVERLAY_TEXT_DIM)
                 };
-                let label_style = if is_active {
-                    styles::overlay_text_style()
-                } else {
-                    Style::default().fg(styles::OVERLAY_TEXT_DIM)
-                };
-
                 spans.push(Span::styled(
                     format!("{code:>w$}", w = state.code_len),
                     code_style,
                 ));
                 spans.push(Span::raw(" "));
-                let padded = format!("{label:<w$}", w = max_label_len + 2);
-                spans.push(Span::styled(padded, label_style));
+
+                if state.kind == ChordKind::Status && is_active {
+                    let icon = styles::status_icon(label);
+                    let sty = styles::status_style(label);
+                    let padded =
+                        format!("{icon} {label:<w$}", w = max_label_len);
+                    spans.push(Span::styled(padded, sty));
+                } else {
+                    let label_style = if is_active {
+                        styles::overlay_text_style()
+                    } else {
+                        Style::default().fg(styles::OVERLAY_TEXT_DIM)
+                    };
+                    let padded = format!("{label:<w$}", w = max_label_len + 2);
+                    spans.push(Span::styled(padded, label_style));
+                }
             }
         }
         lines.push(Line::from(spans));

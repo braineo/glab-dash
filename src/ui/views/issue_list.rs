@@ -200,6 +200,7 @@ pub fn render(
     );
 
     // Build table rows
+    let selected_idx = state.table_state.selected();
     let rows: Vec<Row> = state
         .filtered_indices
         .iter()
@@ -234,24 +235,35 @@ pub fn render(
                     (icon, item.issue.state.clone())
                 };
 
+            let state_style = if item.issue.custom_status.is_some() {
+                styles::status_style(&state_text)
+            } else {
+                styles::state_style(&item.issue.state)
+            };
+
             let row = Row::new([
                 Cell::from(format!("#{}", item.issue.iid)),
                 Cell::from(source_span.to_string()),
                 Cell::from(item.issue.title.clone()),
-                Cell::from(format!("{state_icon} {state_text}")),
+                Cell::from(Line::from(Span::styled(
+                    format!("{state_icon} {state_text}"),
+                    state_style,
+                ))),
                 Cell::from(assignees),
                 Cell::from(labels),
                 Cell::from(age),
             ]);
+            let is_selected = selected_idx == Some(row_idx);
             let is_closed = item.issue.state == "closed";
-            let row = if is_closed {
+            if is_selected {
+                row.style(styles::selected_style())
+            } else if is_closed {
                 row.style(styles::draft_style())
             } else if row_idx % 2 == 1 {
                 row.style(styles::row_alt_style())
             } else {
                 row
-            };
-            row
+            }
         })
         .collect();
 
@@ -303,7 +315,6 @@ pub fn render(
 
     let table = Table::new(rows, widths)
         .header(header)
-        .row_highlight_style(styles::selected_style())
         .highlight_symbol(styles::ICON_SELECTOR)
         .block(table_block);
 
