@@ -171,7 +171,11 @@ impl App {
             .iter()
             .map(|o| (o.scope.clone(), o.values.clone()))
             .collect();
-        let active_team = if config.teams.is_empty() { None } else { Some(0) };
+        let active_team = if config.teams.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
         Self {
             config,
             client,
@@ -275,7 +279,12 @@ impl App {
     }
 
     fn save_cache(&self) {
-        cache::save(&self.issues, &self.mrs, &self.labels, &self.work_item_statuses);
+        cache::save(
+            &self.issues,
+            &self.mrs,
+            &self.labels,
+            &self.work_item_statuses,
+        );
     }
 
     pub fn fetch_all(&self) {
@@ -705,8 +714,7 @@ impl App {
                             };
                             self.overlay = Overlay::Confirm(action);
                         } else {
-                            self.work_item_statuses
-                                .insert(project.clone(), statuses);
+                            self.work_item_statuses.insert(project.clone(), statuses);
                             self.save_cache();
                             self.refresh_focused();
                             self.show_status_chord(&project, issue_id, iid, close_only);
@@ -1143,8 +1151,7 @@ impl App {
             }
             issue_list::IssueListAction::EditAssignee => {
                 let members = self.active_team_members();
-                self.chord_state =
-                    Some(chord_popup::ChordState::new("Set Assignee", members));
+                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
             issue_list::IssueListAction::Comment => {
@@ -1246,8 +1253,7 @@ impl App {
             }
             mr_list::MrListAction::EditAssignee => {
                 let members = self.active_team_members();
-                self.chord_state =
-                    Some(chord_popup::ChordState::new("Set Assignee", members));
+                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
             mr_list::MrListAction::Comment => {
@@ -1449,8 +1455,7 @@ impl App {
             }
             PlanningAction::EditAssignee => {
                 let members = self.active_team_members();
-                self.chord_state =
-                    Some(chord_popup::ChordState::new("Set Assignee", members));
+                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
             PlanningAction::Comment => {

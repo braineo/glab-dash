@@ -856,9 +856,7 @@ impl GitLabClient {
 
         // Extract the group path from primary tracking project (everything before the last `/`)
         let primary = self.config.primary_tracking_project();
-        let group_path = primary
-            .rsplit_once('/')
-            .map_or(primary, |(g, _)| g);
+        let group_path = primary.rsplit_once('/').map_or(primary, |(g, _)| g);
 
         let mut all = Vec::new();
         let mut cursor: Option<String> = None;
@@ -988,12 +986,15 @@ impl GitLabClient {
                 .await?;
 
             for issue in issues {
-                let project_path = issue
-                    .references
-                    .as_ref()
-                    .map_or_else(|| project.clone(), |r| extract_project_from_ref(&r.full_ref));
+                let project_path = issue.references.as_ref().map_or_else(
+                    || project.clone(),
+                    |r| extract_project_from_ref(&r.full_ref),
+                );
                 if seen_ids.insert(issue.id) {
-                    all.push(TrackedIssue { issue, project_path });
+                    all.push(TrackedIssue {
+                        issue,
+                        project_path,
+                    });
                 }
             }
         }
@@ -1067,7 +1068,8 @@ impl GitLabClient {
                         .unwrap_or_default();
 
                     // Skip tracking project issues and duplicates
-                    if self.config.is_tracking_project(&project_path) || !seen_ids.insert(issue.id) {
+                    if self.config.is_tracking_project(&project_path) || !seen_ids.insert(issue.id)
+                    {
                         continue;
                     }
 

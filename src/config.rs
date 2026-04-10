@@ -109,9 +109,7 @@ impl Config {
 
     /// The first tracking project (used as primary for iterations, statuses, etc.)
     pub fn primary_tracking_project(&self) -> &str {
-        self.tracking_projects
-            .first()
-            .map_or("", |s| s.as_str())
+        self.tracking_projects.first().map_or("", |s| s.as_str())
     }
 
     pub fn all_members(&self) -> Vec<String> {
