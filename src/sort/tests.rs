@@ -26,7 +26,10 @@ fn make_issue(iid: u64, title: &str, labels: &[&str], updated_days_ago: i64) -> 
             state: "opened".to_string(),
             author: Some(make_user("author")),
             assignees: vec![],
-            labels: labels.iter().map(std::string::ToString::to_string).collect(),
+            labels: labels
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             milestone: None,
             created_at: Utc::now() - Duration::days(updated_days_ago + 10),
             updated_at: Utc::now() - Duration::days(updated_days_ago),

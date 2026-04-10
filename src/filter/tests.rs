@@ -27,7 +27,10 @@ fn make_tracked_issue(
             state: state.to_string(),
             author: Some(make_user("author")),
             assignees: assignees.iter().map(|u| make_user(u)).collect(),
-            labels: labels.iter().map(std::string::ToString::to_string).collect(),
+            labels: labels
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             milestone: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
