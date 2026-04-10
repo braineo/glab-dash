@@ -5,8 +5,8 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::gitlab::types::{
-    Issue, Iteration, MergeRequest, MergeRequestApprovals, Milestone, Note, ProjectLabel,
-    References, TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
+    Discussion, Issue, Iteration, MergeRequest, MergeRequestApprovals, Milestone, Note,
+    ProjectLabel, References, TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
 };
 
 // ── GraphQL response types (serde-driven) ──
@@ -530,6 +530,7 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
+    #[allow(dead_code)]
     pub async fn list_issue_notes(&self, project: &str, iid: u64) -> Result<Vec<Note>> {
         let url = self.api_url(&format!(
             "/projects/{}/issues/{}/notes",
@@ -540,6 +541,43 @@ impl GitLabClient {
             .client
             .get(&url)
             .query(&[("sort", "asc"), ("per_page", "100")])
+            .send()
+            .await?;
+        Self::handle_response(resp).await
+    }
+
+    pub async fn list_issue_discussions(&self, project: &str, iid: u64) -> Result<Vec<Discussion>> {
+        let url = self.api_url(&format!(
+            "/projects/{}/issues/{}/discussions",
+            Self::encode_project(project),
+            iid
+        ));
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("sort", "asc"), ("per_page", "100")])
+            .send()
+            .await?;
+        Self::handle_response(resp).await
+    }
+
+    pub async fn reply_to_issue_discussion(
+        &self,
+        project: &str,
+        iid: u64,
+        discussion_id: &str,
+        body: &str,
+    ) -> Result<Note> {
+        let url = self.api_url(&format!(
+            "/projects/{}/issues/{}/discussions/{}/notes",
+            Self::encode_project(project),
+            iid,
+            discussion_id
+        ));
+        let resp = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({"body": body}))
             .send()
             .await?;
         Self::handle_response(resp).await
@@ -679,6 +717,7 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
+    #[allow(dead_code)]
     pub async fn list_mr_notes(&self, project: &str, iid: u64) -> Result<Vec<Note>> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}/notes",
@@ -689,6 +728,43 @@ impl GitLabClient {
             .client
             .get(&url)
             .query(&[("sort", "asc"), ("per_page", "100")])
+            .send()
+            .await?;
+        Self::handle_response(resp).await
+    }
+
+    pub async fn list_mr_discussions(&self, project: &str, iid: u64) -> Result<Vec<Discussion>> {
+        let url = self.api_url(&format!(
+            "/projects/{}/merge_requests/{}/discussions",
+            Self::encode_project(project),
+            iid
+        ));
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("sort", "asc"), ("per_page", "100")])
+            .send()
+            .await?;
+        Self::handle_response(resp).await
+    }
+
+    pub async fn reply_to_mr_discussion(
+        &self,
+        project: &str,
+        iid: u64,
+        discussion_id: &str,
+        body: &str,
+    ) -> Result<Note> {
+        let url = self.api_url(&format!(
+            "/projects/{}/merge_requests/{}/discussions/{}/notes",
+            Self::encode_project(project),
+            iid,
+            discussion_id
+        ));
+        let resp = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({"body": body}))
             .send()
             .await?;
         Self::handle_response(resp).await

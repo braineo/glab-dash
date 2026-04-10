@@ -12,6 +12,8 @@ use crate::ui::{keys, styles};
 pub struct PickerState {
     pub title: String,
     pub items: Vec<String>,
+    /// Optional second line per item, shown below the main text in a dimmer style.
+    pub subtitles: Vec<String>,
     pub filtered: Vec<usize>,
     pub query: String,
     pub list_state: ListState,
@@ -26,6 +28,7 @@ impl PickerState {
         let selected = vec![false; items.len()];
         let mut state = Self {
             title: title.to_string(),
+            subtitles: Vec::new(),
             filtered,
             query: String::new(),
             list_state: ListState::default(),
@@ -38,6 +41,12 @@ impl PickerState {
             state.list_state.select(Some(0));
         }
         state
+    }
+
+    #[must_use]
+    pub fn with_subtitles(mut self, subtitles: Vec<String>) -> Self {
+        self.subtitles = subtitles;
+        self
     }
 
     pub fn with_pre_selected(mut self, pre: &[String]) -> Self {
@@ -232,7 +241,17 @@ pub fn render(
                     styles::overlay_text_style(),
                 ));
             }
-            ListItem::new(Line::from(spans))
+            let mut lines = vec![Line::from(spans)];
+            // Show subtitle as a second line if available
+            if let Some(sub) = state.subtitles.get(idx)
+                && !sub.is_empty()
+            {
+                lines.push(Line::from(Span::styled(
+                    format!("  {sub}"),
+                    styles::overlay_desc_style(),
+                )));
+            }
+            ListItem::new(lines)
         })
         .collect();
 
