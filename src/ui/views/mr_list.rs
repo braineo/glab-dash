@@ -148,7 +148,7 @@ impl MrListState {
                 KeyCode::Char('o') => return MrListAction::OpenBrowser,
                 KeyCode::Char('f') => return MrListAction::AddFilter,
                 KeyCode::Char('F') => return MrListAction::ClearFilters,
-                KeyCode::Char('p') => return MrListAction::PickPreset,
+                KeyCode::Char('e') => return MrListAction::PickPreset,
                 KeyCode::Char('S') => return MrListAction::PickSortPreset,
                 _ => {}
             }

@@ -25,13 +25,15 @@ pub fn render(frame: &mut Frame, area: Rect, view: &View) {
         help_line("h", "Dashboard (home)"),
         help_line("i", "Go to issues"),
         help_line("m", "Go to merge requests"),
+        help_line("p", "Go to planning"),
         Line::from(""),
     ];
 
     let is_list = matches!(view, View::IssueList | View::MrList);
-    let is_issue = matches!(view, View::IssueList | View::IssueDetail);
+    let is_issue = matches!(view, View::IssueList | View::IssueDetail | View::Planning);
     let is_mr = matches!(view, View::MrList | View::MrDetail);
     let is_detail = matches!(view, View::IssueDetail | View::MrDetail);
+    let is_planning = matches!(view, View::Planning);
 
     if is_list {
         lines.extend([
@@ -53,7 +55,7 @@ pub fn render(frame: &mut Frame, area: Rect, view: &View) {
             )),
             help_line("f", "Add filter condition"),
             help_line("F", "Clear all filters"),
-            help_line("p", "Pick saved preset"),
+            help_line("e", "Pick saved preset"),
             help_line("S", "Pick sort preset"),
             help_line("Tab", "Focus filter bar"),
             Line::from(""),
@@ -83,6 +85,26 @@ pub fn render(frame: &mut Frame, area: Rect, view: &View) {
             help_line("l", "Set labels"),
             help_line("a", "Set assignee"),
             help_line("c", "Add comment"),
+            Line::from(""),
+        ]);
+    }
+
+    if is_planning {
+        lines.extend([
+            Line::from(Span::styled(
+                format!(" {} Planning Navigation", styles::ICON_SECTION),
+                section_style,
+            )),
+            help_line("h/l", "Move between columns"),
+            help_line("j/k", "Move within column"),
+            help_line("Enter", "Open issue detail"),
+            help_line(">", "Move issue to next iteration"),
+            help_line("<", "Move issue to previous iteration"),
+            help_line("[/]", "Toggle prev/next column"),
+            help_line("v", "Toggle 3-col / 2-col layout"),
+            help_line("H", "Dashboard (home)"),
+            help_line("/", "Search"),
+            help_line("r", "Refresh"),
             Line::from(""),
         ]);
     }

@@ -18,6 +18,8 @@ pub enum SortField {
     Milestone,
     UserNotesCount,
     Project,
+    Weight,
+    Iteration,
     // MR-only
     Pipeline,
     Draft,
@@ -37,6 +39,8 @@ impl SortField {
             SortField::Milestone,
             SortField::UserNotesCount,
             SortField::Project,
+            SortField::Weight,
+            SortField::Iteration,
         ]
     }
 
@@ -71,6 +75,8 @@ impl SortField {
             SortField::Milestone => "milestone",
             SortField::UserNotesCount => "comments",
             SortField::Project => "project",
+            SortField::Weight => "weight",
+            SortField::Iteration => "iteration",
             SortField::Pipeline => "pipeline",
             SortField::Draft => "draft",
         }
@@ -89,6 +95,8 @@ impl SortField {
             "milestone" => Some(SortField::Milestone),
             "comments" | "user_notes_count" => Some(SortField::UserNotesCount),
             "project" => Some(SortField::Project),
+            "weight" => Some(SortField::Weight),
+            "iteration" => Some(SortField::Iteration),
             "pipeline" => Some(SortField::Pipeline),
             "draft" => Some(SortField::Draft),
             _ => None,
@@ -222,6 +230,15 @@ fn compare_issue(
         ),
         SortField::UserNotesCount => a.issue.user_notes_count.cmp(&b.issue.user_notes_count),
         SortField::Project => a.project_path.cmp(&b.project_path),
+        SortField::Weight => {
+            let wa = a.issue.weight.unwrap_or(0);
+            let wb = b.issue.weight.unwrap_or(0);
+            wa.cmp(&wb)
+        }
+        SortField::Iteration => cmp_optional_str(
+            a.issue.iteration.as_ref().map(|i| i.title.as_str()),
+            b.issue.iteration.as_ref().map(|i| i.title.as_str()),
+        ),
         // MR-only fields are no-ops for issues
         SortField::Pipeline | SortField::Draft => Ordering::Equal,
     }
@@ -270,6 +287,8 @@ fn compare_mr(
             let rb = rank(b.mr.head_pipeline.as_ref().map(|p| p.status.as_str()));
             ra.cmp(&rb)
         }
+        // Issue-only fields are no-ops for MRs
+        SortField::Weight | SortField::Iteration => Ordering::Equal,
         SortField::Draft => {
             let da = a.mr.draft || a.mr.work_in_progress;
             let db = b.mr.draft || b.mr.work_in_progress;

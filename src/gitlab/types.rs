@@ -27,6 +27,18 @@ pub struct Milestone {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Iteration {
+    /// GitLab GID, e.g. "gid://gitlab/Iteration/123"
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub due_date: Option<String>,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Issue {
     pub id: u64,
     pub iid: u64,
@@ -51,6 +63,10 @@ pub struct Issue {
     // Custom workflow status (from GraphQL widgets, not in REST API)
     #[serde(default)]
     pub custom_status: Option<String>,
+    #[serde(default)]
+    pub iteration: Option<Iteration>,
+    #[serde(default)]
+    pub weight: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -145,7 +145,7 @@ impl IssueListState {
                 KeyCode::Char('o') => return IssueListAction::OpenBrowser,
                 KeyCode::Char('f') => return IssueListAction::AddFilter,
                 KeyCode::Char('F') => return IssueListAction::ClearFilters,
-                KeyCode::Char('p') => return IssueListAction::PickPreset,
+                KeyCode::Char('e') => return IssueListAction::PickPreset,
                 KeyCode::Char('S') => return IssueListAction::PickSortPreset,
                 _ => {}
             }
