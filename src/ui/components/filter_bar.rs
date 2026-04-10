@@ -19,7 +19,7 @@ pub fn render(
         let hint = Paragraph::new(Line::from(vec![
             Span::styled(" f", styles::help_key_style()),
             Span::styled(":filter ", styles::help_desc_style()),
-            Span::styled("p", styles::help_key_style()),
+            Span::styled("e", styles::help_key_style()),
             Span::styled(":preset ", styles::help_desc_style()),
             Span::styled("S", styles::help_key_style()),
             Span::styled(":sort ", styles::help_desc_style()),

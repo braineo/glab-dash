@@ -14,7 +14,7 @@ use crate::gitlab::client::GitLabClient;
 use crate::gitlab::types::*;
 use crate::ui::components::{chord_popup, confirm_dialog, error_popup, help, picker};
 use crate::ui::keys;
-use crate::ui::views::{dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list};
+use crate::ui::views::{dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
@@ -23,6 +23,7 @@ pub enum View {
     IssueDetail,
     MrList,
     MrDetail,
+    Planning,
 }
 
 #[derive(Debug)]
@@ -94,6 +95,9 @@ pub enum AsyncMsg {
     LabelsLoaded(Result<Vec<ProjectLabel>>),
     /// (statuses, project, issue_db_id, iid, close_only)
     StatusesLoaded(Result<Vec<WorkItemStatus>>, String, u64, u64, bool),
+    IterationsLoaded(Result<Vec<Iteration>>),
+    /// Iteration update result: (result, issue_id, new_iteration)
+    IterationUpdated(Result<()>, u64, Option<Iteration>),
 }
 
 pub struct App {
@@ -147,6 +151,10 @@ pub struct App {
     pub issue_sort: Vec<crate::sort::SortSpec>,
     pub mr_sort: Vec<crate::sort::SortSpec>,
     pub label_sort_orders: std::collections::HashMap<String, Vec<String>>,
+
+    // Planning view
+    pub planning_state: planning::PlanningViewState,
+    pub iterations: Vec<Iteration>,
 }
 
 impl App {
@@ -193,6 +201,8 @@ impl App {
             issue_sort: Vec::new(),
             mr_sort: Vec::new(),
             label_sort_orders,
+            planning_state: planning::PlanningViewState::default(),
+            iterations: Vec::new(),
         }
     }
 
@@ -229,6 +239,15 @@ impl App {
                     FocusedItem::Mr {
                         project: item.project_path.clone(),
                         iid: item.mr.iid,
+                    }
+                })
+            }
+            View::Planning => {
+                self.planning_state.selected_issue(&self.issues).map(|item| {
+                    FocusedItem::Issue {
+                        project: item.project_path.clone(),
+                        id: item.issue.id,
+                        iid: item.issue.iid,
                     }
                 })
             }
@@ -474,6 +493,7 @@ impl App {
                     self.error = None;
                     self.loading = false;
                     self.refilter_issues();
+                    self.refilter_planning();
                     self.refresh_focused();
                     self.save_cache();
                 }
@@ -628,6 +648,38 @@ impl App {
                     }
                 }
             }
+            AsyncMsg::IterationsLoaded(result) => {
+                match result {
+                    Ok(iters) => {
+                        self.iterations = iters;
+                        self.classify_iterations();
+                        self.refilter_planning();
+                        self.refresh_focused();
+                    }
+                    Err(e) => {
+                        self.show_error(format!("Iterations: {e}"));
+                    }
+                }
+            }
+            AsyncMsg::IterationUpdated(result, issue_id, new_iteration) => {
+                self.loading = false;
+                match result {
+                    Ok(()) => {
+                        // Optimistic update was already applied
+                        self.error = None;
+                        self.save_cache();
+                    }
+                    Err(e) => {
+                        // Revert the optimistic update
+                        if let Some(pos) = self.issues.iter().position(|i| i.issue.id == issue_id) {
+                            // We stored the previous iteration in new_iteration for revert
+                            self.issues[pos].issue.iteration = new_iteration;
+                            self.refilter_planning();
+                        }
+                        self.show_error(format!("Move iteration: {e}"));
+                    }
+                }
+            }
         }
     }
 
@@ -647,6 +699,41 @@ impl App {
             &members,
             &self.label_sort_orders,
         );
+    }
+
+    pub fn refilter_planning(&mut self) {
+        self.planning_state
+            .partition_issues(&self.issues, &self.label_sort_orders);
+    }
+
+    fn classify_iterations(&mut self) {
+        // Iterations come sorted by CADENCE_AND_DUE_DATE_ASC.
+        // States: "closed", "current", "upcoming".
+        // Find current, then adjacent entries are previous/next.
+        let current_pos = self
+            .iterations
+            .iter()
+            .position(|i| i.state == "current");
+
+        self.planning_state.current_iteration =
+            current_pos.map(|pos| self.iterations[pos].clone());
+
+        self.planning_state.prev_iteration = current_pos
+            .and_then(|pos| pos.checked_sub(1))
+            .map(|pos| self.iterations[pos].clone());
+
+        self.planning_state.next_iteration = current_pos
+            .and_then(|pos| self.iterations.get(pos + 1))
+            .cloned();
+    }
+
+    fn fetch_iterations(&self) {
+        let client = self.client.clone();
+        let tx = self.async_tx.clone();
+        tokio::spawn(async move {
+            let result = client.fetch_iterations().await;
+            let _ = tx.send(AsyncMsg::IterationsLoaded(result));
+        });
     }
 
     fn get_filter_suggestions(&self) -> Vec<String> {
@@ -857,6 +944,7 @@ impl App {
         let in_search = match self.view {
             View::IssueList => self.issue_list_state.searching,
             View::MrList => self.mr_list_state.searching,
+            View::Planning => self.planning_state.searching,
             _ => false,
         };
         if keys::is_back(&key) && !in_search {
@@ -867,13 +955,25 @@ impl App {
             return false;
         }
 
-        // Global navigation — h/i/m jump between top-level views (skip in search mode)
+        // Global navigation — h/i/m/p jump between top-level views (skip in search mode)
         if !in_search && key.modifiers == KeyModifiers::NONE {
             match key.code {
-                KeyCode::Char('h') => {
+                // In Planning view, h/l are used for column navigation — skip global h
+                KeyCode::Char('h') if self.view != View::Planning => {
                     self.view_stack.clear();
                     self.view = View::Dashboard;
                     self.refresh_focused();
+                    return false;
+                }
+                KeyCode::Char('p') if self.view != View::Planning => {
+                    self.view_stack.clear();
+                    self.view_stack.push(View::Dashboard);
+                    self.view = View::Planning;
+                    self.refilter_planning();
+                    self.refresh_focused();
+                    if self.iterations.is_empty() {
+                        self.fetch_iterations();
+                    }
                     return false;
                 }
                 KeyCode::Char('i') if self.view != View::IssueList => {
@@ -903,6 +1003,7 @@ impl App {
             View::IssueDetail => self.handle_issue_detail_key(key),
             View::MrList => self.handle_mr_list_key(key),
             View::MrDetail => self.handle_mr_detail_key(key),
+            View::Planning => self.handle_planning_key(key),
         }
 
         false
@@ -1204,6 +1305,122 @@ impl App {
                 _ => {}
             }
         }
+    }
+
+    fn handle_planning_key(&mut self, key: KeyEvent) {
+        use planning::PlanningAction;
+        let action = self.planning_state.handle_key(&key);
+        match action {
+            PlanningAction::None => {}
+            PlanningAction::Refilter => {
+                self.refilter_planning();
+                self.refresh_focused();
+            }
+            PlanningAction::OpenDetail => {
+                if let Some(item) = self.planning_state.selected_issue(&self.issues).cloned() {
+                    let project = item.project_path.clone();
+                    let iid = item.issue.iid;
+                    // Sync issue_list_state so detail view can find the issue
+                    let col = self.planning_state.focused_column;
+                    if let Some(sel) = self.planning_state.column_states[col].selected()
+                        && let Some(&idx) = self.planning_state.column_indices[col].get(sel)
+                    {
+                        if let Some(pos) = self.issue_list_state.filtered_indices.iter().position(|&i| i == idx) {
+                            self.issue_list_state.table_state.select(Some(pos));
+                        } else {
+                            self.issue_list_state.filtered_indices.push(idx);
+                            self.issue_list_state.table_state.select(Some(self.issue_list_state.filtered_indices.len() - 1));
+                        }
+                    }
+                    self.issue_detail_state.reset();
+                    self.issue_detail_state.loading_notes = true;
+                    self.fetch_notes_for_issue(&project, iid);
+                    self.view_stack.push(View::Planning);
+                    self.view = View::IssueDetail;
+                }
+            }
+            PlanningAction::Refresh => {
+                self.fetch_all();
+                self.fetch_iterations();
+            }
+            PlanningAction::SetStatus => {
+                self.do_set_status();
+            }
+            PlanningAction::ToggleState => {
+                self.do_toggle_state();
+            }
+            PlanningAction::EditLabels => {
+                if let Some(item) = self.planning_state.selected_issue(&self.issues).cloned() {
+                    let label_names: Vec<String> =
+                        self.labels.iter().map(|l| l.name.clone()).collect();
+                    self.picker_state = Some(
+                        picker::PickerState::new("Labels", label_names, true)
+                            .with_pre_selected(&item.issue.labels),
+                    );
+                    self.overlay = Overlay::Picker(PickerContext::Labels);
+                }
+            }
+            PlanningAction::EditAssignee => {
+                let members = self.config.team_members(self.active_team);
+                self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
+                self.overlay = Overlay::Picker(PickerContext::Assignee);
+            }
+            PlanningAction::Comment => {
+                self.comment_input = crate::ui::components::input::InputState::default();
+                self.overlay = Overlay::CommentInput;
+            }
+            PlanningAction::OpenBrowser => {
+                if let Some(item) = self.planning_state.selected_issue(&self.issues) {
+                    let _ = open::that(&item.issue.web_url);
+                }
+            }
+            PlanningAction::GoHome => {
+                self.view_stack.clear();
+                self.view = View::Dashboard;
+                self.refresh_focused();
+            }
+            PlanningAction::MoveToNext => {
+                self.move_issue_to_iteration(true);
+            }
+            PlanningAction::MoveToPrev => {
+                self.move_issue_to_iteration(false);
+            }
+        }
+        self.refresh_focused();
+    }
+
+    fn move_issue_to_iteration(&mut self, to_next: bool) {
+        let col = self.planning_state.focused_column;
+        let sel = match self.planning_state.column_states[col].selected() {
+            Some(s) => s,
+            None => return,
+        };
+        let issue_idx = match self.planning_state.column_indices[col].get(sel) {
+            Some(&idx) => idx,
+            None => return,
+        };
+
+        let target = if to_next {
+            self.planning_state.next_iteration.clone()
+        } else {
+            self.planning_state.prev_iteration.clone()
+        };
+
+        let issue_id = self.issues[issue_idx].issue.id;
+        let old_iteration = self.issues[issue_idx].issue.iteration.clone();
+
+        // Optimistic update
+        self.issues[issue_idx].issue.iteration = target.clone();
+        self.refilter_planning();
+
+        // Spawn async
+        let client = self.client.clone();
+        let tx = self.async_tx.clone();
+        let target_gid = target.as_ref().map(|i| i.id.clone());
+        tokio::spawn(async move {
+            let result = client.update_issue_iteration(issue_id, target_gid.as_deref()).await;
+            let _ = tx.send(AsyncMsg::IterationUpdated(result, issue_id, old_iteration));
+        });
     }
 
     fn handle_overlay_key(&mut self, key: KeyEvent) -> bool {
@@ -1523,6 +1740,14 @@ impl App {
                 let item = self.issues.get(idx)?;
                 Some((idx, item.project_path.clone(), item.issue.iid, false))
             }
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                let idx = self.planning_state.column_states[col]
+                    .selected()
+                    .and_then(|sel| self.planning_state.column_indices[col].get(sel).copied())?;
+                let item = self.issues.get(idx)?;
+                Some((idx, item.project_path.clone(), item.issue.iid, false))
+            }
             View::MrList | View::MrDetail => {
                 let idx = self
                     .mr_list_state
@@ -1616,8 +1841,13 @@ impl App {
         let body = body.to_string();
 
         let (project, iid, is_mr) = match self.view {
-            View::IssueList => {
-                if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
+            View::IssueList | View::Planning => {
+                let selected = if self.view == View::Planning {
+                    self.planning_state.selected_issue(&self.issues).cloned()
+                } else {
+                    self.issue_list_state.selected_issue(&self.issues).cloned()
+                };
+                if let Some(item) = selected {
                     (item.project_path.clone(), item.issue.iid, false)
                 } else {
                     return;
@@ -1778,6 +2008,17 @@ impl App {
                     );
                 }
             }
+            View::Planning => {
+                planning::render(
+                    frame,
+                    chunks[0],
+                    &mut self.planning_state,
+                    &self.issues,
+                    &self.config,
+                    self.active_team,
+                    &ctx,
+                );
+            }
         }
 
         // Status bar
@@ -1793,18 +2034,21 @@ impl App {
             View::IssueDetail => "Issue Detail",
             View::MrList => "Merge Requests",
             View::MrDetail => "MR Detail",
+            View::Planning => "Planning",
         };
         let item_count = match self.view {
             View::IssueList => self.issue_list_state.filtered_indices.len(),
             View::MrList => self.mr_list_state.filtered_indices.len(),
+            View::Planning => self.planning_state.column_indices.iter().map(|c| c.len()).sum(),
             _ => self.issues.len() + self.mrs.len(),
         };
         let hints: &[(&str, &str)] = match self.view {
-            View::Dashboard => &[("q", "quit"), ("?", "help"), ("i", "issues"), ("m", "mrs")],
+            View::Dashboard => &[("q", "quit"), ("?", "help"), ("i", "issues"), ("m", "mrs"), ("p", "planning")],
             View::IssueList => &[("q", "back"), ("?", "help"), ("h", "home"), ("/", "search"), ("s", "status"), ("x", "close")],
             View::MrList => &[("q", "back"), ("?", "help"), ("h", "home"), ("/", "search"), ("A", "approve"), ("M", "merge")],
             View::IssueDetail => &[("q", "back"), ("?", "help"), ("s", "status"), ("x", "close"), ("c", "comment"), ("o", "open")],
             View::MrDetail => &[("q", "back"), ("?", "help"), ("A", "approve"), ("M", "merge"), ("c", "comment"), ("o", "open")],
+            View::Planning => &[("q", "back"), ("?", "help"), ("H", "home"), (">/<", "move iter"), ("v", "layout"), ("[/]", "toggle col")],
         };
         crate::ui::components::status_bar::render(
             frame,

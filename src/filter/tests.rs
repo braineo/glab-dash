@@ -36,6 +36,8 @@ fn make_tracked_issue(
             user_notes_count: 0,
             references: None,
             custom_status: None,
+            iteration: None,
+            weight: None,
         },
         project_path: project.to_string(),
     }

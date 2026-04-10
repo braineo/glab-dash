@@ -13,6 +13,8 @@ pub enum Field {
     Title,
     Project,
     Team,
+    Iteration,
+    Weight,
 }
 
 impl Field {
@@ -29,6 +31,8 @@ impl Field {
             Field::Title,
             Field::Project,
             Field::Team,
+            Field::Iteration,
+            Field::Weight,
         ]
     }
 
@@ -45,6 +49,8 @@ impl Field {
             Field::Title => "title",
             Field::Project => "project",
             Field::Team => "team",
+            Field::Iteration => "iteration",
+            Field::Weight => "weight",
         }
     }
 
@@ -61,6 +67,8 @@ impl Field {
             "title" => Some(Field::Title),
             "project" => Some(Field::Project),
             "team" => Some(Field::Team),
+            "iteration" => Some(Field::Iteration),
+            "weight" => Some(Field::Weight),
             _ => None,
         }
     }
@@ -171,6 +179,15 @@ pub fn matches_issue(
                 &value,
                 team_members,
             ),
+            Field::Iteration => match_optional_string(
+                item.issue.iteration.as_ref().map(|i| i.title.as_str()),
+                &c.op,
+                &value,
+            ),
+            Field::Weight => {
+                let w = item.issue.weight.unwrap_or(0).to_string();
+                match_string(&w, &c.op, &value)
+            }
             // Issue doesn't have these fields
             Field::Reviewer | Field::Draft | Field::ApprovedBy => true,
         }
@@ -243,6 +260,8 @@ pub fn matches_mr(
             ),
             Field::Title => match_string_contains(&item.mr.title, &c.op, &value),
             Field::Project => match_string(&item.project_path, &c.op, &value),
+            // MRs don't have iteration/weight
+            Field::Iteration | Field::Weight => true,
             Field::Team => match_team_membership(
                 &item
                     .mr

@@ -125,6 +125,18 @@ struct GqlStatusValue {
     name: String,
 }
 
+#[derive(Deserialize)]
+struct GqlIteration {
+    id: String,
+    /// Nullable in GitLab schema — iterations may have no title.
+    title: Option<String>,
+    #[serde(default, rename = "startDate")]
+    start_date: Option<String>,
+    #[serde(default, rename = "dueDate")]
+    due_date: Option<String>,
+    state: String,
+}
+
 /// Serde flattens all widget types into one struct.
 /// Unknown fields are ignored; each widget type only populates its fields.
 #[derive(Deserialize, Default)]
@@ -139,6 +151,10 @@ struct GqlWidget {
     status: Option<GqlStatusValue>,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    iteration: Option<GqlIteration>,
+    #[serde(default)]
+    weight: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -196,6 +212,10 @@ struct GqlRootIssue {
     reference: Option<String>,
     #[serde(default)]
     status: Option<GqlStatusValue>,
+    #[serde(default)]
+    iteration: Option<GqlIteration>,
+    #[serde(default)]
+    weight: Option<u32>,
 }
 
 impl From<GqlRootIssue> for Issue {
@@ -227,6 +247,14 @@ impl From<GqlRootIssue> for Issue {
             user_notes_count: 0,
             references: g.reference.map(|r| References { full_ref: r }),
             custom_status: g.status.map(|s| s.name),
+            iteration: g.iteration.map(|i| Iteration {
+                id: i.id,
+                title: i.title.unwrap_or_default(),
+                start_date: i.start_date,
+                due_date: i.due_date,
+                state: i.state,
+            }),
+            weight: g.weight,
         }
     }
 }
@@ -246,6 +274,8 @@ impl From<GqlWorkItem> for Issue {
         let mut milestone = None;
         let mut custom_status = None;
         let mut description = None;
+        let mut iteration = None;
+        let mut weight = None;
 
         for widget in w.widgets {
             if let Some(a) = widget.assignees {
@@ -266,6 +296,18 @@ impl From<GqlWorkItem> for Issue {
             }
             if let Some(d) = widget.description {
                 description = Some(d);
+            }
+            if let Some(i) = widget.iteration {
+                iteration = Some(Iteration {
+                    id: i.id,
+                    title: i.title.unwrap_or_default(),
+                    start_date: i.start_date,
+                    due_date: i.due_date,
+                    state: i.state,
+                });
+            }
+            if let Some(w) = widget.weight {
+                weight = Some(w);
             }
         }
 
@@ -289,6 +331,8 @@ impl From<GqlWorkItem> for Issue {
             user_notes_count: 0,
             references: w.reference.map(|r| References { full_ref: r }),
             custom_status,
+            iteration,
+            weight,
         }
     }
 }
@@ -352,7 +396,7 @@ impl GitLabClient {
                         createdAt updatedAt webUrl
                         reference(full: true)
                         namespace { fullPath }
-                        widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION]) {
+                        widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION, ITERATION, WEIGHT]) {
                             ... on WorkItemWidgetAssignees {
                                 assignees { nodes { id username name webUrl } }
                             }
@@ -367,6 +411,12 @@ impl GitLabClient {
                             }
                             ... on WorkItemWidgetDescription {
                                 description
+                            }
+                            ... on WorkItemWidgetIteration {
+                                iteration { id title startDate dueDate state }
+                            }
+                            ... on WorkItemWidgetWeight {
+                                weight
                             }
                         }
                     }
@@ -768,6 +818,118 @@ impl GitLabClient {
         Ok(())
     }
 
+    // ── Iterations ──
+
+    /// Fetch iterations for the tracking namespace.
+    pub async fn fetch_iterations(&self) -> Result<Vec<Iteration>> {
+        let query = r#"
+            query($path: ID!, $after: String) {
+                group(fullPath: $path) {
+                    iterations(
+                        first: 50
+                        sort: CADENCE_AND_DUE_DATE_ASC
+                        after: $after
+                    ) {
+                        nodes { id title startDate dueDate state }
+                        pageInfo { hasNextPage endCursor }
+                    }
+                }
+            }
+        "#;
+
+        #[derive(Deserialize)]
+        struct Resp {
+            group: Group,
+        }
+        #[derive(Deserialize)]
+        struct Group {
+            iterations: GqlConnection<GqlIteration>,
+        }
+
+        // Extract the group path from tracking_project (everything before the last `/`)
+        let group_path = self
+            .config
+            .tracking_project
+            .rsplit_once('/')
+            .map(|(g, _)| g)
+            .unwrap_or(&self.config.tracking_project);
+
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let variables = serde_json::json!({
+                "path": group_path,
+                "after": cursor,
+            });
+            let body = serde_json::json!({ "query": query, "variables": variables });
+            let json = self.graphql_post(&body).await?;
+
+            let resp: GqlResponse<Resp> =
+                serde_json::from_value(json).context("failed to deserialize iterations")?;
+
+            let connection = resp.data.group.iterations;
+            for gi in connection.nodes {
+                all.push(Iteration {
+                    id: gi.id,
+                    title: gi.title.unwrap_or_default(),
+                    start_date: gi.start_date,
+                    due_date: gi.due_date,
+                    state: gi.state,
+                });
+            }
+
+            match connection.page_info {
+                Some(pi) if pi.has_next_page => cursor = pi.end_cursor,
+                _ => break,
+            }
+        }
+
+        Ok(all)
+    }
+
+    /// Update a work item's iteration via GraphQL.
+    pub async fn update_issue_iteration(
+        &self,
+        issue_id: u64,
+        iteration_gid: Option<&str>,
+    ) -> Result<()> {
+        let query = r#"
+            mutation workItemUpdate($input: WorkItemUpdateInput!) {
+                workItemUpdate(input: $input) {
+                    errors
+                }
+            }
+        "#;
+        let gid = format!("gid://gitlab/WorkItem/{issue_id}");
+        let variables = serde_json::json!({
+            "input": {
+                "id": gid,
+                "iterationWidget": {
+                    "iterationId": iteration_gid,
+                }
+            }
+        });
+        let body = serde_json::json!({ "query": query, "variables": variables });
+
+        let json = self.graphql_post(&body).await?;
+
+        if let Some(errors) = json
+            .pointer("/data/workItemUpdate/errors")
+            .and_then(|v| v.as_array())
+        {
+            if !errors.is_empty() {
+                let msgs: Vec<String> = errors
+                    .iter()
+                    .filter_map(|e| e.as_str().map(|s| s.to_string()))
+                    .collect();
+                anyhow::bail!("{}", msgs.join(", "));
+            }
+        }
+
+        Ok(())
+    }
+
     // ── Labels ──
 
     pub async fn list_project_labels(&self, project: &str) -> Result<Vec<ProjectLabel>> {
@@ -869,6 +1031,8 @@ impl GitLabClient {
                         createdAt updatedAt webUrl description
                         reference(full: true)
                         status { name }
+                        iteration { id title startDate dueDate state }
+                        weight
                     }
                     pageInfo { hasNextPage endCursor }
                 }
