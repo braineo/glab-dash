@@ -985,7 +985,7 @@ impl App {
             }
             issue_list::IssueListAction::OpenBrowser => {
                 if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
-                    let _ = open::that(&item.issue.web_url);
+                    let _ = open::that_detached(&item.issue.web_url);
                 }
             }
             issue_list::IssueListAction::AddFilter => {
@@ -1082,7 +1082,7 @@ impl App {
             }
             mr_list::MrListAction::OpenBrowser => {
                 if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
-                    let _ = open::that(&item.mr.web_url);
+                    let _ = open::that_detached(&item.mr.web_url);
                 }
             }
             mr_list::MrListAction::AddFilter => {
@@ -1135,7 +1135,7 @@ impl App {
                     self.do_toggle_state();
                 }
                 KeyCode::Char('o') => {
-                    let _ = open::that(&item.issue.web_url);
+                    let _ = open::that_detached(&item.issue.web_url);
                 }
                 KeyCode::Char('l') => {
                     let label_names: Vec<String> =
@@ -1185,7 +1185,7 @@ impl App {
                     self.do_toggle_state();
                 }
                 KeyCode::Char('o') => {
-                    let _ = open::that(&item.mr.web_url);
+                    let _ = open::that_detached(&item.mr.web_url);
                 }
                 KeyCode::Char('l') => {
                     let label_names: Vec<String> =
