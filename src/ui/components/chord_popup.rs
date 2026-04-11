@@ -1,14 +1,17 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use crate::ui::styles;
 
-/// Home-row keys used as chord codes (9 keys: 9 single, 81 two-key combos).
+/// Home-row keys used as chord codes for sequential generation (9 keys).
 const CHORD_KEYS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
+
+/// Dim color for inactive/non-matching chord items (against overlay bg #343b58).
+const CHORD_DIM: Color = Color::Rgb(80, 87, 120);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum ChordKind {
@@ -21,7 +24,8 @@ pub struct ChordState {
     pub title: String,
     pub options: Vec<(String, String)>, // (code, label)
     pub input: String,
-    pub code_len: usize, // 1 or 2
+    /// Longest code length (for display alignment).
+    pub max_code_len: usize,
     pub kind: ChordKind,
 }
 
@@ -32,6 +36,7 @@ pub enum ChordAction {
 }
 
 impl ChordState {
+    /// Create a chord with sequential home-row key codes (fixed-length).
     pub fn new(title: &str, labels: Vec<String>) -> Self {
         let code_len = if labels.len() <= CHORD_KEYS.len() {
             1
@@ -44,7 +49,24 @@ impl ChordState {
             title: title.to_string(),
             options,
             input: String::new(),
-            code_len,
+            max_code_len: code_len,
+            kind: ChordKind::Generic,
+        }
+    }
+
+    /// Create a chord with cascading name-derived keys (avy/easymotion style).
+    ///
+    /// - Unique first letter → 1-char code (instant select)
+    /// - Shared first letter → 2-char codes: first letter + distinguishing char
+    pub fn new_for_names(title: &str, labels: Vec<String>) -> Self {
+        let codes = generate_name_codes(&labels);
+        let max_code_len = codes.iter().map(String::len).max().unwrap_or(1);
+        let options = codes.into_iter().zip(labels).collect();
+        Self {
+            title: title.to_string(),
+            options,
+            input: String::new(),
+            max_code_len,
             kind: ChordKind::Generic,
         }
     }
@@ -56,36 +78,33 @@ impl ChordState {
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> ChordAction {
         match key.code {
-            KeyCode::Char(c) if CHORD_KEYS.contains(&c) => {
-                self.input.push(c);
-                if self.input.len() >= self.code_len {
-                    // Full code entered
-                    if let Some((_, label)) =
-                        self.options.iter().find(|(code, _)| *code == self.input)
-                    {
-                        ChordAction::Selected(label.clone())
-                    } else {
-                        // Invalid code — reset input
-                        self.input.clear();
-                        ChordAction::Continue
-                    }
-                } else {
-                    // Partial code — check if any prefix matches exist
-                    let has_match = self
-                        .options
-                        .iter()
-                        .any(|(code, _)| code.starts_with(&self.input));
-                    if !has_match {
-                        self.input.clear();
-                    }
-                    ChordAction::Continue
+            KeyCode::Char(c) if c.is_ascii_alphabetic() => {
+                let c = c.to_ascii_lowercase();
+                let mut test = self.input.clone();
+                test.push(c);
+
+                // Exact code match → select immediately
+                if let Some((_, label)) = self.options.iter().find(|(code, _)| *code == test) {
+                    return ChordAction::Selected(label.clone());
                 }
+                // Valid prefix → narrow candidates
+                if self.options.iter().any(|(code, _)| code.starts_with(&test)) {
+                    self.input = test;
+                    return ChordAction::Continue;
+                }
+                // No match → avy-style: silently ignore wrong letter
+                ChordAction::Continue
+            }
+            KeyCode::Backspace if !self.input.is_empty() => {
+                self.input.pop();
+                ChordAction::Continue
             }
             _ => ChordAction::Cancel,
         }
     }
 }
 
+/// Generate sequential home-row codes (a, s, d, ... or aa, as, ad, ...).
 fn generate_codes(count: usize, code_len: usize) -> Vec<String> {
     if code_len == 1 {
         CHORD_KEYS[..count]
@@ -106,16 +125,109 @@ fn generate_codes(count: usize, code_len: usize) -> Vec<String> {
     }
 }
 
+/// Generate cascading name-derived chord codes.
+///
+/// Names with a unique first letter get a 1-char code.
+/// Names sharing a first letter get 2-char codes: shared letter + a
+/// distinguishing character derived from the name (second alpha char,
+/// falling back to later chars on conflict).
+fn generate_name_codes(labels: &[String]) -> Vec<String> {
+    let n = labels.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    // Fall back to sequential for very large sets
+    if n > 26 {
+        return generate_codes(n, 2);
+    }
+
+    // Extract lowercase alpha-only chars for each label
+    let alpha_chars: Vec<Vec<char>> = labels
+        .iter()
+        .map(|l| {
+            l.chars()
+                .filter(char::is_ascii_alphabetic)
+                .map(|c| c.to_ascii_lowercase())
+                .collect()
+        })
+        .collect();
+
+    // Group indices by first letter
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut first_letter_of: Vec<char> = vec!['a'; n];
+    {
+        // Collect (first_letter, index) pairs, then group
+        let mut pairs: Vec<(char, usize)> = alpha_chars
+            .iter()
+            .enumerate()
+            .filter_map(|(i, chars)| chars.first().map(|&c| (c, i)))
+            .collect();
+        pairs.sort_by_key(|&(c, _)| c);
+
+        let mut i = 0;
+        while i < pairs.len() {
+            let ch = pairs[i].0;
+            let mut group = Vec::new();
+            while i < pairs.len() && pairs[i].0 == ch {
+                let idx = pairs[i].1;
+                first_letter_of[idx] = ch;
+                group.push(idx);
+                i += 1;
+            }
+            groups.push(group);
+        }
+    }
+
+    let mut codes = vec![String::new(); n];
+
+    for group in &groups {
+        if group.len() == 1 {
+            // Unique first letter → single-char code
+            codes[group[0]] = first_letter_of[group[0]].to_string();
+        } else {
+            // Shared first letter → 2-char codes with name-derived second char
+            let first = first_letter_of[group[0]];
+            let mut used_second: Vec<char> = Vec::new();
+
+            // Try second alpha character of each name, then subsequent chars
+            for &idx in group {
+                let mut assigned = false;
+                for &c in alpha_chars[idx].iter().skip(1) {
+                    if !used_second.contains(&c) {
+                        codes[idx] = format!("{first}{c}");
+                        used_second.push(c);
+                        assigned = true;
+                        break;
+                    }
+                }
+                if !assigned {
+                    // Fallback: any available letter
+                    for c in 'a'..='z' {
+                        if !used_second.contains(&c) {
+                            codes[idx] = format!("{first}{c}");
+                            used_second.push(c);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    codes
+}
+
+// ── Rendering ──
+
 pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
-    // Calculate column layout
     let max_label_len = state
         .options
         .iter()
         .map(|(_, l)| l.len())
         .max()
         .unwrap_or(6);
-    let item_width = state.code_len + 1 + max_label_len + 2; // "aa label  "
-    let usable_width = usize::from(area.width).saturating_sub(6); // borders + padding
+    let item_width = state.max_code_len + 1 + max_label_len + 2;
+    let usable_width = usize::from(area.width).saturating_sub(6);
     let cols = (usable_width / item_width).clamp(1, 4);
     let rows = state.options.len().div_ceil(cols);
 
@@ -134,6 +246,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
     frame.render_widget(block, popup);
 
     let mut lines = Vec::new();
+    let typed_len = state.input.len();
 
     for row_idx in 0..rows {
         let mut spans = Vec::new();
@@ -143,19 +256,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
                 let (code, label) = &state.options[item_idx];
                 let is_active = state.input.is_empty() || code.starts_with(&state.input);
 
-                let code_style = if is_active {
-                    Style::default()
-                        .fg(styles::MAGENTA)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(styles::OVERLAY_TEXT_DIM)
-                };
-                spans.push(Span::styled(
-                    format!("{code:>w$}", w = state.code_len),
-                    code_style,
-                ));
+                // ── Code: avy-style progressive highlight ──
+                render_code(&mut spans, code, state.max_code_len, typed_len, is_active);
                 spans.push(Span::raw(" "));
 
+                // ── Label ──
                 if state.kind == ChordKind::Status && is_active {
                     let icon = styles::status_icon(label);
                     let sty = styles::status_style(label);
@@ -165,7 +270,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
                     let label_style = if is_active {
                         styles::overlay_text_style()
                     } else {
-                        Style::default().fg(styles::OVERLAY_TEXT_DIM)
+                        Style::default().fg(CHORD_DIM)
                     };
                     let padded = format!("{label:<w$}", w = max_label_len + 2);
                     spans.push(Span::styled(padded, label_style));
@@ -175,24 +280,83 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
         lines.push(Line::from(spans));
     }
 
-    // Hint line
-    lines.push(Line::from(vec![
-        if state.input.is_empty() {
-            Span::raw("")
-        } else {
-            Span::styled(
-                format!("{}_ ", state.input),
-                Style::default()
-                    .fg(styles::MAGENTA)
-                    .add_modifier(Modifier::BOLD),
-            )
-        },
-        Span::styled("Esc", styles::overlay_key_style()),
-        Span::styled(":cancel", styles::overlay_desc_style()),
-    ]));
+    // ── Hint line ──
+    lines.push(render_hint(state, typed_len));
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
+}
+
+/// Render a chord code with avy-style progressive dimming/highlighting.
+///
+/// Active + partial input: typed prefix muted, remaining chars bright.
+/// Active + no input: full code in accent color.
+/// Inactive: fully dimmed.
+fn render_code(
+    spans: &mut Vec<Span<'static>>,
+    code: &str,
+    max_width: usize,
+    typed: usize,
+    active: bool,
+) {
+    // Right-align padding for variable-length codes
+    let pad = max_width.saturating_sub(code.len());
+    if pad > 0 {
+        spans.push(Span::raw(" ".repeat(pad)));
+    }
+
+    if active && typed > 0 {
+        // Typed prefix → muted; remaining → bright hint target
+        spans.push(Span::styled(
+            code[..typed].to_string(),
+            Style::default().fg(styles::OVERLAY_TEXT_DIM),
+        ));
+        spans.push(Span::styled(
+            code[typed..].to_string(),
+            Style::default()
+                .fg(styles::YELLOW)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        let sty = if active {
+            Style::default()
+                .fg(styles::MAGENTA)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(CHORD_DIM)
+        };
+        spans.push(Span::styled(code.to_string(), sty));
+    }
+}
+
+/// Render the bottom hint line showing typing progress and key hints.
+fn render_hint(state: &ChordState, typed: usize) -> Line<'static> {
+    if state.input.is_empty() {
+        return Line::from(vec![
+            Span::styled("Esc", styles::overlay_key_style()),
+            Span::styled(" cancel", styles::overlay_desc_style()),
+        ]);
+    }
+    let remaining_dots = state.max_code_len.saturating_sub(typed);
+    Line::from(vec![
+        Span::styled(
+            state.input.clone(),
+            Style::default()
+                .fg(styles::MAGENTA)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "\u{00B7}".repeat(remaining_dots),
+            Style::default()
+                .fg(styles::YELLOW)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("Bksp", styles::overlay_key_style()),
+        Span::styled(" undo  ", styles::overlay_desc_style()),
+        Span::styled("Esc", styles::overlay_key_style()),
+        Span::styled(" cancel", styles::overlay_desc_style()),
+    ])
 }
 
 fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {

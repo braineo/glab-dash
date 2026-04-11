@@ -1693,7 +1693,10 @@ impl App {
             }
             _ => {
                 let members = self.picker_members();
-                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
+                self.chord_state = Some(chord_popup::ChordState::new_for_names(
+                    "Set Assignee",
+                    members,
+                ));
                 self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
         }
