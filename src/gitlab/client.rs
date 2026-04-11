@@ -485,19 +485,76 @@ impl GitLabClient {
         Ok(all)
     }
 
-    pub async fn update_issue(
-        &self,
-        project: &str,
-        iid: u64,
-        payload: serde_json::Value,
-    ) -> Result<Issue> {
-        let url = self.api_url(&format!(
-            "/projects/{}/issues/{}",
-            Self::encode_project(project),
-            iid
-        ));
-        let resp = self.client.put(&url).json(&payload).send().await?;
-        Self::handle_response(resp).await
+    /// Update a work item (issue) via GraphQL `workItemUpdate` mutation.
+    /// `input` should contain the widget fields to update (e.g. `assigneesWidget`,
+    /// `labelsWidget`, `stateEvent`). The `id` field is added automatically.
+    pub async fn update_issue(&self, issue_id: u64, input: serde_json::Value) -> Result<Issue> {
+        let gid = format!("gid://gitlab/WorkItem/{issue_id}");
+        let mut full_input = input;
+        full_input["id"] = serde_json::json!(gid);
+
+        let query = r"
+            mutation workItemUpdate($input: WorkItemUpdateInput!) {
+                workItemUpdate(input: $input) {
+                    errors
+                    workItem {
+                        id iid title state
+                        author { id username name webUrl }
+                        createdAt updatedAt webUrl
+                        reference(full: true)
+                        namespace { fullPath }
+                        widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION, ITERATION, WEIGHT]) {
+                            ... on WorkItemWidgetAssignees {
+                                assignees { nodes { id username name webUrl } }
+                            }
+                            ... on WorkItemWidgetLabels {
+                                labels { nodes { title } }
+                            }
+                            ... on WorkItemWidgetMilestone {
+                                milestone { id title state }
+                            }
+                            ... on WorkItemWidgetStatus {
+                                status { name }
+                            }
+                            ... on WorkItemWidgetDescription {
+                                description
+                            }
+                            ... on WorkItemWidgetIteration {
+                                iteration { id title startDate dueDate state }
+                            }
+                            ... on WorkItemWidgetWeight {
+                                weight
+                            }
+                        }
+                    }
+                }
+            }
+        ";
+
+        let body = serde_json::json!({ "query": query, "variables": { "input": full_input } });
+        let json = self.graphql_post(&body).await?;
+
+        // Check for mutation-level errors
+        if let Some(errors) = json
+            .pointer("/data/workItemUpdate/errors")
+            .and_then(|v| v.as_array())
+            && !errors.is_empty()
+        {
+            let msgs: Vec<String> = errors
+                .iter()
+                .filter_map(|e| e.as_str().map(std::string::ToString::to_string))
+                .collect();
+            anyhow::bail!("{}", msgs.join(", "));
+        }
+
+        let work_item: GqlWorkItem = serde_json::from_value(
+            json.pointer("/data/workItemUpdate/workItem")
+                .cloned()
+                .context("missing workItem in mutation response")?,
+        )
+        .context("failed to deserialize workItem from mutation response")?;
+
+        Ok(Issue::from(work_item))
     }
 
     pub async fn update_mr(

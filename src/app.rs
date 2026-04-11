@@ -54,8 +54,10 @@ pub enum FocusedItem {
 
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
-    CloseIssue(String, u64),
-    ReopenIssue(String, u64),
+    /// (issue_id, iid) — iid used only for confirm dialog text
+    CloseIssue(u64, u64),
+    /// (issue_id, iid) — iid used only for confirm dialog text
+    ReopenIssue(u64, u64),
     CloseMr(String, u64),
     ApproveMr(String, u64),
     MergeMr(String, u64),
@@ -103,8 +105,8 @@ pub enum AsyncMsg {
     ),
     DiscussionsLoaded(Result<Vec<Discussion>>),
     ActionDone(Result<String>),
-    /// An issue was mutated; carry the updated object and project path.
-    IssueUpdated(Result<Issue>, String),
+    /// An issue was mutated; carry the updated object.
+    IssueUpdated(Result<Issue>),
     /// A merge request was mutated; carry the updated object and project path.
     MrUpdated(Result<MergeRequest>, String),
     /// Issue custom status changed: (`project_path`, iid, `new_status_name`).
@@ -423,13 +425,13 @@ impl App {
     /// `close_only`: when true, filter to close-category statuses (for `x` key).
     fn fetch_statuses_and_show_chord(
         &mut self,
-        project: String,
+        project: &str,
         issue_id: u64,
         iid: u64,
         close_only: bool,
     ) {
         // If we already have cached statuses for this project, show chord immediately
-        if let Some(statuses) = self.work_item_statuses.get(&project) {
+        if let Some(statuses) = self.work_item_statuses.get(project) {
             if statuses.is_empty() {
                 // No custom statuses — fall back to open/close toggle
                 let item_state = self
@@ -438,13 +440,13 @@ impl App {
                     .or_else(|| self.current_detail_issue())
                     .map_or("opened", |i| i.issue.state.as_str());
                 let action = if item_state == "opened" {
-                    ConfirmAction::CloseIssue(project, iid)
+                    ConfirmAction::CloseIssue(issue_id, iid)
                 } else {
-                    ConfirmAction::ReopenIssue(project, iid)
+                    ConfirmAction::ReopenIssue(issue_id, iid)
                 };
                 self.overlay = Overlay::Confirm(action);
             } else {
-                self.show_status_chord(&project, issue_id, iid, close_only);
+                self.show_status_chord(project, issue_id, iid, close_only);
             }
             return;
         }
@@ -452,16 +454,12 @@ impl App {
         // Fetch statuses from GitLab
         let client = self.client.clone();
         let tx = self.async_tx.clone();
-        let project_clone = project.clone();
+        let project = project.to_string();
         self.loading = true;
         tokio::spawn(async move {
-            let result = client.fetch_work_item_statuses(&project_clone).await;
+            let result = client.fetch_work_item_statuses(&project).await;
             let _ = tx.send(AsyncMsg::StatusesLoaded(
-                result,
-                project_clone,
-                issue_id,
-                iid,
-                close_only,
+                result, project, issue_id, iid, close_only,
             ));
         });
     }
@@ -490,9 +488,9 @@ impl App {
                     .or_else(|| self.current_detail_issue())
                     .map_or("opened", |i| i.issue.state.as_str());
                 let action = if item_state == "opened" {
-                    ConfirmAction::CloseIssue(project.to_string(), iid)
+                    ConfirmAction::CloseIssue(issue_id, iid)
                 } else {
-                    ConfirmAction::ReopenIssue(project.to_string(), iid)
+                    ConfirmAction::ReopenIssue(issue_id, iid)
                 };
                 self.overlay = Overlay::Confirm(action);
                 return;
@@ -516,7 +514,7 @@ impl App {
             project, id, iid, ..
         }) = self.focused.clone()
         {
-            self.fetch_statuses_and_show_chord(project, id, iid, false);
+            self.fetch_statuses_and_show_chord(&project, id, iid, false);
         }
     }
 
@@ -529,7 +527,7 @@ impl App {
             Some(FocusedItem::Issue {
                 project, id, iid, ..
             }) => {
-                self.fetch_statuses_and_show_chord(project, id, iid, true);
+                self.fetch_statuses_and_show_chord(&project, id, iid, true);
             }
             Some(FocusedItem::Mr { project, iid, .. }) => {
                 self.overlay = Overlay::Confirm(ConfirmAction::CloseMr(project, iid));
@@ -664,16 +662,12 @@ impl App {
                     }
                 }
             }
-            AsyncMsg::IssueUpdated(result, project_path) => {
+            AsyncMsg::IssueUpdated(result) => {
                 self.loading = false;
                 match result {
                     Ok(issue) => {
-                        if let Some(pos) = self.issues.iter().position(|e| {
-                            e.issue.iid == issue.iid && e.project_path == project_path
-                        }) {
-                            let custom_status = self.issues[pos].issue.custom_status.clone();
+                        if let Some(pos) = self.issues.iter().position(|e| e.issue.id == issue.id) {
                             self.issues[pos].issue = issue;
-                            self.issues[pos].issue.custom_status = custom_status;
                         }
                         self.error = None;
                         self.refilter_issues();
@@ -737,9 +731,9 @@ impl App {
                                 .or_else(|| self.current_detail_issue())
                                 .map_or("opened", |i| i.issue.state.as_str());
                             let action = if item_state == "opened" {
-                                ConfirmAction::CloseIssue(project, iid)
+                                ConfirmAction::CloseIssue(issue_id, iid)
                             } else {
-                                ConfirmAction::ReopenIssue(project, iid)
+                                ConfirmAction::ReopenIssue(issue_id, iid)
                             };
                             self.overlay = Overlay::Confirm(action);
                         } else {
@@ -1952,24 +1946,16 @@ impl App {
     fn execute_confirm(&mut self, action: ConfirmAction) {
         // Optimistic updates
         match &action {
-            ConfirmAction::CloseIssue(project, iid) => {
-                if let Some(pos) = self
-                    .issues
-                    .iter()
-                    .position(|i| i.project_path == *project && i.issue.iid == *iid)
-                {
+            ConfirmAction::CloseIssue(issue_id, _) => {
+                if let Some(pos) = self.issues.iter().position(|i| i.issue.id == *issue_id) {
                     self.issues[pos].issue.state = "closed".to_string();
                     self.issues[pos].issue.updated_at = chrono::Utc::now();
                     self.refilter_issues();
                     self.save_cache();
                 }
             }
-            ConfirmAction::ReopenIssue(project, iid) => {
-                if let Some(pos) = self
-                    .issues
-                    .iter()
-                    .position(|e| e.issue.iid == *iid && e.project_path == *project)
-                {
+            ConfirmAction::ReopenIssue(issue_id, _) => {
+                if let Some(pos) = self.issues.iter().position(|i| i.issue.id == *issue_id) {
                     self.issues[pos].issue.state = "opened".to_string();
                     self.issues[pos].issue.updated_at = chrono::Utc::now();
                     self.refilter_issues();
@@ -2007,17 +1993,17 @@ impl App {
         let tx = self.async_tx.clone();
         tokio::spawn(async move {
             match action {
-                ConfirmAction::CloseIssue(project, iid) => {
+                ConfirmAction::CloseIssue(issue_id, _) => {
                     let result = client
-                        .update_issue(&project, iid, serde_json::json!({"state_event": "close"}))
+                        .update_issue(issue_id, serde_json::json!({"stateEvent": "CLOSE"}))
                         .await;
-                    let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
+                    let _ = tx.send(AsyncMsg::IssueUpdated(result));
                 }
-                ConfirmAction::ReopenIssue(project, iid) => {
+                ConfirmAction::ReopenIssue(issue_id, _) => {
                     let result = client
-                        .update_issue(&project, iid, serde_json::json!({"state_event": "reopen"}))
+                        .update_issue(issue_id, serde_json::json!({"stateEvent": "REOPEN"}))
                         .await;
-                    let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
+                    let _ = tx.send(AsyncMsg::IssueUpdated(result));
                 }
                 ConfirmAction::CloseMr(project, iid) => {
                     let result = client
@@ -2165,25 +2151,51 @@ impl App {
             return;
         };
 
-        // Optimistic update
-        if is_mr {
-            self.mrs[idx].mr.labels = labels.to_vec();
-        } else {
-            self.issues[idx].issue.labels = labels.to_vec();
-        }
-
-        let payload = serde_json::json!({"labels": labels.join(",")});
         let client = self.client.clone();
         let tx = self.async_tx.clone();
-        tokio::spawn(async move {
-            if is_mr {
+
+        if is_mr {
+            self.mrs[idx].mr.labels = labels.to_vec();
+            let payload = serde_json::json!({"labels": labels.join(",")});
+            tokio::spawn(async move {
                 let result = client.update_mr(&project, iid, payload).await;
                 let _ = tx.send(AsyncMsg::MrUpdated(result, project));
-            } else {
-                let result = client.update_issue(&project, iid, payload).await;
-                let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
-            }
-        });
+            });
+        } else {
+            let old_labels = &self.issues[idx].issue.labels;
+            let new_set: std::collections::HashSet<&str> =
+                labels.iter().map(String::as_str).collect();
+            let old_set: std::collections::HashSet<&str> =
+                old_labels.iter().map(String::as_str).collect();
+
+            let add_gids: Vec<String> = new_set
+                .difference(&old_set)
+                .filter_map(|name| self.label_id_by_name(name))
+                .map(|id| format!("gid://gitlab/Label/{id}"))
+                .collect();
+            let remove_gids: Vec<String> = old_set
+                .difference(&new_set)
+                .filter_map(|name| self.label_id_by_name(name))
+                .map(|id| format!("gid://gitlab/Label/{id}"))
+                .collect();
+
+            self.issues[idx].issue.labels = labels.to_vec();
+            let issue_id = self.issues[idx].issue.id;
+            let input = serde_json::json!({
+                "labelsWidget": {
+                    "addLabelIds": add_gids,
+                    "removeLabelIds": remove_gids,
+                }
+            });
+            tokio::spawn(async move {
+                let result = client.update_issue(issue_id, input).await;
+                let _ = tx.send(AsyncMsg::IssueUpdated(result));
+            });
+        }
+    }
+
+    fn label_id_by_name(&self, name: &str) -> Option<u64> {
+        self.labels.iter().find(|l| l.name == name).map(|l| l.id)
     }
 
     fn update_assignee(&mut self, username: &str) {
@@ -2200,10 +2212,16 @@ impl App {
             web_url: String::new(),
         };
         if is_mr {
-            self.mrs[idx].mr.assignees = vec![placeholder];
+            self.mrs[idx].mr.assignees = vec![placeholder.clone()];
         } else {
             self.issues[idx].issue.assignees = vec![placeholder];
         }
+
+        let issue_id = if is_mr {
+            0 // not used for MRs
+        } else {
+            self.issues[idx].issue.id
+        };
 
         let client = self.client.clone();
         let tx = self.async_tx.clone();
@@ -2213,13 +2231,18 @@ impl App {
             match users {
                 Ok(users) => {
                     if let Some(user) = users.first() {
-                        let payload = serde_json::json!({"assignee_ids": [user.id]});
                         if is_mr {
+                            let payload = serde_json::json!({"assignee_ids": [user.id]});
                             let result = client.update_mr(&project, iid, payload).await;
                             let _ = tx.send(AsyncMsg::MrUpdated(result, project));
                         } else {
-                            let result = client.update_issue(&project, iid, payload).await;
-                            let _ = tx.send(AsyncMsg::IssueUpdated(result, project));
+                            let input = serde_json::json!({
+                                "assigneesWidget": {
+                                    "assigneeIds": [format!("gid://gitlab/User/{}", user.id)]
+                                }
+                            });
+                            let result = client.update_issue(issue_id, input).await;
+                            let _ = tx.send(AsyncMsg::IssueUpdated(result));
                         }
                     } else {
                         let _ = tx.send(AsyncMsg::ActionDone(Err(anyhow::anyhow!(
