@@ -15,6 +15,8 @@ pub struct CacheData {
     pub mrs: Vec<TrackedMergeRequest>,
     pub labels: Vec<ProjectLabel>,
     pub work_item_statuses: HashMap<String, Vec<WorkItemStatus>>,
+    #[serde(default)]
+    pub label_usage: HashMap<String, u32>,
 }
 
 fn cache_path() -> Option<PathBuf> {
@@ -41,6 +43,7 @@ pub fn save(
     mrs: &[TrackedMergeRequest],
     labels: &[ProjectLabel],
     work_item_statuses: &HashMap<String, Vec<WorkItemStatus>>,
+    label_usage: &HashMap<String, u32>,
 ) {
     let Some(path) = cache_path() else { return };
     if let Some(parent) = path.parent() {
@@ -52,6 +55,7 @@ pub fn save(
         mrs: mrs.to_vec(),
         labels: labels.to_vec(),
         work_item_statuses: work_item_statuses.clone(),
+        label_usage: label_usage.clone(),
     };
     if let Ok(json) = serde_json::to_string(&data) {
         let _ = fs::write(&path, json);

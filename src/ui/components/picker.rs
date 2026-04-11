@@ -49,15 +49,6 @@ impl PickerState {
         self
     }
 
-    pub fn with_pre_selected(mut self, pre: &[String]) -> Self {
-        for (i, item) in self.items.iter().enumerate() {
-            if pre.iter().any(|p| p == item) {
-                self.selected[i] = true;
-            }
-        }
-        self
-    }
-
     pub fn handle_key(&mut self, key: &KeyEvent) -> PickerAction {
         // Use nav variants (no j/k) since typing is active in picker
         if keys::is_nav_up(key) {

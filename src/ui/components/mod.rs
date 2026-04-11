@@ -5,6 +5,7 @@ pub mod error_popup;
 pub mod filter_bar;
 pub mod help;
 pub mod input;
+pub mod label_editor;
 pub mod picker;
 pub mod status_bar;
 pub mod tab_bar;

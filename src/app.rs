@@ -16,7 +16,9 @@ use crate::gitlab::types::{
     User, WorkItemStatus,
 };
 use crate::keybindings::{self, InputMode, KeyAction};
-use crate::ui::components::{chord_popup, confirm_dialog, error_popup, help, input, picker};
+use crate::ui::components::{
+    chord_popup, confirm_dialog, error_popup, help, input, label_editor, picker,
+};
 use crate::ui::keys;
 use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
@@ -40,6 +42,7 @@ pub enum Overlay {
     Confirm(ConfirmAction),
     Picker(PickerContext),
     Chord(ChordContext),
+    LabelEditor,
     CommentInput,
     Error(String),
 }
@@ -67,7 +70,6 @@ pub enum ConfirmAction {
 
 #[derive(Debug)]
 pub enum PickerContext {
-    Labels,
     Assignee,
     Preset,
     SortPreset,
@@ -164,6 +166,10 @@ pub struct App {
     // Chord popup state (vim-style easymotion codes)
     pub chord_state: Option<chord_popup::ChordState>,
 
+    // Label editor state (chord + search dual-mode)
+    pub label_editor_state: Option<label_editor::LabelEditorState>,
+    pub label_usage: std::collections::HashMap<String, u32>,
+
     pub label_sort_orders: std::collections::HashMap<String, Vec<String>>,
 
     // Planning view
@@ -214,6 +220,8 @@ impl App {
             work_item_statuses: std::collections::HashMap::new(),
             focused: None,
             chord_state: None,
+            label_editor_state: None,
+            label_usage: std::collections::HashMap::new(),
             label_sort_orders,
             planning_state: planning::PlanningViewState::default(),
             iterations: Vec::new(),
@@ -231,6 +239,7 @@ impl App {
             self.mrs = cached.mrs;
             self.labels = cached.labels;
             self.work_item_statuses = cached.work_item_statuses;
+            self.label_usage = cached.label_usage;
             self.rebuild_label_color_map();
             self.refilter_issues();
             self.refilter_mrs();
@@ -311,6 +320,7 @@ impl App {
             &self.mrs,
             &self.labels,
             &self.work_item_statuses,
+            &self.label_usage,
         );
     }
 
@@ -1017,7 +1027,9 @@ impl App {
     fn input_mode(&self) -> InputMode {
         // Overlay takes highest priority
         match &self.overlay {
-            Overlay::CommentInput | Overlay::Picker(_) => return InputMode::TextInput,
+            Overlay::CommentInput | Overlay::Picker(_) | Overlay::LabelEditor => {
+                return InputMode::TextInput;
+            }
             Overlay::Chord(_) => return InputMode::Chord,
             Overlay::Help | Overlay::Confirm(_) | Overlay::Error(_) => {
                 return InputMode::Modal;
@@ -1063,9 +1075,10 @@ impl App {
     /// All chars go to the active text widget.
     fn handle_text_input(&mut self, key: KeyEvent) -> bool {
         match &self.overlay {
-            Overlay::CommentInput | Overlay::Picker(_) | Overlay::FilterEditor => {
-                self.handle_overlay_key(key)
-            }
+            Overlay::CommentInput
+            | Overlay::Picker(_)
+            | Overlay::FilterEditor
+            | Overlay::LabelEditor => self.handle_overlay_key(key),
             Overlay::None => {
                 // Inline fuzzy search
                 self.handle_fuzzy_text(key);
@@ -1677,10 +1690,16 @@ impl App {
                 .map(|i| i.issue.labels.clone()),
         };
         if let Some(current) = current {
-            self.picker_state = Some(
-                picker::PickerState::new("Labels", label_names, true).with_pre_selected(&current),
-            );
-            self.overlay = Overlay::Picker(PickerContext::Labels);
+            let issue_labels: Vec<Vec<String>> =
+                self.issues.iter().map(|i| i.issue.labels.clone()).collect();
+            self.label_editor_state = Some(label_editor::LabelEditorState::new(
+                label_names,
+                &current,
+                &self.label_usage,
+                &issue_labels,
+                20,
+            ));
+            self.overlay = Overlay::LabelEditor;
         }
     }
 
@@ -1915,6 +1934,22 @@ impl App {
                         chord_popup::ChordAction::Selected(value) => {
                             self.chord_state = None;
                             self.handle_chord_result(&value);
+                        }
+                    }
+                }
+            }
+            Overlay::LabelEditor => {
+                if let Some(ref mut les) = self.label_editor_state {
+                    match les.handle_key(&key) {
+                        label_editor::LabelEditorAction::Continue => {}
+                        label_editor::LabelEditorAction::Cancel => {
+                            self.label_editor_state = None;
+                            self.overlay = Overlay::None;
+                        }
+                        label_editor::LabelEditorAction::Confirmed(labels) => {
+                            self.handle_label_editor_result(&labels);
+                            self.label_editor_state = None;
+                            self.overlay = Overlay::None;
                         }
                     }
                 }
@@ -2163,9 +2198,6 @@ impl App {
         // Determine what we picked for based on overlay context
         let context = std::mem::replace(&mut self.overlay, Overlay::None);
         match context {
-            Overlay::Picker(PickerContext::Labels) => {
-                self.update_labels(values);
-            }
             Overlay::Picker(PickerContext::Assignee) => {
                 if let Some(username) = values.first() {
                     self.update_assignee(username);
@@ -2238,6 +2270,14 @@ impl App {
                 Some((idx, item.project_path.clone(), item.issue.iid, false))
             }
         }
+    }
+
+    fn handle_label_editor_result(&mut self, labels: &[String]) {
+        for label in labels {
+            *self.label_usage.entry(label.clone()).or_insert(0) += 1;
+        }
+        self.update_labels(labels);
+        self.save_cache();
     }
 
     fn update_labels(&mut self, labels: &[String]) {
@@ -2652,6 +2692,11 @@ impl App {
             Overlay::Chord(_) => {
                 if let Some(ref cs) = self.chord_state {
                     chord_popup::render(frame, area, cs);
+                }
+            }
+            Overlay::LabelEditor => {
+                if let Some(ref les) = self.label_editor_state {
+                    label_editor::render(frame, area, les, &self.label_color_map);
                 }
             }
             Overlay::Error(msg) => {

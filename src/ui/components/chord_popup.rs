@@ -11,7 +11,7 @@ use crate::ui::styles;
 const CHORD_KEYS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
 
 /// Dim color for inactive/non-matching chord items (against overlay bg #343b58).
-const CHORD_DIM: Color = Color::Rgb(80, 87, 120);
+pub const CHORD_DIM: Color = Color::Rgb(80, 87, 120);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum ChordKind {
@@ -131,7 +131,7 @@ fn generate_codes(count: usize, code_len: usize) -> Vec<String> {
 /// Names sharing a first letter get 2-char codes: shared letter + a
 /// distinguishing character derived from the name (second alpha char,
 /// falling back to later chars on conflict).
-fn generate_name_codes(labels: &[String]) -> Vec<String> {
+pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
     let n = labels.len();
     if n == 0 {
         return Vec::new();
@@ -292,7 +292,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
 /// Active + partial input: typed prefix muted, remaining chars bright.
 /// Active + no input: full code in accent color.
 /// Inactive: fully dimmed.
-fn render_code(
+pub fn render_code(
     spans: &mut Vec<Span<'static>>,
     code: &str,
     max_width: usize,
