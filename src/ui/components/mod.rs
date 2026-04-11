@@ -7,3 +7,4 @@ pub mod help;
 pub mod input;
 pub mod picker;
 pub mod status_bar;
+pub mod tab_bar;

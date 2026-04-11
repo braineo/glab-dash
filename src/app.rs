@@ -2499,10 +2499,14 @@ impl App {
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let chunks = Layout::vertical([
+            Constraint::Length(1), // Tab bar
             Constraint::Min(1),    // Main content
             Constraint::Length(1), // Status bar
         ])
         .split(area);
+
+        // Tab bar
+        crate::ui::components::tab_bar::render(frame, chunks[0], self.view);
 
         let ctx = crate::ui::RenderCtx {
             label_colors: &self.label_color_map,
@@ -2514,7 +2518,7 @@ impl App {
                 let current_iter = self.planning_state.current_iteration.as_ref();
                 dashboard::render(
                     frame,
-                    chunks[0],
+                    chunks[1],
                     &self.config,
                     self.active_team,
                     &self.issues,
@@ -2527,7 +2531,7 @@ impl App {
             View::IssueList => {
                 issue_list::render(
                     frame,
-                    chunks[0],
+                    chunks[1],
                     &mut self.issue_list_state,
                     &self.issues,
                     &ctx,
@@ -2535,21 +2539,21 @@ impl App {
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
-                    issue_detail::render(frame, chunks[0], &item, &self.issue_detail_state, &ctx);
+                    issue_detail::render(frame, chunks[1], &item, &self.issue_detail_state, &ctx);
                 }
             }
             View::MrList => {
-                mr_list::render(frame, chunks[0], &mut self.mr_list_state, &self.mrs, &ctx);
+                mr_list::render(frame, chunks[1], &mut self.mr_list_state, &self.mrs, &ctx);
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(frame, chunks[0], &item, &self.mr_detail_state, &ctx);
+                    mr_detail::render(frame, chunks[1], &item, &self.mr_detail_state, &ctx);
                 }
             }
             View::Planning => {
                 planning::render(
                     frame,
-                    chunks[0],
+                    chunks[1],
                     &mut self.planning_state,
                     &self.issues,
                     &self.config,
@@ -2583,8 +2587,10 @@ impl App {
                 .sum(),
             _ => self.issues.len() + self.mrs.len(),
         };
+        // Skip Global and Navigation groups — tabs handle those
         let binding_hints: Vec<(&str, &str)> = keybindings::binding_groups_for_view(self.view)
             .iter()
+            .filter(|g| g.title != "Global" && g.title != "Navigation")
             .flat_map(|g| g.bindings.iter())
             .filter(|b| b.visible_in_help())
             .take(8)
@@ -2593,7 +2599,7 @@ impl App {
         let hints = binding_hints.as_slice();
         crate::ui::components::status_bar::render(
             frame,
-            chunks[1],
+            chunks[2],
             &crate::ui::components::status_bar::StatusBarProps {
                 view_name,
                 team_name,
