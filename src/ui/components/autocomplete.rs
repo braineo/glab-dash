@@ -9,8 +9,6 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
 use crate::ui::styles;
 
-use super::input::InputState;
-
 const MAX_VISIBLE: usize = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,13 +39,14 @@ pub struct AutocompleteState {
 impl AutocompleteState {
     pub fn update(
         &mut self,
-        input: &InputState,
+        text: &str,
+        cursor_byte_pos: usize,
         members: &[String],
         issues: &[TrackedIssue],
         mrs: &[TrackedMergeRequest],
     ) {
         // Scan backwards from cursor to find a trigger character
-        let before = &input.value[..input.cursor];
+        let before = &text[..cursor_byte_pos];
         let mut found_trigger = None;
 
         for (i, ch) in before.char_indices().rev() {
@@ -72,7 +71,7 @@ impl AutocompleteState {
             _ => unreachable!(),
         };
 
-        let query = &input.value[pos + trigger_char.len_utf8()..input.cursor];
+        let query = &text[pos + trigger_char.len_utf8()..cursor_byte_pos];
 
         // Rebuild items if kind or trigger position changed
         if self.kind.as_ref() != Some(&kind) || self.trigger_pos != pos {

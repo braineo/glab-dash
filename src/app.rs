@@ -16,7 +16,7 @@ use crate::gitlab::types::{
     User, WorkItemStatus,
 };
 use crate::keybindings::{self, InputMode, KeyAction};
-use crate::ui::components::{chord_popup, confirm_dialog, error_popup, help, picker};
+use crate::ui::components::{chord_popup, confirm_dialog, error_popup, help, input, picker};
 use crate::ui::keys;
 use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
@@ -147,7 +147,7 @@ pub struct App {
     pub mr_detail_state: mr_detail::MrDetailState,
     pub filter_editor_state: filter_editor::FilterEditorState,
     pub picker_state: Option<picker::PickerState>,
-    pub comment_input: crate::ui::components::input::InputState,
+    pub comment_input: crate::ui::components::input::CommentInput,
     pub autocomplete: crate::ui::components::autocomplete::AutocompleteState,
     /// When set, the next comment submission replies to this discussion thread.
     pub reply_discussion_id: Option<String>,
@@ -207,7 +207,7 @@ impl App {
             mr_detail_state: mr_detail::MrDetailState::default(),
             filter_editor_state: filter_editor::FilterEditorState::default(),
             picker_state: None,
-            comment_input: crate::ui::components::input::InputState::default(),
+            comment_input: crate::ui::components::input::CommentInput::default(),
             autocomplete: crate::ui::components::autocomplete::AutocompleteState::default(),
             reply_discussion_id: None,
             last_fetched_at: None,
@@ -1704,7 +1704,7 @@ impl App {
 
     fn action_open_comment(&mut self) {
         if self.focused.is_some() {
-            self.comment_input = crate::ui::components::input::InputState::default();
+            self.comment_input = crate::ui::components::input::CommentInput::default();
             self.reply_discussion_id = None;
             self.overlay = Overlay::CommentInput;
         }
@@ -1939,30 +1939,26 @@ impl App {
                         return false;
                     }
                 }
-                match key.code {
-                    KeyCode::Esc => {
+                match self.comment_input.handle_key(&key) {
+                    input::InputAction::Cancel => {
                         self.autocomplete.dismiss();
                         self.overlay = Overlay::None;
                     }
-                    _ => {
-                        if self.comment_input.handle_key(&key) {
-                            // handle_key returns true on Ctrl+S = submit
-                            let body = self.comment_input.value.trim().to_string();
-                            if !body.is_empty() {
-                                self.submit_comment(&body);
-                            }
-                            self.autocomplete.dismiss();
-                            self.overlay = Overlay::None;
-                        } else {
-                            // Update autocomplete after each keystroke
-                            let members = self.config.all_members();
-                            self.autocomplete.update(
-                                &self.comment_input,
-                                &members,
-                                &self.issues,
-                                &self.mrs,
-                            );
+                    input::InputAction::Submit => {
+                        let body = self.comment_input.text();
+                        let body = body.trim().to_string();
+                        if !body.is_empty() {
+                            self.submit_comment(&body);
                         }
+                        self.autocomplete.dismiss();
+                        self.overlay = Overlay::None;
+                    }
+                    input::InputAction::Continue => {
+                        let text = self.comment_input.text();
+                        let cursor = self.comment_input.cursor_byte_pos();
+                        let members = self.config.all_members();
+                        self.autocomplete
+                            .update(&text, cursor, &members, &self.issues, &self.mrs);
                     }
                 }
             }
@@ -2203,7 +2199,7 @@ impl App {
                     && let Some(info) = infos.get(idx)
                 {
                     self.reply_discussion_id = Some(info.discussion_id.clone());
-                    self.comment_input = crate::ui::components::input::InputState::default();
+                    self.comment_input = crate::ui::components::input::CommentInput::default();
                     self.overlay = Overlay::CommentInput;
                 }
             }
@@ -2362,18 +2358,18 @@ impl App {
         let trigger_pos = self.autocomplete.trigger_pos;
         let trigger_len =
             crate::ui::components::autocomplete::AutocompleteState::trigger_char_len();
-        let cursor = self.comment_input.cursor;
+        let text = self.comment_input.text();
+        let cursor = self.comment_input.cursor_byte_pos();
 
-        let mut new_value =
-            String::with_capacity(self.comment_input.value.len() + item.insert.len());
-        new_value.push_str(&self.comment_input.value[..trigger_pos + trigger_len]);
+        let mut new_value = String::with_capacity(text.len() + item.insert.len());
+        new_value.push_str(&text[..trigger_pos + trigger_len]);
         new_value.push_str(&item.insert);
         new_value.push(' ');
-        new_value.push_str(&self.comment_input.value[cursor..]);
+        new_value.push_str(&text[cursor..]);
 
         let new_cursor = trigger_pos + trigger_len + item.insert.len() + 1;
-        self.comment_input.value = new_value;
-        self.comment_input.cursor = new_cursor;
+        self.comment_input
+            .set_text_and_cursor(&new_value, new_cursor);
         self.autocomplete.dismiss();
     }
 
@@ -2646,11 +2642,11 @@ impl App {
                 let popup = centered_rect(60, 40, area);
                 ratatui::widgets::Clear.render(popup, frame.buffer_mut());
                 let title = if self.reply_discussion_id.is_some() {
-                    "Reply (Ctrl+S to submit, Esc to cancel)"
+                    "Reply (Enter submit, C-j newline)"
                 } else {
-                    "Comment (Ctrl+S to submit, Esc to cancel)"
+                    "Comment (Enter submit, C-j newline)"
                 };
-                crate::ui::components::input::render(frame, popup, &self.comment_input, title);
+                crate::ui::components::input::render(frame, popup, &mut self.comment_input, title);
                 crate::ui::components::autocomplete::render(frame, popup, &self.autocomplete);
             }
             Overlay::Chord(_) => {
