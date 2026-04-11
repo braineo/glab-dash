@@ -5,7 +5,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table};
 
-use crate::config::Config;
+use crate::config::{Config, KanbanColumnConfig};
 use crate::gitlab::types::{Iteration, TrackedIssue, TrackedMergeRequest, WorkItemStatus};
 use crate::sort;
 use crate::ui::styles;
@@ -18,9 +18,12 @@ use std::collections::HashMap;
 pub struct StatusColumn {
     pub list: ItemList<TrackedIssue>,
     pub status_name: String,
-    #[allow(dead_code)] // will be used for column styling/grouping
-    pub status_category: Option<String>,
+    /// Status names that map to this column (lowercase for matching).
+    pub status_matches: Vec<String>,
 }
+
+/// Max visible columns in the sliding window.
+const DEFAULT_VISIBLE_COLUMNS: usize = 3;
 
 #[derive(Default)]
 pub struct IterationBoardState {
@@ -44,13 +47,26 @@ pub enum DashboardAction {
 }
 
 impl IterationBoardState {
-    /// Build columns from available work item statuses.
-    /// Adds a "No Status" column at the front, then one column per status ordered by position.
-    pub fn build_columns(&mut self, statuses: &[WorkItemStatus]) {
+    /// Build columns from config `kanban_columns` if present, otherwise one column per status.
+    pub fn build_columns(
+        &mut self,
+        statuses: &[WorkItemStatus],
+        kanban_config: &[KanbanColumnConfig],
+    ) {
+        let cols = if kanban_config.is_empty() {
+            Self::build_columns_auto(statuses)
+        } else {
+            Self::build_columns_from_config(kanban_config)
+        };
+        self.columns = cols;
+        self.focused_column = 0;
+    }
+
+    fn build_columns_auto(statuses: &[WorkItemStatus]) -> Vec<StatusColumn> {
         let mut cols = vec![StatusColumn {
             list: ItemList::default(),
             status_name: "No Status".to_string(),
-            status_category: None,
+            status_matches: vec![String::new()],
         }];
 
         let mut sorted_statuses: Vec<&WorkItemStatus> = statuses.iter().collect();
@@ -60,12 +76,34 @@ impl IterationBoardState {
             cols.push(StatusColumn {
                 list: ItemList::default(),
                 status_name: status.name.clone(),
-                status_category: status.category.clone(),
+                status_matches: vec![status.name.to_lowercase()],
             });
         }
+        cols
+    }
 
-        self.columns = cols;
-        self.focused_column = 0;
+    fn build_columns_from_config(kanban_config: &[KanbanColumnConfig]) -> Vec<StatusColumn> {
+        kanban_config
+            .iter()
+            .map(|kc| StatusColumn {
+                list: ItemList::default(),
+                status_name: kc.name.clone(),
+                status_matches: kc.statuses.iter().map(|s| s.to_lowercase()).collect(),
+            })
+            .collect()
+    }
+
+    /// Compute the window start so `focused_column` is visible in the window.
+    fn window_start(&self, visible: usize) -> usize {
+        let total = self.columns.len();
+        if total <= visible {
+            return 0;
+        }
+        // Keep focused column within the visible window
+        // Try to center the focused column when possible
+        let half = visible / 2;
+        let start = self.focused_column.saturating_sub(half);
+        start.min(total - visible)
     }
 
     /// Partition current-iteration issues into status columns, apply shared fuzzy/sort.
@@ -88,13 +126,18 @@ impl IterationBoardState {
                 continue;
             }
 
-            // Match to status column
-            let status_name = item.issue.custom_status.as_deref().unwrap_or("");
+            // Match to status column by checking status_matches
+            let status_lower = item
+                .issue
+                .custom_status
+                .as_deref()
+                .unwrap_or("")
+                .to_lowercase();
             let col_idx = self
                 .columns
                 .iter()
-                .position(|c| c.status_name.eq_ignore_ascii_case(status_name))
-                .unwrap_or(0); // fallback to "No Status"
+                .position(|c| c.status_matches.iter().any(|m| m == &status_lower))
+                .unwrap_or(0); // fallback to first column
 
             self.columns[col_idx].list.indices.push(i);
         }
@@ -338,22 +381,34 @@ fn render_iteration_board(
     let inner = outer_block.inner(area);
     frame.render_widget(outer_block, area);
 
-    if inner.height < 2 || board.columns.is_empty() {
+    if inner.height < 3 || board.columns.is_empty() {
         return;
     }
 
-    // Equal-width columns
-    let constraints: Vec<Constraint> = board
-        .columns
-        .iter()
-        .map(|_| Constraint::Ratio(1, u32::try_from(board.columns.len()).unwrap_or(1)))
-        .collect();
-    let col_rects = Layout::horizontal(constraints).split(inner);
+    // Reserve 1 line at bottom for column indicator
+    let board_parts =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
+    let board_area = board_parts[0];
+    let indicator_area = board_parts[1];
 
-    for (i, col_rect) in col_rects.iter().enumerate() {
-        let is_focused = i == board.focused_column;
-        render_board_column(frame, *col_rect, board, i, issues, is_focused);
+    // Sliding window: show up to DEFAULT_VISIBLE_COLUMNS columns
+    let visible = DEFAULT_VISIBLE_COLUMNS.min(board.columns.len());
+    let win_start = board.window_start(visible);
+    let win_end = (win_start + visible).min(board.columns.len());
+
+    let constraints: Vec<Constraint> = (win_start..win_end)
+        .map(|_| Constraint::Ratio(1, u32::try_from(win_end - win_start).unwrap_or(1)))
+        .collect();
+    let col_rects = Layout::horizontal(constraints).split(board_area);
+
+    for (slot, col_rect) in col_rects.iter().enumerate() {
+        let col_idx = win_start + slot;
+        let is_focused = col_idx == board.focused_column;
+        render_board_column(frame, *col_rect, board, col_idx, issues, is_focused);
     }
+
+    // Bottom indicator: show all columns with counts
+    render_column_indicator(frame, indicator_area, board, win_start, win_end);
 }
 
 fn render_board_column(
@@ -366,22 +421,41 @@ fn render_board_column(
 ) {
     let col = &board.columns[col_idx];
     let count = col.list.len();
-    let header = format!("{} ({})", col.status_name, count);
+    let header_text = format!("{} ({})", col.status_name, count);
 
-    let header_style = if is_focused {
+    let border_style = if is_focused {
         Style::default()
-            .fg(styles::TEXT_BRIGHT)
+            .fg(styles::BLUE)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(styles::TEXT_DIM)
     };
 
-    // Column header (1 line)
-    let header_line = Line::from(Span::styled(header, header_style));
-    let header_widget = Paragraph::new(header_line);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(if is_focused {
+            BorderType::Thick
+        } else {
+            BorderType::Rounded
+        })
+        .border_style(border_style)
+        .title(Span::styled(
+            header_text,
+            if is_focused {
+                Style::default()
+                    .fg(styles::TEXT_BRIGHT)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(styles::TEXT)
+            },
+        ));
 
-    let parts = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
-    frame.render_widget(header_widget, parts[0]);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height < 1 {
+        return;
+    }
 
     // Issue rows
     let rows: Vec<Row> = col
@@ -418,9 +492,64 @@ fn render_board_column(
 
     frame.render_stateful_widget(
         table,
-        parts[1],
+        inner,
         &mut board.columns[col_idx].list.table_state,
     );
+}
+
+fn render_column_indicator(
+    frame: &mut Frame,
+    area: Rect,
+    board: &IterationBoardState,
+    win_start: usize,
+    win_end: usize,
+) {
+    let mut spans: Vec<Span> = Vec::new();
+
+    // Left arrow if scrolled
+    if win_start > 0 {
+        spans.push(Span::styled(
+            "\u{25c0} ",
+            Style::default().fg(styles::TEXT_DIM),
+        ));
+    } else {
+        spans.push(Span::raw("  "));
+    }
+
+    for (i, col) in board.columns.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(
+                " \u{2502} ",
+                Style::default().fg(styles::BORDER),
+            ));
+        }
+
+        let label = format!("{} {}", col.status_name, col.list.len());
+        let in_window = i >= win_start && i < win_end;
+        let is_focused = i == board.focused_column;
+
+        let style = if is_focused {
+            Style::default()
+                .fg(styles::CYAN)
+                .add_modifier(Modifier::BOLD)
+        } else if in_window {
+            Style::default().fg(styles::TEXT_BRIGHT)
+        } else {
+            Style::default().fg(styles::TEXT_DIM)
+        };
+
+        spans.push(Span::styled(label, style));
+    }
+
+    // Right arrow if more columns
+    if win_end < board.columns.len() {
+        spans.push(Span::styled(
+            " \u{25b6}",
+            Style::default().fg(styles::TEXT_DIM),
+        ));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 // ── Existing summary renderers ──

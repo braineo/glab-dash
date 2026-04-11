@@ -850,7 +850,8 @@ impl App {
             }
         }
         if !all_statuses.is_empty() {
-            self.iteration_board_state.build_columns(&all_statuses);
+            self.iteration_board_state
+                .build_columns(&all_statuses, &self.config.kanban_columns);
         }
     }
 

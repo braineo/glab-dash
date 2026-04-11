@@ -18,6 +18,8 @@ pub struct Config {
     pub sort_presets: Vec<SortPreset>,
     #[serde(default)]
     pub label_sort_orders: Vec<LabelSortOrderConfig>,
+    #[serde(default)]
+    pub kanban_columns: Vec<KanbanColumnConfig>,
 }
 
 fn default_refresh() -> u64 {
@@ -69,6 +71,12 @@ fn default_desc() -> String {
 pub struct LabelSortOrderConfig {
     pub scope: String,
     pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KanbanColumnConfig {
+    pub name: String,
+    pub statuses: Vec<String>,
 }
 
 impl Config {

@@ -49,6 +49,7 @@ pub async fn run_onboarding() -> Result<Config> {
         filters: Vec::new(),
         sort_presets: Vec::new(),
         label_sort_orders: Vec::new(),
+        kanban_columns: Vec::new(),
     };
     let client = GitLabClient::new(&test_config).context("Failed to create client")?;
 
@@ -143,6 +144,7 @@ pub async fn run_onboarding() -> Result<Config> {
         filters: default_filter_presets(),
         sort_presets: Vec::new(),
         label_sort_orders: Vec::new(),
+        kanban_columns: Vec::new(),
     };
 
     // Step 8: Write config file

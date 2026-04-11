@@ -30,6 +30,7 @@ fn test_generate_toml_roundtrip() {
         }],
         sort_presets: Vec::new(),
         label_sort_orders: Vec::new(),
+        kanban_columns: Vec::new(),
     };
 
     let toml_str = generate_toml(&config);
@@ -62,6 +63,7 @@ fn test_generate_toml_contains_all_fields() {
         filters: vec![],
         sort_presets: Vec::new(),
         label_sort_orders: Vec::new(),
+        kanban_columns: Vec::new(),
     };
 
     let toml_str = generate_toml(&config);
