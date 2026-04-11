@@ -93,7 +93,11 @@ pub enum KeyMatcher {
 impl KeyMatcher {
     pub fn matches(self, key: &KeyEvent) -> bool {
         match self {
-            Self::Char(c) => key.code == KeyCode::Char(c) && key.modifiers == KeyModifiers::NONE,
+            Self::Char(c) => {
+                key.code == KeyCode::Char(c)
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+            }
             Self::Ctrl(c) => {
                 key.code == KeyCode::Char(c) && key.modifiers.contains(KeyModifiers::CONTROL)
             }
