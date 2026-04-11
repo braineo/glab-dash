@@ -11,7 +11,7 @@ pub enum Event {
 
 pub struct EventHandler {
     rx: mpsc::UnboundedReceiver<Event>,
-    _tx: mpsc::UnboundedSender<Event>,
+    _tx: mpsc::UnboundedSender<Event>, // kept alive to prevent channel close
 }
 
 impl EventHandler {
@@ -38,6 +38,7 @@ impl EventHandler {
             }
         });
 
+        #[allow(clippy::used_underscore_binding)]
         Self { rx, _tx }
     }
 

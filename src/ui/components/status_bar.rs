@@ -17,19 +17,19 @@ fn format_age(secs: u64) -> String {
     }
 }
 
-pub fn render(
-    frame: &mut Frame,
-    area: Rect,
-    view_name: &str,
-    team_name: &str,
-    item_count: usize,
-    loading: bool,
-    loading_msg: &str,
-    error: Option<&str>,
-    last_fetched_at: Option<u64>,
-    hints: &[(&str, &str)],
-) {
-    let view_icon = match view_name {
+pub struct StatusBarProps<'a> {
+    pub view_name: &'a str,
+    pub team_name: &'a str,
+    pub item_count: usize,
+    pub loading: bool,
+    pub loading_msg: &'a str,
+    pub error: Option<&'a str>,
+    pub last_fetched_at: Option<u64>,
+    pub hints: &'a [(&'a str, &'a str)],
+}
+
+pub fn render(frame: &mut Frame, area: Rect, props: &StatusBarProps) {
+    let view_icon = match props.view_name {
         "Dashboard" => "◈",
         "Issues" => "●",
         "Merge Requests" => "⑂",
@@ -38,31 +38,31 @@ pub fn render(
 
     let mut spans = vec![
         Span::styled(
-            format!(" {view_icon} {view_name} "),
+            format!(" {view_icon} {} ", props.view_name),
             styles::title_style().bg(styles::HIGHLIGHT),
         ),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
-        Span::styled(team_name.to_string(), styles::source_tracking_style()),
+        Span::styled(props.team_name.to_string(), styles::source_tracking_style()),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
     ];
 
-    if loading {
-        let msg = if loading_msg.is_empty() {
+    if props.loading {
+        let msg = if props.loading_msg.is_empty() {
             "Loading..."
         } else {
-            loading_msg
+            props.loading_msg
         };
         spans.push(Span::styled(format!("⟳ {msg}"), styles::draft_style()));
-    } else if let Some(err) = error {
+    } else if let Some(err) = props.error {
         spans.push(Span::styled(format!("✗ {err}"), styles::error_style()));
     } else {
         spans.push(Span::styled(
-            format!("{item_count} items"),
+            format!("{} items", props.item_count),
             ratatui::style::Style::default().fg(styles::TEXT),
         ));
     }
 
-    if let Some(ts) = last_fetched_at {
+    if let Some(ts) = props.last_fetched_at {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -76,13 +76,13 @@ pub fn render(
 
     // Right-aligned hints (dynamic per view)
     let mut hints_spans = Vec::new();
-    for (key, desc) in hints {
+    for (key, desc) in props.hints {
         hints_spans.push(Span::styled(*key, styles::help_key_style()));
         hints_spans.push(Span::styled(format!(":{desc} "), styles::help_desc_style()));
     }
     let hints_width: usize = hints_spans.iter().map(Span::width).sum();
     let left_width: usize = spans.iter().map(Span::width).sum();
-    let padding = (area.width as usize).saturating_sub(left_width + hints_width);
+    let padding = usize::from(area.width).saturating_sub(left_width + hints_width);
     spans.push(Span::raw(" ".repeat(padding)));
     spans.extend(hints_spans);
 

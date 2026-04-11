@@ -136,6 +136,11 @@ fn hue_to_rgb(p: f64, q: f64, t: f64) -> f64 {
     p
 }
 
+#[allow(
+    clippy::many_single_char_names,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
     if s == 0.0 {
         let v = (l * 255.0) as u8;
@@ -154,6 +159,7 @@ fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
     ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
 
+#[allow(clippy::many_single_char_names)]
 fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
     let r = f64::from(r) / 255.0;
     let g = f64::from(g) / 255.0;
@@ -193,6 +199,7 @@ fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
 }
 
 /// Derive a (fg, bg) chip pair from a server-provided hex label color.
+#[allow(clippy::many_single_char_names)]
 fn color_pair_from_hex(hex: &str) -> Option<(Color, Color)> {
     let (r, g, b) = parse_hex_color(hex)?;
     let (h, s, _) = rgb_to_hsl(r, g, b);

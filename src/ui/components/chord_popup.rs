@@ -115,12 +115,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
         .max()
         .unwrap_or(6);
     let item_width = state.code_len + 1 + max_label_len + 2; // "aa label  "
-    let usable_width = (area.width as usize).saturating_sub(6); // borders + padding
+    let usable_width = usize::from(area.width).saturating_sub(6); // borders + padding
     let cols = (usable_width / item_width).clamp(1, 4);
     let rows = state.options.len().div_ceil(cols);
 
-    let popup_width = ((item_width * cols + 4) as u16).min(area.width.saturating_sub(2));
-    let popup_height = ((rows + 3) as u16).min(area.height.saturating_sub(2)); // items + border + hint
+    let popup_width = u16::try_from(item_width * cols + 4)
+        .unwrap_or(u16::MAX)
+        .min(area.width.saturating_sub(2));
+    let popup_height = u16::try_from(rows + 3)
+        .unwrap_or(u16::MAX)
+        .min(area.height.saturating_sub(2));
 
     let popup = centered_rect(popup_width, popup_height, area);
     frame.render_widget(Clear, popup);

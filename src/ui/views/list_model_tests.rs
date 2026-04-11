@@ -33,8 +33,10 @@ fn test_item_list_default_is_empty() {
 #[test]
 fn test_item_list_selected_item() {
     let items = vec![10, 20, 30];
-    let mut list: ItemList<i32> = ItemList::default();
-    list.indices = vec![2, 0]; // points to items[2]=30, items[0]=10
+    let mut list: ItemList<i32> = ItemList {
+        indices: vec![2, 0], // points to items[2]=30, items[0]=10
+        ..Default::default()
+    };
     list.table_state.select(Some(0));
 
     assert_eq!(list.selected_item(&items), Some(&30));
@@ -44,8 +46,10 @@ fn test_item_list_selected_item() {
 
 #[test]
 fn test_item_list_selected_index_out_of_bounds() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![5];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![5],
+        ..Default::default()
+    };
     list.table_state.select(Some(3)); // beyond indices len
     assert_eq!(list.selected_index(), None);
 }
@@ -60,16 +64,20 @@ fn test_clamp_selection_empty() {
 
 #[test]
 fn test_clamp_selection_none_to_first() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![0, 1, 2];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![0, 1, 2],
+        ..Default::default()
+    };
     list.clamp_selection();
     assert_eq!(list.table_state.selected(), Some(0));
 }
 
 #[test]
 fn test_clamp_selection_past_end() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![0, 1];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![0, 1],
+        ..Default::default()
+    };
     list.table_state.select(Some(5));
     list.clamp_selection();
     assert_eq!(list.table_state.selected(), Some(1));
@@ -77,8 +85,10 @@ fn test_clamp_selection_past_end() {
 
 #[test]
 fn test_clamp_selection_valid_unchanged() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![0, 1, 2];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![0, 1, 2],
+        ..Default::default()
+    };
     list.table_state.select(Some(1));
     list.clamp_selection();
     assert_eq!(list.table_state.selected(), Some(1));
@@ -92,8 +102,10 @@ fn test_handle_nav_empty_returns_none() {
 
 #[test]
 fn test_handle_nav_down() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![0, 1, 2];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![0, 1, 2],
+        ..Default::default()
+    };
     list.table_state.select(Some(0));
 
     assert_eq!(
@@ -105,8 +117,10 @@ fn test_handle_nav_down() {
 
 #[test]
 fn test_handle_nav_up() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![0, 1, 2];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![0, 1, 2],
+        ..Default::default()
+    };
     list.table_state.select(Some(2));
 
     assert_eq!(
@@ -118,8 +132,10 @@ fn test_handle_nav_up() {
 
 #[test]
 fn test_handle_nav_top_bottom() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![0, 1, 2, 3, 4];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![0, 1, 2, 3, 4],
+        ..Default::default()
+    };
     list.table_state.select(Some(2));
 
     assert_eq!(
@@ -137,8 +153,10 @@ fn test_handle_nav_top_bottom() {
 
 #[test]
 fn test_handle_nav_page_down_up() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = (0..50).collect();
+    let mut list: ItemList<u32> = ItemList {
+        indices: (0..50).collect(),
+        ..Default::default()
+    };
     list.table_state.select(Some(10));
 
     assert_eq!(
@@ -156,20 +174,21 @@ fn test_handle_nav_page_down_up() {
 
 #[test]
 fn test_handle_nav_enter() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![0];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![0],
+        ..Default::default()
+    };
     list.table_state.select(Some(0));
 
-    assert_eq!(
-        list.handle_nav(&key(KeyCode::Enter)),
-        NavResult::OpenDetail
-    );
+    assert_eq!(list.handle_nav(&key(KeyCode::Enter)), NavResult::OpenDetail);
 }
 
 #[test]
 fn test_handle_nav_unrecognized() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![0];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![0],
+        ..Default::default()
+    };
     list.table_state.select(Some(0));
 
     assert_eq!(list.handle_nav(&key(KeyCode::Char('z'))), NavResult::None);
@@ -177,8 +196,10 @@ fn test_handle_nav_unrecognized() {
 
 #[test]
 fn test_handle_nav_clamps_at_boundaries() {
-    let mut list: ItemList<u32> = ItemList::default();
-    list.indices = vec![0, 1, 2];
+    let mut list: ItemList<u32> = ItemList {
+        indices: vec![0, 1, 2],
+        ..Default::default()
+    };
     list.table_state.select(Some(0));
 
     // Up at top stays at 0
@@ -210,8 +231,10 @@ fn test_fuzzy_matches_empty_query() {
 
 #[test]
 fn test_fuzzy_matches_single_word() {
-    let mut f = UserFilter::default();
-    f.fuzzy_query = "bug".to_string();
+    let f = UserFilter {
+        fuzzy_query: "bug".to_string(),
+        ..Default::default()
+    };
 
     assert!(f.fuzzy_matches("fix bug in parser"));
     assert!(!f.fuzzy_matches("fix issue in parser"));
@@ -219,8 +242,10 @@ fn test_fuzzy_matches_single_word() {
 
 #[test]
 fn test_fuzzy_matches_multiple_words() {
-    let mut f = UserFilter::default();
-    f.fuzzy_query = "bug parser".to_string();
+    let f = UserFilter {
+        fuzzy_query: "bug parser".to_string(),
+        ..Default::default()
+    };
 
     assert!(f.fuzzy_matches("fix bug in parser"));
     assert!(f.fuzzy_matches("parser has a bug"));
@@ -229,8 +254,10 @@ fn test_fuzzy_matches_multiple_words() {
 
 #[test]
 fn test_fuzzy_matches_case_insensitive() {
-    let mut f = UserFilter::default();
-    f.fuzzy_query = "BUG".to_string();
+    let f = UserFilter {
+        fuzzy_query: "BUG".to_string(),
+        ..Default::default()
+    };
 
     assert!(f.fuzzy_matches("Fix Bug in Parser"));
 }
@@ -260,10 +287,7 @@ fn test_handle_fuzzy_input_backspace() {
     f.start_search();
     f.fuzzy_query = "abc".to_string();
 
-    assert_eq!(
-        f.handle_fuzzy_input(&key(KeyCode::Backspace)),
-        Some(true)
-    );
+    assert_eq!(f.handle_fuzzy_input(&key(KeyCode::Backspace)), Some(true));
     assert_eq!(f.fuzzy_query, "ab");
 }
 

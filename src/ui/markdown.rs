@@ -45,6 +45,7 @@ fn options() -> Options<'static> {
 }
 
 #[derive(Default, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 struct InlineCtx {
     bold: bool,
     italic: bool,

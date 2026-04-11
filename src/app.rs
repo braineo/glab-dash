@@ -311,7 +311,7 @@ impl App {
     /// Convert a unix timestamp to ISO 8601 for the GitLab API, with 60s safety buffer.
     fn updated_after_param(ts: u64) -> String {
         let buffered = ts.saturating_sub(60);
-        chrono::DateTime::from_timestamp(buffered as i64, 0)
+        chrono::DateTime::from_timestamp(i64::try_from(buffered).unwrap_or(i64::MAX), 0)
             .unwrap_or_default()
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string()
@@ -1094,17 +1094,17 @@ impl App {
         false
     }
 
-    fn handle_chord_result(&mut self, value: String) {
+    fn handle_chord_result(&mut self, value: &str) {
         let context = std::mem::replace(&mut self.overlay, Overlay::None);
         match context {
             Overlay::Chord(ChordContext::Status(project, issue_id, iid)) => {
-                self.set_issue_status(&project, issue_id, iid, &value);
+                self.set_issue_status(&project, issue_id, iid, value);
             }
             Overlay::Chord(ChordContext::Assignee) => {
-                self.update_assignee(&value);
+                self.update_assignee(value);
             }
             Overlay::Chord(ChordContext::Iteration(issue_idx)) => {
-                self.apply_iteration_move(issue_idx, &value);
+                self.apply_iteration_move(issue_idx, value);
             }
             _ => {}
         }
@@ -1655,7 +1655,7 @@ impl App {
                             self.overlay = Overlay::None;
                         }
                         picker::PickerAction::Picked(values) => {
-                            self.handle_picker_result(values);
+                            self.handle_picker_result(&values);
                             // ReplyThread transitions to CommentInput; don't overwrite
                             if !matches!(self.overlay, Overlay::CommentInput) {
                                 self.overlay = Overlay::None;
@@ -1676,7 +1676,7 @@ impl App {
                         }
                         chord_popup::ChordAction::Selected(value) => {
                             self.chord_state = None;
-                            self.handle_chord_result(value);
+                            self.handle_chord_result(&value);
                         }
                     }
                 }
@@ -1932,7 +1932,7 @@ impl App {
         });
     }
 
-    fn handle_picker_result(&mut self, values: Vec<String>) {
+    fn handle_picker_result(&mut self, values: &[String]) {
         // Determine what we picked for based on overlay context
         let context = std::mem::replace(&mut self.overlay, Overlay::None);
         match context {
@@ -2004,16 +2004,16 @@ impl App {
         }
     }
 
-    fn update_labels(&mut self, labels: Vec<String>) {
+    fn update_labels(&mut self, labels: &[String]) {
         let Some((idx, project, iid, is_mr)) = self.selected_item_idx() else {
             return;
         };
 
         // Optimistic update
         if is_mr {
-            self.mrs[idx].mr.labels.clone_from(&labels);
+            self.mrs[idx].mr.labels = labels.to_vec();
         } else {
-            self.issues[idx].issue.labels.clone_from(&labels);
+            self.issues[idx].issue.labels = labels.to_vec();
         }
 
         let payload = serde_json::json!({"labels": labels.join(",")});
@@ -2354,14 +2354,16 @@ impl App {
         crate::ui::components::status_bar::render(
             frame,
             chunks[1],
-            view_name,
-            team_name,
-            item_count,
-            self.loading,
-            self.loading_msg,
-            self.error.as_deref(),
-            self.last_fetched_at,
-            hints,
+            &crate::ui::components::status_bar::StatusBarProps {
+                view_name,
+                team_name,
+                item_count,
+                loading: self.loading,
+                loading_msg: self.loading_msg,
+                error: self.error.as_deref(),
+                last_fetched_at: self.last_fetched_at,
+                hints,
+            },
         );
 
         // Render overlay on top

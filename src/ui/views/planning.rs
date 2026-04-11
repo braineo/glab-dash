@@ -313,7 +313,7 @@ pub fn render(
     // Split into equal-width columns
     let constraints: Vec<Constraint> = visible
         .iter()
-        .map(|_| Constraint::Ratio(1, visible.len() as u32))
+        .map(|_| Constraint::Ratio(1, u32::try_from(visible.len()).unwrap_or(u32::MAX)))
         .collect();
     let col_rects = Layout::horizontal(constraints).split(area);
 
@@ -427,11 +427,13 @@ fn render_column(
     }
 
     // Layout: filter bar (1 line) + table + member stats footer
-    let stats = member_stats(&col.list.indices, issues, team_members);
-    let stats_height = if stats.is_empty() {
+    let workload = member_stats(&col.list.indices, issues, team_members);
+    let stats_height = if workload.is_empty() {
         0
     } else {
-        (stats.len() as u16).min(inner.height.saturating_sub(2))
+        u16::try_from(workload.len())
+            .unwrap_or(u16::MAX)
+            .min(inner.height.saturating_sub(2))
     };
 
     let has_filter_bar = !col.filter.conditions.is_empty() || !col.filter.sort_specs.is_empty();
@@ -517,7 +519,7 @@ fn render_column(
 
     // Member stats footer
     if stats_height > 0 {
-        let stat_lines: Vec<Line> = stats
+        let stat_lines: Vec<Line> = workload
             .iter()
             .map(|(name, count, weight)| {
                 Line::from(vec![

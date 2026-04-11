@@ -166,7 +166,7 @@ pub fn render(frame: &mut Frame, input_area: Rect, state: &AutocompleteState) {
     }
 
     let count = state.filtered.len().min(MAX_VISIBLE);
-    let height = count as u16 + 2; // borders
+    let height = u16::try_from(count + 2).unwrap_or(u16::MAX); // borders
 
     let prefix = match &state.kind {
         Some(CompletionKind::User) => "@",

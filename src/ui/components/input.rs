@@ -168,9 +168,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &InputState, title: &str) {
     };
 
     // Scroll: if cursor row is beyond visible area, scroll down
-    let visible_height = inner.height as usize;
+    let visible_height = usize::from(inner.height);
     let scroll = if cursor_row >= visible_height {
-        (cursor_row - visible_height + 1) as u16
+        u16::try_from(cursor_row - visible_height + 1).unwrap_or(u16::MAX)
     } else {
         0
     };
