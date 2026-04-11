@@ -112,7 +112,7 @@ Filter/sort state lives **in the view**, not on `App`. Views own their `ItemList
 ### Key binding scheme
 
 **Global keys** (all views, skipped during search mode):
-- `q` — back / quit, `Esc` — back, `?` — help, `1-9` — switch team
+- `q` — back / quit, `Esc` — back, `?` — help, `t` — switch team (picker)
 - `h` — go to Dashboard, `i` — go to IssueList, `m` — go to MrList
 
 **Issue views** (IssueList, IssueDetail):

@@ -185,11 +185,7 @@ impl App {
             .iter()
             .map(|o| (o.scope.clone(), o.values.clone()))
             .collect();
-        let active_team = if config.teams.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
+        let active_team = None;
         Self {
             config,
             client,
