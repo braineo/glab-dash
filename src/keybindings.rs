@@ -573,12 +573,6 @@ pub static PLANNING_NAV_BINDINGS: &[Binding] = &[
         label: "I",
         description: "Move to iteration",
     },
-    Binding {
-        matcher: Char('H'),
-        action: A::NavigateTo(View::Dashboard),
-        label: "H",
-        description: "Dashboard (home)",
-    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -684,8 +678,7 @@ pub fn binding_groups_for_view(view: View) -> Vec<&'static BindingGroup> {
         ],
         View::Planning => vec![
             &GLOBAL_GROUP,
-            // Note: no GLOBAL_NAV_GROUP here — Planning has its own nav
-            // that overrides h and adds H
+            &GLOBAL_NAV_GROUP,
             &PLANNING_NAV_GROUP,
             &LIST_NAV_GROUP,
             &ISSUE_ACTION_GROUP,
