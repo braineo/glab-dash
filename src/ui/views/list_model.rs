@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, BorderType, Borders, TableState};
 
 use crate::filter::FilterCondition;
 use crate::sort::SortSpec;
-use crate::ui::{keys, styles};
+use crate::ui::styles;
 
 // ── ItemList ──
 
@@ -27,20 +27,9 @@ impl<T> Default for ItemList<T> {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum NavResult {
-    None,
-    Handled,
-    OpenDetail,
-}
-
 impl<T> ItemList<T> {
     pub fn len(&self) -> usize {
         self.indices.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.indices.is_empty()
     }
 
     pub fn selected_index(&self) -> Option<usize> {
@@ -65,37 +54,50 @@ impl<T> ItemList<T> {
         }
     }
 
-    /// Handle j/k/g/G/PgUp/PgDn/Enter navigation. Returns `None` if key not recognized.
-    pub fn handle_nav(&mut self, key: &KeyEvent) -> NavResult {
+    pub fn select_next(&mut self) {
         let len = self.indices.len();
         if len == 0 {
-            return NavResult::None;
+            return;
         }
         let current = self.table_state.selected().unwrap_or(0);
+        self.table_state.select(Some((current + 1).min(len - 1)));
+    }
 
-        if keys::is_down(key) {
-            self.table_state.select(Some((current + 1).min(len - 1)));
-            NavResult::Handled
-        } else if keys::is_up(key) {
-            self.table_state.select(Some(current.saturating_sub(1)));
-            NavResult::Handled
-        } else if keys::is_top(key) {
-            self.table_state.select(Some(0));
-            NavResult::Handled
-        } else if keys::is_bottom(key) {
-            self.table_state.select(Some(len - 1));
-            NavResult::Handled
-        } else if keys::is_page_down(key) {
-            self.table_state.select(Some((current + 20).min(len - 1)));
-            NavResult::Handled
-        } else if keys::is_page_up(key) {
-            self.table_state.select(Some(current.saturating_sub(20)));
-            NavResult::Handled
-        } else if keys::is_enter(key) {
-            NavResult::OpenDetail
-        } else {
-            NavResult::None
+    pub fn select_prev(&mut self) {
+        if self.indices.is_empty() {
+            return;
         }
+        let current = self.table_state.selected().unwrap_or(0);
+        self.table_state.select(Some(current.saturating_sub(1)));
+    }
+
+    pub fn select_first(&mut self) {
+        if !self.indices.is_empty() {
+            self.table_state.select(Some(0));
+        }
+    }
+
+    pub fn select_last(&mut self) {
+        if !self.indices.is_empty() {
+            self.table_state.select(Some(self.indices.len() - 1));
+        }
+    }
+
+    pub fn page_down(&mut self) {
+        let len = self.indices.len();
+        if len == 0 {
+            return;
+        }
+        let current = self.table_state.selected().unwrap_or(0);
+        self.table_state.select(Some((current + 20).min(len - 1)));
+    }
+
+    pub fn page_up(&mut self) {
+        if self.indices.is_empty() {
+            return;
+        }
+        let current = self.table_state.selected().unwrap_or(0);
+        self.table_state.select(Some(current.saturating_sub(20)));
     }
 }
 

@@ -4,127 +4,29 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::View;
+use crate::keybindings;
 use crate::ui::styles;
 
-pub fn render(frame: &mut Frame, area: Rect, view: &View) {
+pub fn render(frame: &mut Frame, area: Rect, view: View) {
     let popup = centered_rect(70, 80, area);
     frame.render_widget(Clear, popup);
 
+    let groups = keybindings::binding_groups_for_view(view);
+
     let section_style = styles::section_header_style().bg(styles::OVERLAY);
+    let mut lines = vec![Line::from("")];
 
-    let mut lines = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            format!(" {} Global", styles::ICON_SECTION),
+    for group in groups {
+        lines.push(Line::from(Span::styled(
+            format!(" {} {}", group.icon, group.title),
             section_style,
-        )),
-        help_line("q", "Back / Quit"),
-        help_line("?", "Toggle help"),
-        help_line("Esc", "Go back / close overlay"),
-        help_line("t", "Switch team"),
-        help_line("h", "Dashboard (home)"),
-        help_line("i", "Go to issues"),
-        help_line("m", "Go to merge requests"),
-        help_line("p", "Go to planning"),
-        help_line("E", "Show last error"),
-        Line::from(""),
-    ];
-
-    let is_list = matches!(view, View::IssueList | View::MrList);
-    let is_issue = matches!(view, View::IssueList | View::IssueDetail | View::Planning);
-    let is_mr = matches!(view, View::MrList | View::MrDetail);
-    let is_detail = matches!(view, View::IssueDetail | View::MrDetail);
-    let is_planning = matches!(view, View::Planning);
-
-    if is_list {
-        lines.extend([
-            Line::from(Span::styled(
-                format!(" {} List Navigation", styles::ICON_SECTION),
-                section_style,
-            )),
-            help_line("j/k", "Move down/up"),
-            help_line("g/G", "Jump to top/bottom"),
-            help_line("Ctrl+d/u", "Page down/up"),
-            help_line("Enter", "Open detail"),
-            help_line("/", "Fuzzy search"),
-            help_line("r", "Refresh data"),
-            help_line("o", "Open in browser"),
-            Line::from(""),
-            Line::from(Span::styled(
-                format!(" {} Filtering", styles::ICON_SECTION),
-                section_style,
-            )),
-            help_line("f", "Add filter condition"),
-            help_line("0/F", "Clear all filters"),
-            help_line("1-9", "Apply filter preset"),
-            help_line("e", "Pick saved preset"),
-            help_line("S", "Pick sort preset"),
-            help_line("Tab", "Focus filter bar"),
-            Line::from(""),
-        ]);
-    }
-
-    if is_detail {
-        lines.extend([
-            Line::from(Span::styled(
-                format!(" {} Detail", styles::ICON_SECTION),
-                section_style,
-            )),
-            help_line("j/k", "Scroll down/up"),
-            help_line("o", "Open in browser"),
-            Line::from(""),
-        ]);
-    }
-
-    if is_issue {
-        lines.extend([
-            Line::from(Span::styled(
-                format!(" {} Issue Actions", styles::ICON_SECTION),
-                section_style,
-            )),
-            help_line("s", "Set status"),
-            help_line("x", "Close / Reopen"),
-            help_line("l", "Set labels"),
-            help_line("a", "Set assignee"),
-            help_line("c", "Add comment"),
-            Line::from(""),
-        ]);
-    }
-
-    if is_planning {
-        lines.extend([
-            Line::from(Span::styled(
-                format!(" {} Planning Navigation", styles::ICON_SECTION),
-                section_style,
-            )),
-            help_line("h/l", "Move between columns"),
-            help_line("j/k", "Move within column"),
-            help_line("Enter", "Open issue detail"),
-            help_line(">", "Move issue to next iteration"),
-            help_line("<", "Move issue to previous iteration"),
-            help_line("[/]", "Toggle prev/next column"),
-            help_line("v", "Toggle 3-col / 2-col layout"),
-            help_line("H", "Dashboard (home)"),
-            help_line("/", "Search"),
-            help_line("r", "Refresh"),
-            Line::from(""),
-        ]);
-    }
-
-    if is_mr {
-        lines.extend([
-            Line::from(Span::styled(
-                format!(" {} MR Actions", styles::ICON_SECTION),
-                section_style,
-            )),
-            help_line("A", "Approve MR"),
-            help_line("M", "Merge MR"),
-            help_line("x", "Close MR"),
-            help_line("l", "Set labels"),
-            help_line("a", "Set assignee"),
-            help_line("c", "Add comment"),
-            Line::from(""),
-        ]);
+        )));
+        for binding in group.bindings {
+            if binding.visible_in_help() {
+                lines.push(help_line(binding.label, binding.description));
+            }
+        }
+        lines.push(Line::from(""));
     }
 
     let block = styles::overlay_block("Help  ?:close");

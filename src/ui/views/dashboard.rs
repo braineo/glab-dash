@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -9,7 +8,7 @@ use crate::config::{Config, KanbanColumnConfig};
 use crate::gitlab::types::{Iteration, TrackedIssue, TrackedMergeRequest, WorkItemStatus};
 use crate::sort;
 use crate::ui::styles;
-use crate::ui::views::list_model::{ItemList, NavResult, UserFilter};
+use crate::ui::views::list_model::{ItemList, UserFilter};
 
 use std::collections::HashMap;
 
@@ -30,20 +29,6 @@ pub struct IterationBoardState {
     pub columns: Vec<StatusColumn>,
     pub focused_column: usize,
     pub filter: UserFilter,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum DashboardAction {
-    None,
-    Refilter,
-    OpenDetail,
-    Refresh,
-    SetStatus,
-    ToggleState,
-    EditLabels,
-    EditAssignee,
-    Comment,
-    OpenBrowser,
 }
 
 impl IterationBoardState {
@@ -171,71 +156,6 @@ impl IterationBoardState {
         self.columns
             .get(self.focused_column)
             .and_then(|col| col.list.selected_item(issues))
-    }
-
-    pub fn handle_key(&mut self, key: &KeyEvent) -> DashboardAction {
-        // Fuzzy search input
-        if let Some(needs_refilter) = self.filter.handle_fuzzy_input(key) {
-            return if needs_refilter {
-                DashboardAction::Refilter
-            } else {
-                DashboardAction::None
-            };
-        }
-
-        // Column navigation
-        match key.code {
-            KeyCode::Char('[') | KeyCode::Left if !self.columns.is_empty() => {
-                self.focused_column = self.focused_column.saturating_sub(1);
-                return DashboardAction::None;
-            }
-            KeyCode::Char(']') | KeyCode::Right if !self.columns.is_empty() => {
-                if self.focused_column + 1 < self.columns.len() {
-                    self.focused_column += 1;
-                }
-                return DashboardAction::None;
-            }
-            _ => {}
-        }
-
-        if self.columns.is_empty() {
-            return DashboardAction::None;
-        }
-
-        let col = self.focused_column;
-
-        if self.columns[col].list.is_empty() {
-            return match key.code {
-                KeyCode::Char('/') => {
-                    self.filter.start_search();
-                    DashboardAction::None
-                }
-                KeyCode::Char('r') => DashboardAction::Refresh,
-                _ => DashboardAction::None,
-            };
-        }
-
-        // Navigation within focused column
-        match self.columns[col].list.handle_nav(key) {
-            NavResult::Handled => return DashboardAction::None,
-            NavResult::OpenDetail => return DashboardAction::OpenDetail,
-            NavResult::None => {}
-        }
-
-        match key.code {
-            KeyCode::Char('/') => {
-                self.filter.start_search();
-            }
-            KeyCode::Char('r') => return DashboardAction::Refresh,
-            KeyCode::Char('s') => return DashboardAction::SetStatus,
-            KeyCode::Char('x') => return DashboardAction::ToggleState,
-            KeyCode::Char('l') => return DashboardAction::EditLabels,
-            KeyCode::Char('a') => return DashboardAction::EditAssignee,
-            KeyCode::Char('c') => return DashboardAction::Comment,
-            KeyCode::Char('o') => return DashboardAction::OpenBrowser,
-            _ => {}
-        }
-        DashboardAction::None
     }
 }
 

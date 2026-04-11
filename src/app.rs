@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Widget;
@@ -15,13 +15,14 @@ use crate::gitlab::types::{
     Discussion, Issue, Iteration, MergeRequest, ProjectLabel, TrackedIssue, TrackedMergeRequest,
     User, WorkItemStatus,
 };
+use crate::keybindings::{self, InputMode, KeyAction};
 use crate::ui::components::{chord_popup, confirm_dialog, error_popup, help, picker};
 use crate::ui::keys;
 use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Dashboard,
     IssueList,
@@ -1014,13 +1015,83 @@ impl App {
         Vec::new()
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
-        // Handle overlay first
-        if !matches!(self.overlay, Overlay::None) {
-            return self.handle_overlay_key(key);
+    // ── InputMode ──────────────────────────────────────────────────────
+
+    /// Compute the current input mode from overlay and view state.
+    fn input_mode(&self) -> InputMode {
+        // Overlay takes highest priority
+        match &self.overlay {
+            Overlay::CommentInput | Overlay::Picker(_) => return InputMode::TextInput,
+            Overlay::Chord(_) => return InputMode::Chord,
+            Overlay::Help | Overlay::Confirm(_) | Overlay::Error(_) => {
+                return InputMode::Modal;
+            }
+            Overlay::FilterEditor => {
+                return if self.filter_editor_state.step == filter_editor::EditorStep::EnterValue {
+                    InputMode::TextInput
+                } else {
+                    InputMode::Normal
+                };
+            }
+            Overlay::None => {}
         }
 
-        // Handle filter bar focus
+        // Inline fuzzy search
+        let is_searching = match self.view {
+            View::IssueList => self.issue_list_state.filter.is_searching(),
+            View::MrList => self.mr_list_state.filter.is_searching(),
+            View::Planning => self.planning_state.columns[self.planning_state.focused_column]
+                .filter
+                .is_searching(),
+            View::Dashboard => self.iteration_board_state.filter.is_searching(),
+            _ => false,
+        };
+        if is_searching {
+            return InputMode::TextInput;
+        }
+
+        InputMode::Normal
+    }
+
+    // ── Key dispatch ─────────────────────────────────────────────────
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        match self.input_mode() {
+            InputMode::TextInput => self.handle_text_input(key),
+            InputMode::Chord => self.handle_chord_input(key),
+            InputMode::Modal => self.handle_modal_input(key),
+            InputMode::Normal => self.handle_normal_input(key),
+        }
+    }
+
+    /// All chars go to the active text widget.
+    fn handle_text_input(&mut self, key: KeyEvent) -> bool {
+        match &self.overlay {
+            Overlay::CommentInput | Overlay::Picker(_) | Overlay::FilterEditor => {
+                self.handle_overlay_key(key)
+            }
+            Overlay::None => {
+                // Inline fuzzy search
+                self.handle_fuzzy_text(key);
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Home-row keys select a chord option; Esc or anything else cancels.
+    fn handle_chord_input(&mut self, key: KeyEvent) -> bool {
+        self.handle_overlay_key(key)
+    }
+
+    /// Modal overlay dispatch (Help, Confirm, Error).
+    fn handle_modal_input(&mut self, key: KeyEvent) -> bool {
+        self.handle_overlay_key(key)
+    }
+
+    /// Normal mode: filter bar check, then binding registry dispatch.
+    fn handle_normal_input(&mut self, key: KeyEvent) -> bool {
+        // Filter bar captures all keys when focused
         let bar_focused = match self.view {
             View::IssueList => self.issue_list_state.filter.bar_focused,
             View::MrList => self.mr_list_state.filter.bar_focused,
@@ -1031,149 +1102,370 @@ impl App {
             return false;
         }
 
-        // Global keys — q navigates back, confirms quit on dashboard
-        if keys::is_quit(&key) {
-            if let Some(prev) = self.view_stack.pop() {
-                self.view = prev;
-                self.refresh_focused();
-            } else {
-                self.overlay = Overlay::Confirm(ConfirmAction::QuitApp);
-            }
-            return false;
+        // FilterEditor in field/op selection step (Normal mode)
+        if matches!(self.overlay, Overlay::FilterEditor) {
+            return self.handle_overlay_key(key);
         }
 
-        if key.code == KeyCode::Char('?') {
-            self.overlay = Overlay::Help;
-            return false;
+        // Binding registry dispatch
+        if let Some(action) = keybindings::match_binding(self.view, &key) {
+            return self.execute_action(action);
         }
-
-        if key.code == KeyCode::Char('E') {
-            if let Some(err) = &self.error {
-                self.overlay = Overlay::Error(err.clone());
-            }
-            return false;
-        }
-
-        // Team switching via 't' key — opens picker with team names + "All".
-        if key.code == KeyCode::Char('t')
-            && key.modifiers == KeyModifiers::NONE
-            && !self.config.teams.is_empty()
-        {
-            let in_search = match self.view {
-                View::IssueList => self.issue_list_state.filter.is_searching(),
-                View::MrList => self.mr_list_state.filter.is_searching(),
-                View::Planning => self.planning_state.columns[self.planning_state.focused_column]
-                    .filter
-                    .is_searching(),
-                View::Dashboard => self.iteration_board_state.filter.is_searching(),
-                _ => false,
-            };
-            if !in_search {
-                let mut names: Vec<String> = vec!["All".to_string()];
-                names.extend(self.config.teams.iter().map(|t| t.name.clone()));
-                self.picker_state = Some(picker::PickerState::new("Switch Team", names, false));
-                self.overlay = Overlay::Picker(PickerContext::Team);
-                return false;
-            }
-        }
-
-        // Navigation (skip if a view is in search input mode)
-        let in_search = match self.view {
-            View::IssueList => self.issue_list_state.filter.is_searching(),
-            View::MrList => self.mr_list_state.filter.is_searching(),
-            View::Planning => self.planning_state.columns[self.planning_state.focused_column]
-                .filter
-                .is_searching(),
-            _ => false,
-        };
-        if keys::is_back(&key) && !in_search {
-            if let Some(prev) = self.view_stack.pop() {
-                self.view = prev;
-                self.refresh_focused();
-            }
-            return false;
-        }
-
-        // Global navigation — h/i/m/p jump between top-level views (skip in search mode)
-        if !in_search && key.modifiers == KeyModifiers::NONE {
-            match key.code {
-                // In Planning view, h/l are used for column navigation — skip global h
-                KeyCode::Char('h') if self.view != View::Planning => {
-                    self.view_stack.clear();
-                    self.view = View::Dashboard;
-                    self.refresh_focused();
-                    return false;
-                }
-                KeyCode::Char('p') if self.view != View::Planning => {
-                    self.view_stack.clear();
-                    self.view_stack.push(View::Dashboard);
-                    self.view = View::Planning;
-                    self.refilter_planning();
-                    self.refilter_iteration_board();
-                    self.refresh_focused();
-                    return false;
-                }
-                KeyCode::Char('i') if self.view != View::IssueList => {
-                    self.view_stack.clear();
-                    self.view_stack.push(View::Dashboard);
-                    self.view = View::IssueList;
-                    self.refilter_issues();
-                    self.refresh_focused();
-                    return false;
-                }
-                KeyCode::Char('m') if self.view != View::MrList => {
-                    self.view_stack.clear();
-                    self.view_stack.push(View::Dashboard);
-                    self.view = View::MrList;
-                    self.refilter_mrs();
-                    self.refresh_focused();
-                    return false;
-                }
-                _ => {}
-            }
-        }
-
-        // View-specific handling
-        match self.view {
-            View::Dashboard => self.handle_dashboard_key(key),
-            View::IssueList => self.handle_issue_list_key(key),
-            View::IssueDetail => self.handle_issue_detail_key(key),
-            View::MrList => self.handle_mr_list_key(key),
-            View::MrDetail => self.handle_mr_detail_key(key),
-            View::Planning => self.handle_planning_key(key),
-        }
-
         false
     }
 
-    fn handle_chord_result(&mut self, value: &str) {
-        let context = std::mem::replace(&mut self.overlay, Overlay::None);
-        match context {
-            Overlay::Chord(ChordContext::Status(project, issue_id, iid)) => {
-                self.set_issue_status(&project, issue_id, iid, value);
+    /// Centralized fuzzy search handler.
+    fn handle_fuzzy_text(&mut self, key: KeyEvent) {
+        let needs_refilter = match self.view {
+            View::IssueList => self.issue_list_state.filter.handle_fuzzy_input(&key),
+            View::MrList => self.mr_list_state.filter.handle_fuzzy_input(&key),
+            View::Dashboard => self.iteration_board_state.filter.handle_fuzzy_input(&key),
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                self.planning_state.columns[col]
+                    .filter
+                    .handle_fuzzy_input(&key)
             }
-            Overlay::Chord(ChordContext::Assignee) => {
-                self.update_assignee(value);
-            }
-            Overlay::Chord(ChordContext::Iteration(issue_idx)) => {
-                self.apply_iteration_move(issue_idx, value);
+            _ => None,
+        };
+        if needs_refilter == Some(true) {
+            self.refilter_current_view();
+        }
+        self.refresh_focused();
+    }
+
+    fn refilter_current_view(&mut self) {
+        match self.view {
+            View::IssueList => self.refilter_issues(),
+            View::MrList => self.refilter_mrs(),
+            View::Dashboard => self.refilter_iteration_board(),
+            View::Planning => {
+                self.refilter_planning();
+                self.refilter_iteration_board();
             }
             _ => {}
         }
     }
 
-    fn handle_dashboard_key(&mut self, key: KeyEvent) {
-        use dashboard::DashboardAction;
-        let action = self.iteration_board_state.handle_key(&key);
-        self.refresh_focused();
+    // ── Action execution ─────────────────────────────────────────────
 
+    #[allow(clippy::too_many_lines)]
+    fn execute_action(&mut self, action: KeyAction) -> bool {
         match action {
-            DashboardAction::None => {}
-            DashboardAction::Refilter => {
+            // === Global ===
+            KeyAction::Back => {
+                if let Some(prev) = self.view_stack.pop() {
+                    self.view = prev;
+                    self.refresh_focused();
+                } else {
+                    self.overlay = Overlay::Confirm(ConfirmAction::QuitApp);
+                }
+            }
+            KeyAction::ToggleHelp => {
+                self.overlay = Overlay::Help;
+            }
+            KeyAction::ShowLastError => {
+                if let Some(err) = &self.error {
+                    self.overlay = Overlay::Error(err.clone());
+                }
+            }
+            KeyAction::SwitchTeam => {
+                if !self.config.teams.is_empty() {
+                    let mut names: Vec<String> = vec!["All".to_string()];
+                    names.extend(self.config.teams.iter().map(|t| t.name.clone()));
+                    self.picker_state = Some(picker::PickerState::new("Switch Team", names, false));
+                    self.overlay = Overlay::Picker(PickerContext::Team);
+                }
+            }
+            KeyAction::NavigateTo(target) => {
+                if self.view != target {
+                    self.navigate_to_view(target);
+                }
+            }
+
+            // === List / detail navigation ===
+            KeyAction::MoveDown => self.nav_down(),
+            KeyAction::MoveUp => self.nav_up(),
+            KeyAction::Top => self.nav_top(),
+            KeyAction::Bottom => self.nav_bottom(),
+            KeyAction::PageDown => self.nav_page_down(),
+            KeyAction::PageUp => self.nav_page_up(),
+            KeyAction::OpenDetail => self.action_open_detail(),
+
+            // === Search & Filter ===
+            KeyAction::StartSearch => self.action_start_search(),
+            KeyAction::FocusFilterBar => self.action_focus_filter_bar(),
+            KeyAction::AddFilter => {
+                self.filter_editor_state.reset();
+                self.overlay = Overlay::FilterEditor;
+            }
+            KeyAction::ClearFilters => self.action_clear_filters(),
+            KeyAction::ApplyPreset(n) => self.action_apply_preset(n),
+            KeyAction::PickPreset => self.action_pick_preset(),
+            KeyAction::PickSortPreset => self.action_pick_sort_preset(),
+
+            // === Item actions (resolved via view/FocusedItem) ===
+            KeyAction::Refresh => {
+                self.loading = true;
+                self.fetch_all();
+            }
+            KeyAction::OpenBrowser => self.action_open_browser(),
+            KeyAction::SetStatus => self.do_set_status(),
+            KeyAction::ToggleState => self.do_toggle_state(),
+            KeyAction::EditLabels => self.action_edit_labels(),
+            KeyAction::EditAssignee => self.action_edit_assignee(),
+            KeyAction::Comment => self.action_open_comment(),
+
+            // === MR-specific ===
+            KeyAction::Approve => {
+                if let Some(FocusedItem::Mr {
+                    ref project, iid, ..
+                }) = self.focused
+                {
+                    self.overlay = Overlay::Confirm(ConfirmAction::ApproveMr(project.clone(), iid));
+                }
+            }
+            KeyAction::Merge => {
+                if let Some(FocusedItem::Mr {
+                    ref project, iid, ..
+                }) = self.focused
+                {
+                    self.overlay = Overlay::Confirm(ConfirmAction::MergeMr(project.clone(), iid));
+                }
+            }
+
+            // === Detail-specific ===
+            KeyAction::ReplyThread => self.action_reply_thread(),
+
+            // === Board / column navigation ===
+            KeyAction::ColumnLeft => self.action_column_left(),
+            KeyAction::ColumnRight => self.action_column_right(),
+
+            // === Planning-specific ===
+            KeyAction::ToggleColumnPrev => {
+                self.planning_state.column_visible[0] = !self.planning_state.column_visible[0];
+                self.planning_state.clamp_focus();
+            }
+            KeyAction::ToggleColumnNext => {
+                self.planning_state.column_visible[2] = !self.planning_state.column_visible[2];
+                self.planning_state.clamp_focus();
+            }
+            KeyAction::ToggleLayout => {
+                self.planning_state.toggle_layout();
+                self.refilter_planning();
                 self.refilter_iteration_board();
                 self.refresh_focused();
             }
-            DashboardAction::OpenDetail => {
+            KeyAction::MoveIteration => {
+                self.show_iteration_chord();
+            }
+        }
+        false
+    }
+
+    // ── Action helpers ───────────────────────────────────────────────
+
+    fn navigate_to_view(&mut self, target: View) {
+        self.view_stack.clear();
+        if target != View::Dashboard {
+            self.view_stack.push(View::Dashboard);
+        }
+        self.view = target;
+        match target {
+            View::IssueList => self.refilter_issues(),
+            View::MrList => self.refilter_mrs(),
+            View::Planning => {
+                self.refilter_planning();
+                self.refilter_iteration_board();
+            }
+            _ => {}
+        }
+        self.refresh_focused();
+    }
+
+    fn nav_down(&mut self) {
+        match self.view {
+            View::IssueDetail => self.issue_detail_state.scroll_down(),
+            View::MrDetail => self.mr_detail_state.scroll_down(),
+            View::IssueList => {
+                self.issue_list_state.list.select_next();
+                self.refresh_focused();
+            }
+            View::MrList => {
+                self.mr_list_state.list.select_next();
+                self.refresh_focused();
+            }
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                self.planning_state.columns[col].list.select_next();
+                self.refresh_focused();
+            }
+            View::Dashboard => {
+                let col = self.iteration_board_state.focused_column;
+                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
+                    c.list.select_next();
+                }
+                self.refresh_focused();
+            }
+        }
+    }
+
+    fn nav_up(&mut self) {
+        match self.view {
+            View::IssueDetail => self.issue_detail_state.scroll_up(),
+            View::MrDetail => self.mr_detail_state.scroll_up(),
+            View::IssueList => {
+                self.issue_list_state.list.select_prev();
+                self.refresh_focused();
+            }
+            View::MrList => {
+                self.mr_list_state.list.select_prev();
+                self.refresh_focused();
+            }
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                self.planning_state.columns[col].list.select_prev();
+                self.refresh_focused();
+            }
+            View::Dashboard => {
+                let col = self.iteration_board_state.focused_column;
+                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
+                    c.list.select_prev();
+                }
+                self.refresh_focused();
+            }
+        }
+    }
+
+    fn nav_top(&mut self) {
+        match self.view {
+            View::IssueList => {
+                self.issue_list_state.list.select_first();
+                self.refresh_focused();
+            }
+            View::MrList => {
+                self.mr_list_state.list.select_first();
+                self.refresh_focused();
+            }
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                self.planning_state.columns[col].list.select_first();
+                self.refresh_focused();
+            }
+            View::Dashboard => {
+                let col = self.iteration_board_state.focused_column;
+                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
+                    c.list.select_first();
+                }
+                self.refresh_focused();
+            }
+            _ => {}
+        }
+    }
+
+    fn nav_bottom(&mut self) {
+        match self.view {
+            View::IssueList => {
+                self.issue_list_state.list.select_last();
+                self.refresh_focused();
+            }
+            View::MrList => {
+                self.mr_list_state.list.select_last();
+                self.refresh_focused();
+            }
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                self.planning_state.columns[col].list.select_last();
+                self.refresh_focused();
+            }
+            View::Dashboard => {
+                let col = self.iteration_board_state.focused_column;
+                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
+                    c.list.select_last();
+                }
+                self.refresh_focused();
+            }
+            _ => {}
+        }
+    }
+
+    fn nav_page_down(&mut self) {
+        match self.view {
+            View::IssueList => {
+                self.issue_list_state.list.page_down();
+                self.refresh_focused();
+            }
+            View::MrList => {
+                self.mr_list_state.list.page_down();
+                self.refresh_focused();
+            }
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                self.planning_state.columns[col].list.page_down();
+                self.refresh_focused();
+            }
+            View::Dashboard => {
+                let col = self.iteration_board_state.focused_column;
+                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
+                    c.list.page_down();
+                }
+                self.refresh_focused();
+            }
+            _ => {}
+        }
+    }
+
+    fn nav_page_up(&mut self) {
+        match self.view {
+            View::IssueList => {
+                self.issue_list_state.list.page_up();
+                self.refresh_focused();
+            }
+            View::MrList => {
+                self.mr_list_state.list.page_up();
+                self.refresh_focused();
+            }
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                self.planning_state.columns[col].list.page_up();
+                self.refresh_focused();
+            }
+            View::Dashboard => {
+                let col = self.iteration_board_state.focused_column;
+                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
+                    c.list.page_up();
+                }
+                self.refresh_focused();
+            }
+            _ => {}
+        }
+    }
+
+    fn action_open_detail(&mut self) {
+        match self.view {
+            View::IssueList => {
+                if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
+                    let project = item.project_path.clone();
+                    let iid = item.issue.iid;
+                    self.issue_detail_state.reset();
+                    self.issue_detail_state.loading_notes = true;
+                    self.fetch_notes_for_issue(&project, iid);
+                    self.view_stack.push(View::IssueList);
+                    self.view = View::IssueDetail;
+                }
+            }
+            View::MrList => {
+                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
+                    let project = item.project_path.clone();
+                    let iid = item.mr.iid;
+                    self.mr_detail_state.reset();
+                    self.mr_detail_state.loading_notes = true;
+                    self.fetch_notes_for_mr(&project, iid);
+                    self.view_stack.push(View::MrList);
+                    self.view = View::MrDetail;
+                }
+            }
+            View::Dashboard => {
                 if let Some(item) = self
                     .iteration_board_state
                     .selected_issue(&self.issues)
@@ -1182,11 +1474,12 @@ impl App {
                     let project = item.project_path.clone();
                     let iid = item.issue.iid;
                     // Sync issue_list_state for detail view
+                    let col = self.iteration_board_state.focused_column;
                     if let Some(idx) = self
                         .iteration_board_state
                         .columns
-                        .get(self.iteration_board_state.focused_column)
-                        .and_then(|col| col.list.selected_index())
+                        .get(col)
+                        .and_then(|c| c.list.selected_index())
                     {
                         if let Some(pos) = self
                             .issue_list_state
@@ -1211,401 +1504,10 @@ impl App {
                     self.view = View::IssueDetail;
                 }
             }
-            DashboardAction::Refresh => self.fetch_all(),
-            DashboardAction::SetStatus => self.do_set_status(),
-            DashboardAction::ToggleState => self.do_toggle_state(),
-            DashboardAction::EditLabels => {
-                if let Some(item) = self
-                    .iteration_board_state
-                    .selected_issue(&self.issues)
-                    .cloned()
-                {
-                    let label_names: Vec<String> =
-                        self.labels.iter().map(|l| l.name.clone()).collect();
-                    self.picker_state = Some(
-                        picker::PickerState::new("Labels", label_names, true)
-                            .with_pre_selected(&item.issue.labels),
-                    );
-                    self.overlay = Overlay::Picker(PickerContext::Labels);
-                }
-            }
-            DashboardAction::EditAssignee => {
-                let members = self.picker_members();
-                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
-                self.overlay = Overlay::Chord(ChordContext::Assignee);
-            }
-            DashboardAction::Comment => {
-                if self.focused.is_some() {
-                    self.comment_input.clear();
-                    self.overlay = Overlay::CommentInput;
-                }
-            }
-            DashboardAction::OpenBrowser => {
-                if let Some(item) = self.iteration_board_state.selected_issue(&self.issues) {
-                    let _ = open::that_detached(&item.issue.web_url);
-                }
-            }
-        }
-    }
-
-    fn handle_issue_list_key(&mut self, key: KeyEvent) {
-        // Tab to focus filter bar
-        if keys::is_tab(&key) && !self.issue_list_state.filter.conditions.is_empty() {
-            self.issue_list_state.filter.bar_focused = true;
-            self.issue_list_state.filter.bar_selected = 0;
-            return;
-        }
-
-        let action = self.issue_list_state.handle_key(&key, self.issues.len());
-        self.refresh_focused();
-
-        match action {
-            issue_list::IssueListAction::None => {}
-            issue_list::IssueListAction::Refilter => self.refilter_issues(),
-            issue_list::IssueListAction::Refresh => {
-                self.loading = true;
-                self.fetch_all();
-            }
-            issue_list::IssueListAction::OpenDetail => {
-                if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
-                    let project = item.project_path.clone();
-                    let iid = item.issue.iid;
-                    self.issue_detail_state.reset();
-                    self.issue_detail_state.loading_notes = true;
-                    self.fetch_notes_for_issue(&project, iid);
-                    self.view_stack.push(View::IssueList);
-                    self.view = View::IssueDetail;
-                }
-            }
-            issue_list::IssueListAction::SetStatus => {
-                self.do_set_status();
-            }
-            issue_list::IssueListAction::ToggleState => {
-                self.do_toggle_state();
-            }
-            issue_list::IssueListAction::EditLabels => {
-                let label_names: Vec<String> = self.labels.iter().map(|l| l.name.clone()).collect();
-                let current = self
-                    .issue_list_state
-                    .selected_issue(&self.issues)
-                    .map(|i| i.issue.labels.clone())
-                    .unwrap_or_default();
-                self.picker_state = Some(
-                    picker::PickerState::new("Labels", label_names, true)
-                        .with_pre_selected(&current),
-                );
-                self.overlay = Overlay::Picker(PickerContext::Labels);
-            }
-            issue_list::IssueListAction::EditAssignee => {
-                let members = self.picker_members();
-                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
-                self.overlay = Overlay::Chord(ChordContext::Assignee);
-            }
-            issue_list::IssueListAction::Comment => {
-                self.comment_input = crate::ui::components::input::InputState::default();
-                self.reply_discussion_id = None;
-                self.overlay = Overlay::CommentInput;
-            }
-            issue_list::IssueListAction::OpenBrowser => {
-                if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
-                    let _ = open::that_detached(&item.issue.web_url);
-                }
-            }
-            issue_list::IssueListAction::AddFilter => {
-                self.filter_editor_state.reset();
-                self.overlay = Overlay::FilterEditor;
-            }
-            issue_list::IssueListAction::ClearFilters => {
-                self.issue_list_state.filter.conditions.clear();
-                self.refilter_issues();
-            }
-            issue_list::IssueListAction::PickPreset => {
-                let presets: Vec<String> = self
-                    .config
-                    .filters
-                    .iter()
-                    .filter(|f| f.kind == "issue")
-                    .map(|f| f.name.clone())
-                    .collect();
-                if !presets.is_empty() {
-                    self.picker_state =
-                        Some(picker::PickerState::new("Filter Preset", presets, false));
-                    self.overlay = Overlay::Picker(PickerContext::Preset);
-                }
-            }
-            issue_list::IssueListAction::PickSortPreset => {
-                self.show_sort_preset_picker("issue");
-            }
-            issue_list::IssueListAction::ApplyPreset(n) => {
-                if let Some(name) = self
-                    .config
-                    .filters
-                    .iter()
-                    .filter(|f| f.kind == "issue")
-                    .nth(n - 1)
-                    .map(|f| f.name.clone())
-                {
-                    self.apply_preset(&name);
-                }
-            }
-        }
-    }
-
-    fn handle_mr_list_key(&mut self, key: KeyEvent) {
-        if keys::is_tab(&key) && !self.mr_list_state.filter.conditions.is_empty() {
-            self.mr_list_state.filter.bar_focused = true;
-            self.mr_list_state.filter.bar_selected = 0;
-            return;
-        }
-
-        let action = self.mr_list_state.handle_key(&key, self.mrs.len());
-        self.refresh_focused();
-
-        match action {
-            mr_list::MrListAction::None => {}
-            mr_list::MrListAction::Refilter => self.refilter_mrs(),
-            mr_list::MrListAction::Refresh => {
-                self.loading = true;
-                self.fetch_all();
-            }
-            mr_list::MrListAction::OpenDetail => {
-                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
-                    let project = item.project_path.clone();
-                    let iid = item.mr.iid;
-                    self.mr_detail_state.reset();
-                    self.mr_detail_state.loading_notes = true;
-                    self.fetch_notes_for_mr(&project, iid);
-                    self.view_stack.push(View::MrList);
-                    self.view = View::MrDetail;
-                }
-            }
-            mr_list::MrListAction::Approve => {
-                if let Some(FocusedItem::Mr {
-                    ref project, iid, ..
-                }) = self.focused
-                {
-                    self.overlay = Overlay::Confirm(ConfirmAction::ApproveMr(project.clone(), iid));
-                }
-            }
-            mr_list::MrListAction::Merge => {
-                if let Some(FocusedItem::Mr {
-                    ref project, iid, ..
-                }) = self.focused
-                {
-                    self.overlay = Overlay::Confirm(ConfirmAction::MergeMr(project.clone(), iid));
-                }
-            }
-            mr_list::MrListAction::ToggleState => {
-                self.do_toggle_state();
-            }
-            mr_list::MrListAction::EditLabels => {
-                let label_names: Vec<String> = self.labels.iter().map(|l| l.name.clone()).collect();
-                let current = self
-                    .mr_list_state
-                    .selected_mr(&self.mrs)
-                    .map(|m| m.mr.labels.clone())
-                    .unwrap_or_default();
-                self.picker_state = Some(
-                    picker::PickerState::new("Labels", label_names, true)
-                        .with_pre_selected(&current),
-                );
-                self.overlay = Overlay::Picker(PickerContext::Labels);
-            }
-            mr_list::MrListAction::EditAssignee => {
-                let members = self.picker_members();
-                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
-                self.overlay = Overlay::Chord(ChordContext::Assignee);
-            }
-            mr_list::MrListAction::Comment => {
-                self.comment_input = crate::ui::components::input::InputState::default();
-                self.reply_discussion_id = None;
-                self.overlay = Overlay::CommentInput;
-            }
-            mr_list::MrListAction::OpenBrowser => {
-                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
-                    let _ = open::that_detached(&item.mr.web_url);
-                }
-            }
-            mr_list::MrListAction::AddFilter => {
-                self.filter_editor_state.reset();
-                self.overlay = Overlay::FilterEditor;
-            }
-            mr_list::MrListAction::ClearFilters => {
-                self.mr_list_state.filter.conditions.clear();
-                self.refilter_mrs();
-            }
-            mr_list::MrListAction::PickPreset => {
-                let presets: Vec<String> = self
-                    .config
-                    .filters
-                    .iter()
-                    .filter(|f| f.kind == "merge_request")
-                    .map(|f| f.name.clone())
-                    .collect();
-                if !presets.is_empty() {
-                    self.picker_state =
-                        Some(picker::PickerState::new("Filter Preset", presets, false));
-                    self.overlay = Overlay::Picker(PickerContext::Preset);
-                }
-            }
-            mr_list::MrListAction::PickSortPreset => {
-                self.show_sort_preset_picker("merge_request");
-            }
-            mr_list::MrListAction::ApplyPreset(n) => {
-                if let Some(name) = self
-                    .config
-                    .filters
-                    .iter()
-                    .filter(|f| f.kind == "merge_request")
-                    .nth(n - 1)
-                    .map(|f| f.name.clone())
-                {
-                    self.apply_preset(&name);
-                }
-            }
-        }
-    }
-
-    fn handle_issue_detail_key(&mut self, key: KeyEvent) {
-        if let Some(item) = self.current_detail_issue().cloned() {
-            if keys::is_down(&key) {
-                self.issue_detail_state.scroll_down();
-                return;
-            }
-            if keys::is_up(&key) {
-                self.issue_detail_state.scroll_up();
-                return;
-            }
-            match key.code {
-                KeyCode::Char('c') => {
-                    self.comment_input = crate::ui::components::input::InputState::default();
-                    self.reply_discussion_id = None;
-                    self.overlay = Overlay::CommentInput;
-                }
-                KeyCode::Char('r') => {
-                    let infos = self.issue_detail_state.thread_picker_items();
-                    if !infos.is_empty() {
-                        let (labels, subtitles) = build_thread_picker_display(&infos);
-                        self.picker_state = Some(
-                            picker::PickerState::new("Reply to thread", labels, false)
-                                .with_subtitles(subtitles),
-                        );
-                        self.overlay = Overlay::Picker(PickerContext::ReplyThread(infos));
-                    }
-                }
-                KeyCode::Char('s') => {
-                    self.do_set_status();
-                }
-                KeyCode::Char('x') => {
-                    self.do_toggle_state();
-                }
-                KeyCode::Char('o') => {
-                    let _ = open::that_detached(&item.issue.web_url);
-                }
-                KeyCode::Char('l') => {
-                    let label_names: Vec<String> =
-                        self.labels.iter().map(|l| l.name.clone()).collect();
-                    self.picker_state = Some(
-                        picker::PickerState::new("Labels", label_names, true)
-                            .with_pre_selected(&item.issue.labels),
-                    );
-                    self.overlay = Overlay::Picker(PickerContext::Labels);
-                }
-                KeyCode::Char('a') => {
-                    let members = self.picker_members();
-                    self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
-                    self.overlay = Overlay::Picker(PickerContext::Assignee);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn handle_mr_detail_key(&mut self, key: KeyEvent) {
-        if let Some(item) = self.current_detail_mr().cloned() {
-            if keys::is_down(&key) {
-                self.mr_detail_state.scroll_down();
-                return;
-            }
-            if keys::is_up(&key) {
-                self.mr_detail_state.scroll_up();
-                return;
-            }
-            match key.code {
-                KeyCode::Char('c') => {
-                    self.comment_input = crate::ui::components::input::InputState::default();
-                    self.reply_discussion_id = None;
-                    self.overlay = Overlay::CommentInput;
-                }
-                KeyCode::Char('r') => {
-                    let infos = self.mr_detail_state.thread_picker_items();
-                    if !infos.is_empty() {
-                        let (labels, subtitles) = build_thread_picker_display(&infos);
-                        self.picker_state = Some(
-                            picker::PickerState::new("Reply to thread", labels, false)
-                                .with_subtitles(subtitles),
-                        );
-                        self.overlay = Overlay::Picker(PickerContext::ReplyThread(infos));
-                    }
-                }
-                KeyCode::Char('A') => {
-                    if let Some(FocusedItem::Mr {
-                        ref project, iid, ..
-                    }) = self.focused
-                    {
-                        self.overlay =
-                            Overlay::Confirm(ConfirmAction::ApproveMr(project.clone(), iid));
-                    }
-                }
-                KeyCode::Char('M') => {
-                    if let Some(FocusedItem::Mr {
-                        ref project, iid, ..
-                    }) = self.focused
-                    {
-                        self.overlay =
-                            Overlay::Confirm(ConfirmAction::MergeMr(project.clone(), iid));
-                    }
-                }
-                KeyCode::Char('x') => {
-                    self.do_toggle_state();
-                }
-                KeyCode::Char('o') => {
-                    let _ = open::that_detached(&item.mr.web_url);
-                }
-                KeyCode::Char('l') => {
-                    let label_names: Vec<String> =
-                        self.labels.iter().map(|l| l.name.clone()).collect();
-                    self.picker_state = Some(
-                        picker::PickerState::new("Labels", label_names, true)
-                            .with_pre_selected(&item.mr.labels),
-                    );
-                    self.overlay = Overlay::Picker(PickerContext::Labels);
-                }
-                KeyCode::Char('a') => {
-                    let members = self.picker_members();
-                    self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
-                    self.overlay = Overlay::Picker(PickerContext::Assignee);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn handle_planning_key(&mut self, key: KeyEvent) {
-        use planning::PlanningAction;
-        let action = self.planning_state.handle_key(&key);
-        match action {
-            PlanningAction::None => {}
-            PlanningAction::Refilter => {
-                self.refilter_planning();
-                self.refilter_iteration_board();
-                self.refresh_focused();
-            }
-            PlanningAction::OpenDetail => {
+            View::Planning => {
                 if let Some(item) = self.planning_state.selected_issue(&self.issues).cloned() {
                     let project = item.project_path.clone();
                     let iid = item.issue.iid;
-                    // Sync issue_list_state so detail view can find the issue
                     let col = self.planning_state.focused_column;
                     if let Some(sel) = self.planning_state.columns[col].list.table_state.selected()
                         && let Some(&idx) = self.planning_state.columns[col].list.indices.get(sel)
@@ -1633,46 +1535,243 @@ impl App {
                     self.view = View::IssueDetail;
                 }
             }
-            PlanningAction::Refresh => {
-                self.fetch_all();
+            _ => {}
+        }
+        self.refresh_focused();
+    }
+
+    fn action_start_search(&mut self) {
+        match self.view {
+            View::IssueList => self.issue_list_state.filter.start_search(),
+            View::MrList => self.mr_list_state.filter.start_search(),
+            View::Dashboard => self.iteration_board_state.filter.start_search(),
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                self.planning_state.columns[col].filter.start_search();
             }
-            PlanningAction::SetStatus => {
-                self.do_set_status();
+            _ => {}
+        }
+    }
+
+    fn action_focus_filter_bar(&mut self) {
+        match self.view {
+            View::IssueList if !self.issue_list_state.filter.conditions.is_empty() => {
+                self.issue_list_state.filter.bar_focused = true;
+                self.issue_list_state.filter.bar_selected = 0;
             }
-            PlanningAction::ToggleState => {
-                self.do_toggle_state();
+            View::MrList if !self.mr_list_state.filter.conditions.is_empty() => {
+                self.mr_list_state.filter.bar_focused = true;
+                self.mr_list_state.filter.bar_selected = 0;
             }
-            PlanningAction::EditLabels => {
-                if let Some(item) = self.planning_state.selected_issue(&self.issues).cloned() {
-                    let label_names: Vec<String> =
-                        self.labels.iter().map(|l| l.name.clone()).collect();
-                    self.picker_state = Some(
-                        picker::PickerState::new("Labels", label_names, true)
-                            .with_pre_selected(&item.issue.labels),
-                    );
-                    self.overlay = Overlay::Picker(PickerContext::Labels);
+            _ => {}
+        }
+    }
+
+    fn action_clear_filters(&mut self) {
+        match self.view {
+            View::IssueList => {
+                self.issue_list_state.filter.conditions.clear();
+                self.refilter_issues();
+            }
+            View::MrList => {
+                self.mr_list_state.filter.conditions.clear();
+                self.refilter_mrs();
+            }
+            _ => {}
+        }
+    }
+
+    fn action_apply_preset(&mut self, n: u8) {
+        let kind = match self.view {
+            View::IssueList | View::IssueDetail => "issue",
+            View::MrList | View::MrDetail => "merge_request",
+            _ => return,
+        };
+        if let Some(name) = self
+            .config
+            .filters
+            .iter()
+            .filter(|f| f.kind == kind)
+            .nth(usize::from(n) - 1)
+            .map(|f| f.name.clone())
+        {
+            self.apply_preset(&name);
+        }
+    }
+
+    fn action_pick_preset(&mut self) {
+        let kind = match self.view {
+            View::IssueList | View::IssueDetail => "issue",
+            View::MrList | View::MrDetail => "merge_request",
+            _ => return,
+        };
+        let presets: Vec<String> = self
+            .config
+            .filters
+            .iter()
+            .filter(|f| f.kind == kind)
+            .map(|f| f.name.clone())
+            .collect();
+        if !presets.is_empty() {
+            self.picker_state = Some(picker::PickerState::new("Filter Preset", presets, false));
+            self.overlay = Overlay::Picker(PickerContext::Preset);
+        }
+    }
+
+    fn action_pick_sort_preset(&mut self) {
+        let kind = match self.view {
+            View::IssueList | View::IssueDetail => "issue",
+            View::MrList | View::MrDetail => "merge_request",
+            _ => return,
+        };
+        self.show_sort_preset_picker(kind);
+    }
+
+    fn action_open_browser(&mut self) {
+        match self.view {
+            View::IssueList | View::IssueDetail => {
+                if let Some(item) = self
+                    .current_detail_issue()
+                    .or_else(|| self.issue_list_state.selected_issue(&self.issues))
+                {
+                    let _ = open::that_detached(&item.issue.web_url);
                 }
             }
-            PlanningAction::EditAssignee => {
-                let members = self.picker_members();
-                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
-                self.overlay = Overlay::Chord(ChordContext::Assignee);
+            View::MrList | View::MrDetail => {
+                if let Some(item) = self
+                    .current_detail_mr()
+                    .or_else(|| self.mr_list_state.selected_mr(&self.mrs))
+                {
+                    let _ = open::that_detached(&item.mr.web_url);
+                }
             }
-            PlanningAction::Comment => {
-                self.comment_input = crate::ui::components::input::InputState::default();
-                self.reply_discussion_id = None;
-                self.overlay = Overlay::CommentInput;
+            View::Dashboard => {
+                if let Some(item) = self.iteration_board_state.selected_issue(&self.issues) {
+                    let _ = open::that_detached(&item.issue.web_url);
+                }
             }
-            PlanningAction::OpenBrowser => {
+            View::Planning => {
                 if let Some(item) = self.planning_state.selected_issue(&self.issues) {
                     let _ = open::that(&item.issue.web_url);
                 }
             }
-            PlanningAction::MoveIteration => {
-                self.show_iteration_chord();
+        }
+    }
+
+    fn action_edit_labels(&mut self) {
+        let label_names: Vec<String> = self.labels.iter().map(|l| l.name.clone()).collect();
+        let current = match self.view {
+            View::IssueList => self
+                .issue_list_state
+                .selected_issue(&self.issues)
+                .map(|i| i.issue.labels.clone()),
+            View::IssueDetail => self.current_detail_issue().map(|i| i.issue.labels.clone()),
+            View::MrList => self
+                .mr_list_state
+                .selected_mr(&self.mrs)
+                .map(|m| m.mr.labels.clone()),
+            View::MrDetail => self.current_detail_mr().map(|m| m.mr.labels.clone()),
+            View::Dashboard => self
+                .iteration_board_state
+                .selected_issue(&self.issues)
+                .map(|i| i.issue.labels.clone()),
+            View::Planning => self
+                .planning_state
+                .selected_issue(&self.issues)
+                .map(|i| i.issue.labels.clone()),
+        };
+        if let Some(current) = current {
+            self.picker_state = Some(
+                picker::PickerState::new("Labels", label_names, true).with_pre_selected(&current),
+            );
+            self.overlay = Overlay::Picker(PickerContext::Labels);
+        }
+    }
+
+    fn action_edit_assignee(&mut self) {
+        match self.view {
+            View::IssueDetail | View::MrDetail => {
+                let members = self.picker_members();
+                self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
+                self.overlay = Overlay::Picker(PickerContext::Assignee);
+            }
+            _ => {
+                let members = self.picker_members();
+                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
+                self.overlay = Overlay::Chord(ChordContext::Assignee);
             }
         }
+    }
+
+    fn action_open_comment(&mut self) {
+        if self.focused.is_some() {
+            self.comment_input = crate::ui::components::input::InputState::default();
+            self.reply_discussion_id = None;
+            self.overlay = Overlay::CommentInput;
+        }
+    }
+
+    fn action_reply_thread(&mut self) {
+        let infos = match self.view {
+            View::IssueDetail => self.issue_detail_state.thread_picker_items(),
+            View::MrDetail => self.mr_detail_state.thread_picker_items(),
+            _ => return,
+        };
+        if !infos.is_empty() {
+            let (labels, subtitles) = build_thread_picker_display(&infos);
+            self.picker_state = Some(
+                picker::PickerState::new("Reply to thread", labels, false)
+                    .with_subtitles(subtitles),
+            );
+            self.overlay = Overlay::Picker(PickerContext::ReplyThread(infos));
+        }
+    }
+
+    fn action_column_left(&mut self) {
+        match self.view {
+            View::Dashboard if !self.iteration_board_state.columns.is_empty() => {
+                self.iteration_board_state.focused_column =
+                    self.iteration_board_state.focused_column.saturating_sub(1);
+            }
+            View::Planning => {
+                self.planning_state.move_focus_left();
+            }
+            _ => {}
+        }
         self.refresh_focused();
+    }
+
+    fn action_column_right(&mut self) {
+        match self.view {
+            View::Dashboard
+                if !self.iteration_board_state.columns.is_empty()
+                    && self.iteration_board_state.focused_column + 1
+                        < self.iteration_board_state.columns.len() =>
+            {
+                self.iteration_board_state.focused_column += 1;
+            }
+            View::Planning => {
+                self.planning_state.move_focus_right();
+            }
+            _ => {}
+        }
+        self.refresh_focused();
+    }
+
+    fn handle_chord_result(&mut self, value: &str) {
+        let context = std::mem::replace(&mut self.overlay, Overlay::None);
+        match context {
+            Overlay::Chord(ChordContext::Status(project, issue_id, iid)) => {
+                self.set_issue_status(&project, issue_id, iid, value);
+            }
+            Overlay::Chord(ChordContext::Assignee) => {
+                self.update_assignee(value);
+            }
+            Overlay::Chord(ChordContext::Iteration(issue_idx)) => {
+                self.apply_iteration_move(issue_idx, value);
+            }
+            _ => {}
+        }
     }
 
     fn show_iteration_chord(&mut self) {
@@ -2484,55 +2583,14 @@ impl App {
                 .sum(),
             _ => self.issues.len() + self.mrs.len(),
         };
-        let hints: &[(&str, &str)] = match self.view {
-            View::Dashboard => &[
-                ("q", "quit"),
-                ("?", "help"),
-                ("i", "issues"),
-                ("m", "mrs"),
-                ("p", "planning"),
-            ],
-            View::IssueList => &[
-                ("q", "back"),
-                ("?", "help"),
-                ("h", "home"),
-                ("/", "search"),
-                ("s", "status"),
-                ("x", "close"),
-            ],
-            View::MrList => &[
-                ("q", "back"),
-                ("?", "help"),
-                ("h", "home"),
-                ("/", "search"),
-                ("A", "approve"),
-                ("M", "merge"),
-            ],
-            View::IssueDetail => &[
-                ("q", "back"),
-                ("?", "help"),
-                ("s", "status"),
-                ("x", "close"),
-                ("c", "comment"),
-                ("o", "open"),
-            ],
-            View::MrDetail => &[
-                ("q", "back"),
-                ("?", "help"),
-                ("A", "approve"),
-                ("M", "merge"),
-                ("c", "comment"),
-                ("o", "open"),
-            ],
-            View::Planning => &[
-                ("q", "back"),
-                ("?", "help"),
-                ("H", "home"),
-                (">/<", "move iter"),
-                ("v", "layout"),
-                ("[/]", "toggle col"),
-            ],
-        };
+        let binding_hints: Vec<(&str, &str)> = keybindings::binding_groups_for_view(self.view)
+            .iter()
+            .flat_map(|g| g.bindings.iter())
+            .filter(|b| b.visible_in_help())
+            .take(8)
+            .map(|b| (b.label, b.description))
+            .collect();
+        let hints = binding_hints.as_slice();
         crate::ui::components::status_bar::render(
             frame,
             chunks[1],
@@ -2552,7 +2610,7 @@ impl App {
         match &self.overlay {
             Overlay::None => {}
             Overlay::Help => {
-                help::render(frame, area, &self.view);
+                help::render(frame, area, self.view);
             }
             Overlay::FilterEditor => {
                 filter_editor::render(frame, area, &mut self.filter_editor_state, &ctx);

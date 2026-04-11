@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -9,7 +8,7 @@ use std::collections::HashMap;
 use crate::filter::matches_issue;
 use crate::gitlab::types::TrackedIssue;
 use crate::sort;
-use crate::ui::views::list_model::{self, ItemList, NavResult, UserFilter};
+use crate::ui::views::list_model::{self, ItemList, UserFilter};
 use crate::ui::{components, styles};
 
 #[derive(Default)]
@@ -69,79 +68,6 @@ impl IssueListState {
     pub fn selected_issue<'a>(&self, issues: &'a [TrackedIssue]) -> Option<&'a TrackedIssue> {
         self.list.selected_item(issues)
     }
-
-    pub fn handle_key(&mut self, key: &KeyEvent, _total: usize) -> IssueListAction {
-        // Fuzzy search input mode
-        if let Some(needs_refilter) = self.filter.handle_fuzzy_input(key) {
-            return if needs_refilter {
-                IssueListAction::Refilter
-            } else {
-                IssueListAction::None
-            };
-        }
-
-        // Empty list: only allow search and refresh
-        if self.list.is_empty() {
-            return match key.code {
-                KeyCode::Char('/') => {
-                    self.filter.start_search();
-                    IssueListAction::None
-                }
-                KeyCode::Char('r') => IssueListAction::Refresh,
-                _ => IssueListAction::None,
-            };
-        }
-
-        // Navigation
-        match self.list.handle_nav(key) {
-            NavResult::Handled => return IssueListAction::None,
-            NavResult::OpenDetail => return IssueListAction::OpenDetail,
-            NavResult::None => {}
-        }
-
-        // View-specific keys
-        match key.code {
-            KeyCode::Char('/') => {
-                self.filter.start_search();
-            }
-            KeyCode::Char('r') => return IssueListAction::Refresh,
-            KeyCode::Char('s') => return IssueListAction::SetStatus,
-            KeyCode::Char('x') => return IssueListAction::ToggleState,
-            KeyCode::Char('l') => return IssueListAction::EditLabels,
-            KeyCode::Char('a') => return IssueListAction::EditAssignee,
-            KeyCode::Char('c') => return IssueListAction::Comment,
-            KeyCode::Char('o') => return IssueListAction::OpenBrowser,
-            KeyCode::Char('f') => return IssueListAction::AddFilter,
-            KeyCode::Char('F' | '0') => return IssueListAction::ClearFilters,
-            KeyCode::Char('e') => return IssueListAction::PickPreset,
-            KeyCode::Char('S') => return IssueListAction::PickSortPreset,
-            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                let n = c.to_digit(10).unwrap_or(0) as usize;
-                return IssueListAction::ApplyPreset(n);
-            }
-            _ => {}
-        }
-        IssueListAction::None
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum IssueListAction {
-    None,
-    Refilter,
-    OpenDetail,
-    Refresh,
-    SetStatus,
-    ToggleState,
-    EditLabels,
-    EditAssignee,
-    Comment,
-    OpenBrowser,
-    AddFilter,
-    ClearFilters,
-    PickPreset,
-    PickSortPreset,
-    ApplyPreset(usize),
 }
 
 pub fn render(

@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -9,7 +8,7 @@ use std::collections::HashMap;
 use crate::filter::matches_mr;
 use crate::gitlab::types::TrackedMergeRequest;
 use crate::sort;
-use crate::ui::views::list_model::{self, ItemList, NavResult, UserFilter};
+use crate::ui::views::list_model::{self, ItemList, UserFilter};
 use crate::ui::{components, styles};
 
 #[derive(Default)]
@@ -72,81 +71,6 @@ impl MrListState {
     ) -> Option<&'a TrackedMergeRequest> {
         self.list.selected_item(mrs)
     }
-
-    pub fn handle_key(&mut self, key: &KeyEvent, _total: usize) -> MrListAction {
-        // Fuzzy search input mode
-        if let Some(needs_refilter) = self.filter.handle_fuzzy_input(key) {
-            return if needs_refilter {
-                MrListAction::Refilter
-            } else {
-                MrListAction::None
-            };
-        }
-
-        // Empty list: only allow search and refresh
-        if self.list.is_empty() {
-            return match key.code {
-                KeyCode::Char('/') => {
-                    self.filter.start_search();
-                    MrListAction::None
-                }
-                KeyCode::Char('r') => MrListAction::Refresh,
-                _ => MrListAction::None,
-            };
-        }
-
-        // Navigation
-        match self.list.handle_nav(key) {
-            NavResult::Handled => return MrListAction::None,
-            NavResult::OpenDetail => return MrListAction::OpenDetail,
-            NavResult::None => {}
-        }
-
-        // View-specific keys
-        match key.code {
-            KeyCode::Char('/') => {
-                self.filter.start_search();
-            }
-            KeyCode::Char('r') => return MrListAction::Refresh,
-            KeyCode::Char('A') => return MrListAction::Approve,
-            KeyCode::Char('M') => return MrListAction::Merge,
-            KeyCode::Char('x') => return MrListAction::ToggleState,
-            KeyCode::Char('l') => return MrListAction::EditLabels,
-            KeyCode::Char('a') => return MrListAction::EditAssignee,
-            KeyCode::Char('c') => return MrListAction::Comment,
-            KeyCode::Char('o') => return MrListAction::OpenBrowser,
-            KeyCode::Char('f') => return MrListAction::AddFilter,
-            KeyCode::Char('F' | '0') => return MrListAction::ClearFilters,
-            KeyCode::Char('e') => return MrListAction::PickPreset,
-            KeyCode::Char('S') => return MrListAction::PickSortPreset,
-            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                let n = c.to_digit(10).unwrap_or(0) as usize;
-                return MrListAction::ApplyPreset(n);
-            }
-            _ => {}
-        }
-        MrListAction::None
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum MrListAction {
-    None,
-    Refilter,
-    OpenDetail,
-    Refresh,
-    Approve,
-    Merge,
-    ToggleState,
-    EditLabels,
-    EditAssignee,
-    Comment,
-    OpenBrowser,
-    AddFilter,
-    ClearFilters,
-    PickPreset,
-    PickSortPreset,
-    ApplyPreset(usize),
 }
 
 pub fn render(

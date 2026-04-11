@@ -11,21 +11,11 @@ fn key(code: KeyCode) -> KeyEvent {
     }
 }
 
-fn ctrl(code: KeyCode) -> KeyEvent {
-    KeyEvent {
-        code,
-        modifiers: KeyModifiers::CONTROL,
-        kind: KeyEventKind::Press,
-        state: KeyEventState::NONE,
-    }
-}
-
 // ── ItemList tests ──
 
 #[test]
 fn test_item_list_default_is_empty() {
     let list: ItemList<u32> = ItemList::default();
-    assert!(list.is_empty());
     assert_eq!(list.len(), 0);
     assert_eq!(list.selected_index(), None);
 }
@@ -92,124 +82,6 @@ fn test_clamp_selection_valid_unchanged() {
     list.table_state.select(Some(1));
     list.clamp_selection();
     assert_eq!(list.table_state.selected(), Some(1));
-}
-
-#[test]
-fn test_handle_nav_empty_returns_none() {
-    let mut list: ItemList<u32> = ItemList::default();
-    assert_eq!(list.handle_nav(&key(KeyCode::Char('j'))), NavResult::None);
-}
-
-#[test]
-fn test_handle_nav_down() {
-    let mut list: ItemList<u32> = ItemList {
-        indices: vec![0, 1, 2],
-        ..Default::default()
-    };
-    list.table_state.select(Some(0));
-
-    assert_eq!(
-        list.handle_nav(&key(KeyCode::Char('j'))),
-        NavResult::Handled
-    );
-    assert_eq!(list.table_state.selected(), Some(1));
-}
-
-#[test]
-fn test_handle_nav_up() {
-    let mut list: ItemList<u32> = ItemList {
-        indices: vec![0, 1, 2],
-        ..Default::default()
-    };
-    list.table_state.select(Some(2));
-
-    assert_eq!(
-        list.handle_nav(&key(KeyCode::Char('k'))),
-        NavResult::Handled
-    );
-    assert_eq!(list.table_state.selected(), Some(1));
-}
-
-#[test]
-fn test_handle_nav_top_bottom() {
-    let mut list: ItemList<u32> = ItemList {
-        indices: vec![0, 1, 2, 3, 4],
-        ..Default::default()
-    };
-    list.table_state.select(Some(2));
-
-    assert_eq!(
-        list.handle_nav(&key(KeyCode::Char('g'))),
-        NavResult::Handled
-    );
-    assert_eq!(list.table_state.selected(), Some(0));
-
-    assert_eq!(
-        list.handle_nav(&key(KeyCode::Char('G'))),
-        NavResult::Handled
-    );
-    assert_eq!(list.table_state.selected(), Some(4));
-}
-
-#[test]
-fn test_handle_nav_page_down_up() {
-    let mut list: ItemList<u32> = ItemList {
-        indices: (0..50).collect(),
-        ..Default::default()
-    };
-    list.table_state.select(Some(10));
-
-    assert_eq!(
-        list.handle_nav(&ctrl(KeyCode::Char('d'))),
-        NavResult::Handled
-    );
-    assert_eq!(list.table_state.selected(), Some(30));
-
-    assert_eq!(
-        list.handle_nav(&ctrl(KeyCode::Char('u'))),
-        NavResult::Handled
-    );
-    assert_eq!(list.table_state.selected(), Some(10));
-}
-
-#[test]
-fn test_handle_nav_enter() {
-    let mut list: ItemList<u32> = ItemList {
-        indices: vec![0],
-        ..Default::default()
-    };
-    list.table_state.select(Some(0));
-
-    assert_eq!(list.handle_nav(&key(KeyCode::Enter)), NavResult::OpenDetail);
-}
-
-#[test]
-fn test_handle_nav_unrecognized() {
-    let mut list: ItemList<u32> = ItemList {
-        indices: vec![0],
-        ..Default::default()
-    };
-    list.table_state.select(Some(0));
-
-    assert_eq!(list.handle_nav(&key(KeyCode::Char('z'))), NavResult::None);
-}
-
-#[test]
-fn test_handle_nav_clamps_at_boundaries() {
-    let mut list: ItemList<u32> = ItemList {
-        indices: vec![0, 1, 2],
-        ..Default::default()
-    };
-    list.table_state.select(Some(0));
-
-    // Up at top stays at 0
-    list.handle_nav(&key(KeyCode::Char('k')));
-    assert_eq!(list.table_state.selected(), Some(0));
-
-    // Down at bottom stays at end
-    list.table_state.select(Some(2));
-    list.handle_nav(&key(KeyCode::Char('j')));
-    assert_eq!(list.table_state.selected(), Some(2));
 }
 
 // ── UserFilter tests ──

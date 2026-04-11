@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -8,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use crate::config::Config;
 use crate::gitlab::types::{Iteration, TrackedIssue};
 use crate::sort::{self, SortDirection, SortField, SortSpec};
-use crate::ui::views::list_model::{ItemList, NavResult, UserFilter};
+use crate::ui::views::list_model::{ItemList, UserFilter};
 use crate::ui::{RenderCtx, components, styles};
 
 use std::collections::HashMap;
@@ -79,102 +78,7 @@ impl Default for PlanningViewState {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum PlanningAction {
-    None,
-    Refilter,
-    OpenDetail,
-    Refresh,
-    SetStatus,
-    ToggleState,
-    EditLabels,
-    EditAssignee,
-    Comment,
-    OpenBrowser,
-    /// Show chord popup to pick target iteration (or remove)
-    MoveIteration,
-}
-
 impl PlanningViewState {
-    pub fn handle_key(&mut self, key: &KeyEvent) -> PlanningAction {
-        let col = self.focused_column;
-
-        // Fuzzy search input for focused column
-        if let Some(needs_refilter) = self.columns[col].filter.handle_fuzzy_input(key) {
-            return if needs_refilter {
-                PlanningAction::Refilter
-            } else {
-                PlanningAction::None
-            };
-        }
-
-        // Column navigation: [ / ]
-        match key.code {
-            KeyCode::Char('[') => {
-                self.move_focus_left();
-                return PlanningAction::None;
-            }
-            KeyCode::Char(']') => {
-                self.move_focus_right();
-                return PlanningAction::None;
-            }
-            _ => {}
-        }
-
-        if self.columns[col].list.is_empty() {
-            return match key.code {
-                KeyCode::Char('/') => {
-                    self.columns[col].filter.start_search();
-                    PlanningAction::None
-                }
-                KeyCode::Char('r') => PlanningAction::Refresh,
-                KeyCode::Char('<') => {
-                    self.column_visible[0] = !self.column_visible[0];
-                    self.clamp_focus();
-                    PlanningAction::None
-                }
-                KeyCode::Char('>') => {
-                    self.column_visible[2] = !self.column_visible[2];
-                    self.clamp_focus();
-                    PlanningAction::None
-                }
-                KeyCode::Char('v') => {
-                    self.toggle_layout();
-                    PlanningAction::Refilter
-                }
-                _ => PlanningAction::None,
-            };
-        }
-
-        // Navigation within focused column
-        match self.columns[col].list.handle_nav(key) {
-            NavResult::Handled => return PlanningAction::None,
-            NavResult::OpenDetail => return PlanningAction::OpenDetail,
-            NavResult::None => {}
-        }
-
-        // View-specific keys
-        match key.code {
-            KeyCode::Char('/') => {
-                self.columns[col].filter.start_search();
-            }
-            KeyCode::Char('r') => return PlanningAction::Refresh,
-            KeyCode::Char('s') => return PlanningAction::SetStatus,
-            KeyCode::Char('x') => return PlanningAction::ToggleState,
-            KeyCode::Char('l') => return PlanningAction::EditLabels,
-            KeyCode::Char('a') => return PlanningAction::EditAssignee,
-            KeyCode::Char('c') => return PlanningAction::Comment,
-            KeyCode::Char('o') => return PlanningAction::OpenBrowser,
-            KeyCode::Char('I') => return PlanningAction::MoveIteration,
-            KeyCode::Char('v') => {
-                self.toggle_layout();
-                return PlanningAction::Refilter;
-            }
-            _ => {}
-        }
-        PlanningAction::None
-    }
-
     pub fn selected_issue<'a>(&self, issues: &'a [TrackedIssue]) -> Option<&'a TrackedIssue> {
         self.columns[self.focused_column].list.selected_item(issues)
     }
@@ -183,7 +87,7 @@ impl PlanningViewState {
         (0..3).filter(|&i| self.column_visible[i]).collect()
     }
 
-    fn move_focus_left(&mut self) {
+    pub fn move_focus_left(&mut self) {
         let visible = self.visible_columns();
         if let Some(pos) = visible.iter().position(|&c| c == self.focused_column)
             && pos > 0
@@ -192,7 +96,7 @@ impl PlanningViewState {
         }
     }
 
-    fn move_focus_right(&mut self) {
+    pub fn move_focus_right(&mut self) {
         let visible = self.visible_columns();
         if let Some(pos) = visible.iter().position(|&c| c == self.focused_column)
             && pos + 1 < visible.len()
@@ -201,14 +105,14 @@ impl PlanningViewState {
         }
     }
 
-    fn clamp_focus(&mut self) {
+    pub fn clamp_focus(&mut self) {
         let visible = self.visible_columns();
         if !visible.is_empty() && !visible.contains(&self.focused_column) {
             self.focused_column = visible[visible.len() / 2];
         }
     }
 
-    fn toggle_layout(&mut self) {
+    pub fn toggle_layout(&mut self) {
         self.layout_mode = match self.layout_mode {
             PlanningLayout::ThreeColumn => PlanningLayout::TwoColumn,
             PlanningLayout::TwoColumn => PlanningLayout::ThreeColumn,
