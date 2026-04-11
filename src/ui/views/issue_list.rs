@@ -1,36 +1,32 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{Cell, Paragraph, Row, Table};
 
 use std::collections::HashMap;
 
-use crate::filter::{FilterCondition, matches_issue};
+use crate::filter::matches_issue;
 use crate::gitlab::types::TrackedIssue;
-use crate::sort::{self, SortSpec};
-use crate::ui::{components, keys, styles};
+use crate::sort;
+use crate::ui::views::list_model::{self, ItemList, NavResult, UserFilter};
+use crate::ui::{components, styles};
 
 #[derive(Default)]
 pub struct IssueListState {
-    pub table_state: TableState,
-    pub filtered_indices: Vec<usize>,
-    pub search_query: String,
-    pub searching: bool,
-    pub active_sort: Vec<SortSpec>,
+    pub list: ItemList<TrackedIssue>,
+    pub filter: UserFilter,
 }
 
 impl IssueListState {
     pub fn apply_filters(
         &mut self,
         issues: &[TrackedIssue],
-        conditions: &[FilterCondition],
         me: &str,
         team_members: &[String],
         label_orders: &HashMap<String, Vec<String>>,
     ) {
-        self.filtered_indices = issues
+        self.list.indices = issues
             .iter()
             .enumerate()
             .filter(|(_, item)| {
@@ -44,86 +40,51 @@ impl IssueListState {
                         .iter()
                         .any(|a| team_members.contains(&a.username))
             })
-            .filter(|(_, item)| matches_issue(item, conditions, me, team_members))
+            .filter(|(_, item)| matches_issue(item, &self.filter.conditions, me, team_members))
             .filter(|(_, item)| {
-                if self.search_query.is_empty() {
-                    true
-                } else {
-                    let mut haystack = item.issue.title.to_lowercase();
-                    for a in &item.issue.assignees {
-                        haystack.push(' ');
-                        haystack.push_str(&a.username.to_lowercase());
-                    }
-                    for l in &item.issue.labels {
-                        haystack.push(' ');
-                        haystack.push_str(&l.to_lowercase());
-                    }
-                    self.search_query
-                        .to_lowercase()
-                        .split_whitespace()
-                        .all(|word| haystack.contains(word))
+                let mut haystack = item.issue.title.to_lowercase();
+                for a in &item.issue.assignees {
+                    haystack.push(' ');
+                    haystack.push_str(&a.username.to_lowercase());
                 }
+                for l in &item.issue.labels {
+                    haystack.push(' ');
+                    haystack.push_str(&l.to_lowercase());
+                }
+                self.filter.fuzzy_matches(&haystack)
             })
             .map(|(i, _)| i)
             .collect();
 
-        // Sort
         sort::sort_issues(
-            &mut self.filtered_indices,
+            &mut self.list.indices,
             issues,
-            &self.active_sort,
+            &self.filter.sort_specs,
             label_orders,
         );
 
-        // Clamp selection
-        if self.filtered_indices.is_empty() {
-            self.table_state.select(None);
-        } else if self.table_state.selected().is_none() {
-            self.table_state.select(Some(0));
-        } else if let Some(sel) = self.table_state.selected()
-            && sel >= self.filtered_indices.len()
-        {
-            self.table_state
-                .select(Some(self.filtered_indices.len() - 1));
-        }
+        self.list.clamp_selection();
     }
 
     pub fn selected_issue<'a>(&self, issues: &'a [TrackedIssue]) -> Option<&'a TrackedIssue> {
-        self.table_state
-            .selected()
-            .and_then(|sel| self.filtered_indices.get(sel))
-            .and_then(|&idx| issues.get(idx))
+        self.list.selected_item(issues)
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent, _total: usize) -> IssueListAction {
-        if self.searching {
-            match key.code {
-                KeyCode::Esc => {
-                    self.searching = false;
-                    self.search_query.clear();
-                    return IssueListAction::Refilter;
-                }
-                KeyCode::Enter => {
-                    self.searching = false;
-                    return IssueListAction::None;
-                }
-                KeyCode::Backspace => {
-                    self.search_query.pop();
-                    return IssueListAction::Refilter;
-                }
-                KeyCode::Char(c) => {
-                    self.search_query.push(c);
-                    return IssueListAction::Refilter;
-                }
-                _ => return IssueListAction::None,
-            }
+        // Fuzzy search input mode
+        if let Some(needs_refilter) = self.filter.handle_fuzzy_input(key) {
+            return if needs_refilter {
+                IssueListAction::Refilter
+            } else {
+                IssueListAction::None
+            };
         }
 
-        let len = self.filtered_indices.len();
-        if len == 0 {
+        // Empty list: only allow search and refresh
+        if self.list.is_empty() {
             return match key.code {
                 KeyCode::Char('/') => {
-                    self.searching = true;
+                    self.filter.start_search();
                     IssueListAction::None
                 }
                 KeyCode::Char('r') => IssueListAction::Refresh,
@@ -131,46 +92,34 @@ impl IssueListState {
             };
         }
 
-        let current = self.table_state.selected().unwrap_or(0);
+        // Navigation
+        match self.list.handle_nav(key) {
+            NavResult::Handled => return IssueListAction::None,
+            NavResult::OpenDetail => return IssueListAction::OpenDetail,
+            NavResult::None => {}
+        }
 
-        if keys::is_down(key) {
-            self.table_state.select(Some((current + 1).min(len - 1)));
-        } else if keys::is_up(key) {
-            self.table_state.select(Some(current.saturating_sub(1)));
-        } else if keys::is_top(key) {
-            self.table_state.select(Some(0));
-        } else if keys::is_bottom(key) {
-            self.table_state.select(Some(len - 1));
-        } else if keys::is_page_down(key) {
-            self.table_state.select(Some((current + 20).min(len - 1)));
-        } else if keys::is_page_up(key) {
-            self.table_state.select(Some(current.saturating_sub(20)));
-        } else if keys::is_enter(key) {
-            return IssueListAction::OpenDetail;
-        } else {
-            match key.code {
-                KeyCode::Char('/') => {
-                    self.searching = true;
-                }
-                KeyCode::Char('r') => return IssueListAction::Refresh,
-                KeyCode::Char('s') => return IssueListAction::SetStatus,
-                KeyCode::Char('x') => return IssueListAction::ToggleState,
-                KeyCode::Char('l') => return IssueListAction::EditLabels,
-                KeyCode::Char('a') => return IssueListAction::EditAssignee,
-                KeyCode::Char('c') => return IssueListAction::Comment,
-                KeyCode::Char('o') => return IssueListAction::OpenBrowser,
-                KeyCode::Char('f') => return IssueListAction::AddFilter,
-                KeyCode::Char('F' | '0') => {
-                    return IssueListAction::ClearFilters;
-                }
-                KeyCode::Char('e') => return IssueListAction::PickPreset,
-                KeyCode::Char('S') => return IssueListAction::PickSortPreset,
-                KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                    let n = c.to_digit(10).unwrap_or(0) as usize;
-                    return IssueListAction::ApplyPreset(n);
-                }
-                _ => {}
+        // View-specific keys
+        match key.code {
+            KeyCode::Char('/') => {
+                self.filter.start_search();
             }
+            KeyCode::Char('r') => return IssueListAction::Refresh,
+            KeyCode::Char('s') => return IssueListAction::SetStatus,
+            KeyCode::Char('x') => return IssueListAction::ToggleState,
+            KeyCode::Char('l') => return IssueListAction::EditLabels,
+            KeyCode::Char('a') => return IssueListAction::EditAssignee,
+            KeyCode::Char('c') => return IssueListAction::Comment,
+            KeyCode::Char('o') => return IssueListAction::OpenBrowser,
+            KeyCode::Char('f') => return IssueListAction::AddFilter,
+            KeyCode::Char('F' | '0') => return IssueListAction::ClearFilters,
+            KeyCode::Char('e') => return IssueListAction::PickPreset,
+            KeyCode::Char('S') => return IssueListAction::PickSortPreset,
+            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                let n = c.to_digit(10).unwrap_or(0) as usize;
+                return IssueListAction::ApplyPreset(n);
+            }
+            _ => {}
         }
         IssueListAction::None
     }
@@ -200,13 +149,10 @@ pub fn render(
     area: Rect,
     state: &mut IssueListState,
     issues: &[TrackedIssue],
-    conditions: &[FilterCondition],
-    filter_focused: bool,
-    filter_selected: usize,
     ctx: &crate::ui::RenderCtx<'_>,
 ) {
     let label_colors = ctx.label_colors;
-    let has_selection = state.table_state.selected().is_some();
+    let has_selection = state.list.table_state.selected().is_some();
     let chunks = Layout::vertical([
         Constraint::Length(1),                                 // Filter bar
         Constraint::Min(1),                                    // Table
@@ -218,16 +164,17 @@ pub fn render(
     components::filter_bar::render(
         frame,
         chunks[0],
-        conditions,
-        &state.active_sort,
-        filter_focused,
-        filter_selected,
+        &state.filter.conditions,
+        &state.filter.sort_specs,
+        state.filter.bar_focused,
+        state.filter.bar_selected,
     );
 
     // Build table rows
-    let selected_idx = state.table_state.selected();
+    let selected_idx = state.list.table_state.selected();
     let rows: Vec<Row> = state
-        .filtered_indices
+        .list
+        .indices
         .iter()
         .enumerate()
         .map(|(row_idx, &idx)| {
@@ -250,7 +197,7 @@ pub fn render(
                 .as_ref()
                 .map_or("-", |a| a.username.as_str());
             let labels = styles::labels_compact(&item.issue.labels, 30, label_colors);
-            let age = format_age(&item.issue.updated_at);
+            let age = list_model::format_age(&item.issue.updated_at);
 
             // Show custom status if available, otherwise fall back to state
             let (state_icon, state_text) = if let Some(ref status) = item.issue.custom_status {
@@ -314,75 +261,17 @@ pub fn render(
     .style(styles::header_style())
     .bottom_margin(1);
 
-    let table_block = if state.searching {
-        let title_line = Line::from(vec![
-            Span::styled(
-                " Issues /",
-                Style::default()
-                    .fg(styles::CYAN)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-            Span::styled(
-                &state.search_query,
-                Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-            Span::styled("▎", Style::default().fg(styles::CYAN)),
-            Span::styled(
-                " Enter",
-                Style::default()
-                    .fg(styles::YELLOW)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-            Span::styled(":accept ", Style::default().fg(styles::TEXT_DIM)),
-            Span::styled(
-                "Esc",
-                Style::default()
-                    .fg(styles::YELLOW)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-            Span::styled(":cancel ", Style::default().fg(styles::TEXT_DIM)),
-        ]);
-        ratatui::widgets::Block::default()
-            .borders(ratatui::widgets::Borders::ALL)
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(styles::CYAN))
-            .title(title_line)
-    } else if !state.search_query.is_empty() {
-        let title_line = Line::from(vec![
-            Span::styled(
-                " Issues /",
-                Style::default()
-                    .fg(styles::CYAN)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-            Span::styled(
-                &state.search_query,
-                Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-            Span::styled(" ", Style::default()),
-        ]);
-        ratatui::widgets::Block::default()
-            .borders(ratatui::widgets::Borders::ALL)
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(styles::BORDER))
-            .title(title_line)
-    } else {
-        styles::block("Issues")
-    };
+    let table_block = list_model::search_block("Issues", &state.filter);
 
     let table = Table::new(rows, widths)
         .header(header)
         .highlight_symbol(styles::ICON_SELECTOR)
         .block(table_block);
 
-    frame.render_stateful_widget(table, chunks[1], &mut state.table_state);
+    frame.render_stateful_widget(table, chunks[1], &mut state.list.table_state);
 
     // Preview pane: show full labels of selected item
-    if let Some(item) = state.selected_issue(issues) {
+    if let Some(item) = state.list.selected_item(issues) {
         let mut spans: Vec<Span> = vec![Span::styled(" Labels: ", styles::help_desc_style())];
         if item.issue.labels.is_empty() {
             spans.push(Span::styled("none", styles::help_desc_style()));
@@ -417,17 +306,5 @@ pub fn render(
         ])
         .style(ratatui::style::Style::default().bg(styles::SURFACE));
         frame.render_widget(preview, chunks[2]);
-    }
-}
-
-fn format_age(dt: &chrono::DateTime<chrono::Utc>) -> String {
-    let now = chrono::Utc::now();
-    let diff = now.signed_duration_since(*dt);
-    if diff.num_days() > 0 {
-        format!("{}d", diff.num_days())
-    } else if diff.num_hours() > 0 {
-        format!("{}h", diff.num_hours())
-    } else {
-        format!("{}m", diff.num_minutes())
     }
 }

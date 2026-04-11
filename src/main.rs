@@ -111,10 +111,10 @@ async fn debug_fetch() -> Result<()> {
     println!(
         "  total issues={} filtered={}",
         app.issues.len(),
-        app.issue_list_state.filtered_indices.len()
+        app.issue_list_state.list.len()
     );
     // Check a few filtered issues
-    for i in app.issue_list_state.filtered_indices.iter().take(3) {
+    for i in app.issue_list_state.list.indices.iter().take(3) {
         let item = &app.issues[*i];
         println!(
             "  #{} [{}] {:?} {}",

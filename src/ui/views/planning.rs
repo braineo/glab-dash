@@ -3,12 +3,13 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use crate::config::Config;
 use crate::gitlab::types::{Iteration, TrackedIssue};
 use crate::sort::{self, SortDirection, SortField, SortSpec};
-use crate::ui::{RenderCtx, keys, styles};
+use crate::ui::views::list_model::{ItemList, NavResult, UserFilter};
+use crate::ui::{RenderCtx, components, styles};
 
 use std::collections::HashMap;
 
@@ -18,36 +19,62 @@ pub enum PlanningLayout {
     TwoColumn,
 }
 
+pub struct PlanningColumn {
+    pub list: ItemList<TrackedIssue>,
+    pub filter: UserFilter,
+}
+
 pub struct PlanningViewState {
     pub focused_column: usize,
-    pub column_states: [TableState; 3],
-    pub column_indices: [Vec<usize>; 3],
+    pub columns: [PlanningColumn; 3],
     pub column_visible: [bool; 3],
     pub prev_iteration: Option<Iteration>,
     pub current_iteration: Option<Iteration>,
     pub next_iteration: Option<Iteration>,
     pub layout_mode: PlanningLayout,
-    pub search_query: String,
-    pub searching: bool,
+}
+
+fn default_planning_filter() -> UserFilter {
+    UserFilter {
+        sort_specs: vec![
+            SortSpec {
+                field: SortField::Label,
+                direction: SortDirection::Asc,
+                label_scope: Some("workflow".to_string()),
+            },
+            SortSpec {
+                field: SortField::Label,
+                direction: SortDirection::Asc,
+                label_scope: Some("p".to_string()),
+            },
+        ],
+        ..UserFilter::default()
+    }
+}
+
+impl Default for PlanningColumn {
+    fn default() -> Self {
+        Self {
+            list: ItemList::default(),
+            filter: default_planning_filter(),
+        }
+    }
 }
 
 impl Default for PlanningViewState {
     fn default() -> Self {
         Self {
             focused_column: 1, // start on current
-            column_states: [
-                TableState::default(),
-                TableState::default(),
-                TableState::default(),
+            columns: [
+                PlanningColumn::default(),
+                PlanningColumn::default(),
+                PlanningColumn::default(),
             ],
-            column_indices: [Vec::new(), Vec::new(), Vec::new()],
             column_visible: [true, true, true],
             prev_iteration: None,
             current_iteration: None,
             next_iteration: None,
             layout_mode: PlanningLayout::ThreeColumn,
-            search_query: String::new(),
-            searching: false,
         }
     }
 }
@@ -70,27 +97,15 @@ pub enum PlanningAction {
 
 impl PlanningViewState {
     pub fn handle_key(&mut self, key: &KeyEvent) -> PlanningAction {
-        if self.searching {
-            match key.code {
-                KeyCode::Esc => {
-                    self.searching = false;
-                    self.search_query.clear();
-                    return PlanningAction::Refilter;
-                }
-                KeyCode::Enter => {
-                    self.searching = false;
-                    return PlanningAction::None;
-                }
-                KeyCode::Backspace => {
-                    self.search_query.pop();
-                    return PlanningAction::Refilter;
-                }
-                KeyCode::Char(c) => {
-                    self.search_query.push(c);
-                    return PlanningAction::Refilter;
-                }
-                _ => return PlanningAction::None,
-            }
+        let col = self.focused_column;
+
+        // Fuzzy search input for focused column
+        if let Some(needs_refilter) = self.columns[col].filter.handle_fuzzy_input(key) {
+            return if needs_refilter {
+                PlanningAction::Refilter
+            } else {
+                PlanningAction::None
+            };
         }
 
         // Column navigation: [ / ]
@@ -106,13 +121,10 @@ impl PlanningViewState {
             _ => {}
         }
 
-        let col = self.focused_column;
-        let len = self.column_indices[col].len();
-
-        if len == 0 {
+        if self.columns[col].list.is_empty() {
             return match key.code {
                 KeyCode::Char('/') => {
-                    self.searching = true;
+                    self.columns[col].filter.start_search();
                     PlanningAction::None
                 }
                 KeyCode::Char('r') => PlanningAction::Refresh,
@@ -134,51 +146,37 @@ impl PlanningViewState {
             };
         }
 
-        let current = self.column_states[col].selected().unwrap_or(0);
+        // Navigation within focused column
+        match self.columns[col].list.handle_nav(key) {
+            NavResult::Handled => return PlanningAction::None,
+            NavResult::OpenDetail => return PlanningAction::OpenDetail,
+            NavResult::None => {}
+        }
 
-        if keys::is_down(key) {
-            self.column_states[col].select(Some((current + 1).min(len - 1)));
-        } else if keys::is_up(key) {
-            self.column_states[col].select(Some(current.saturating_sub(1)));
-        } else if keys::is_top(key) {
-            self.column_states[col].select(Some(0));
-        } else if keys::is_bottom(key) {
-            self.column_states[col].select(Some(len - 1));
-        } else if keys::is_page_down(key) {
-            self.column_states[col].select(Some((current + 20).min(len - 1)));
-        } else if keys::is_page_up(key) {
-            self.column_states[col].select(Some(current.saturating_sub(20)));
-        } else if keys::is_enter(key) {
-            return PlanningAction::OpenDetail;
-        } else {
-            match key.code {
-                KeyCode::Char('/') => {
-                    self.searching = true;
-                }
-                KeyCode::Char('r') => return PlanningAction::Refresh,
-                KeyCode::Char('s') => return PlanningAction::SetStatus,
-                KeyCode::Char('x') => return PlanningAction::ToggleState,
-                KeyCode::Char('l') => return PlanningAction::EditLabels,
-                KeyCode::Char('a') => return PlanningAction::EditAssignee,
-                KeyCode::Char('c') => return PlanningAction::Comment,
-                KeyCode::Char('o') => return PlanningAction::OpenBrowser,
-                KeyCode::Char('I') => return PlanningAction::MoveIteration,
-                KeyCode::Char('v') => {
-                    self.toggle_layout();
-                    return PlanningAction::Refilter;
-                }
-                _ => {}
+        // View-specific keys
+        match key.code {
+            KeyCode::Char('/') => {
+                self.columns[col].filter.start_search();
             }
+            KeyCode::Char('r') => return PlanningAction::Refresh,
+            KeyCode::Char('s') => return PlanningAction::SetStatus,
+            KeyCode::Char('x') => return PlanningAction::ToggleState,
+            KeyCode::Char('l') => return PlanningAction::EditLabels,
+            KeyCode::Char('a') => return PlanningAction::EditAssignee,
+            KeyCode::Char('c') => return PlanningAction::Comment,
+            KeyCode::Char('o') => return PlanningAction::OpenBrowser,
+            KeyCode::Char('I') => return PlanningAction::MoveIteration,
+            KeyCode::Char('v') => {
+                self.toggle_layout();
+                return PlanningAction::Refilter;
+            }
+            _ => {}
         }
         PlanningAction::None
     }
 
     pub fn selected_issue<'a>(&self, issues: &'a [TrackedIssue]) -> Option<&'a TrackedIssue> {
-        let col = self.focused_column;
-        self.column_states[col]
-            .selected()
-            .and_then(|sel| self.column_indices[col].get(sel))
-            .and_then(|&idx| issues.get(idx))
+        self.columns[self.focused_column].list.selected_item(issues)
     }
 
     fn visible_columns(&self) -> Vec<usize> {
@@ -226,100 +224,71 @@ impl PlanningViewState {
         }
     }
 
-    /// Partition issues into columns based on iteration and layout mode.
+    /// Partition issues into columns based on iteration (prefilter),
+    /// then apply each column's fuzzy search and sort.
     pub fn partition_issues(
         &mut self,
         issues: &[TrackedIssue],
         label_orders: &HashMap<String, Vec<String>>,
     ) {
-        for col in &mut self.column_indices {
-            col.clear();
+        for col in &mut self.columns {
+            col.list.indices.clear();
         }
 
         let current_id = self.current_iteration.as_ref().map(|i| i.id.as_str());
 
+        // Step 1: prefilter by iteration into columns
         match self.layout_mode {
             PlanningLayout::ThreeColumn => {
                 let prev_id = self.prev_iteration.as_ref().map(|i| i.id.as_str());
                 let next_id = self.next_iteration.as_ref().map(|i| i.id.as_str());
 
                 for (i, item) in issues.iter().enumerate() {
-                    if !self.matches_search(item) {
-                        continue;
-                    }
                     let iter_id = item.issue.iteration.as_ref().map(|it| it.id.as_str());
                     if iter_id == prev_id && prev_id.is_some() {
-                        self.column_indices[0].push(i);
+                        self.columns[0].list.indices.push(i);
                     } else if iter_id == current_id && current_id.is_some() {
-                        self.column_indices[1].push(i);
+                        self.columns[1].list.indices.push(i);
                     } else if iter_id == next_id && next_id.is_some() {
-                        self.column_indices[2].push(i);
+                        self.columns[2].list.indices.push(i);
                     }
                 }
             }
             PlanningLayout::TwoColumn => {
                 for (i, item) in issues.iter().enumerate() {
-                    if !self.matches_search(item) {
-                        continue;
-                    }
                     let iter_id = item.issue.iteration.as_ref().map(|it| it.id.as_str());
                     if iter_id == current_id && current_id.is_some() {
-                        self.column_indices[1].push(i);
+                        self.columns[1].list.indices.push(i);
                     } else {
-                        self.column_indices[0].push(i);
+                        self.columns[0].list.indices.push(i);
                     }
                 }
             }
         }
 
-        // Default sort: workflow:: then p:: label scopes
-        let default_sort = vec![
-            SortSpec {
-                field: SortField::Label,
-                direction: SortDirection::Asc,
-                label_scope: Some("workflow".to_string()),
-            },
-            SortSpec {
-                field: SortField::Label,
-                direction: SortDirection::Asc,
-                label_scope: Some("p".to_string()),
-            },
-        ];
-        for col in &mut self.column_indices {
-            sort::sort_issues(col, issues, &default_sort, label_orders);
+        // Step 2: per-column fuzzy filter and sort
+        for col in &mut self.columns {
+            col.list.indices.retain(|&i| {
+                let item = &issues[i];
+                let mut haystack = item.issue.title.to_lowercase();
+                for a in &item.issue.assignees {
+                    haystack.push(' ');
+                    haystack.push_str(&a.username.to_lowercase());
+                }
+                for l in &item.issue.labels {
+                    haystack.push(' ');
+                    haystack.push_str(&l.to_lowercase());
+                }
+                col.filter.fuzzy_matches(&haystack)
+            });
+            sort::sort_issues(
+                &mut col.list.indices,
+                issues,
+                &col.filter.sort_specs,
+                label_orders,
+            );
+            col.list.clamp_selection();
         }
-
-        // Clamp selections
-        for i in 0..3 {
-            if self.column_indices[i].is_empty() {
-                self.column_states[i].select(None);
-            } else if self.column_states[i].selected().is_none() {
-                self.column_states[i].select(Some(0));
-            } else if let Some(sel) = self.column_states[i].selected()
-                && sel >= self.column_indices[i].len()
-            {
-                self.column_states[i].select(Some(self.column_indices[i].len() - 1));
-            }
-        }
-    }
-
-    fn matches_search(&self, item: &TrackedIssue) -> bool {
-        if self.search_query.is_empty() {
-            return true;
-        }
-        let mut haystack = item.issue.title.to_lowercase();
-        for a in &item.issue.assignees {
-            haystack.push(' ');
-            haystack.push_str(&a.username.to_lowercase());
-        }
-        for l in &item.issue.labels {
-            haystack.push(' ');
-            haystack.push_str(&l.to_lowercase());
-        }
-        self.search_query
-            .to_lowercase()
-            .split_whitespace()
-            .all(|word| haystack.contains(word))
     }
 }
 
@@ -341,28 +310,12 @@ pub fn render(
         return;
     }
 
-    // Search bar takes 1 row if searching
-    let search_height = u16::from(state.searching);
-    let main_chunks =
-        Layout::vertical([Constraint::Length(search_height), Constraint::Min(1)]).split(area);
-
-    if state.searching {
-        let search_line = Line::from(vec![
-            Span::styled(" / ", styles::help_key_style()),
-            Span::raw(&state.search_query),
-            Span::styled("▏", Style::default()),
-        ]);
-        frame.render_widget(Paragraph::new(search_line), main_chunks[0]);
-    }
-
-    let col_area = main_chunks[1];
-
     // Split into equal-width columns
     let constraints: Vec<Constraint> = visible
         .iter()
         .map(|_| Constraint::Ratio(1, visible.len() as u32))
         .collect();
-    let columns = Layout::horizontal(constraints).split(col_area);
+    let col_rects = Layout::horizontal(constraints).split(area);
 
     let team_members = match active_team {
         Some(idx) => config.team_members(idx),
@@ -373,7 +326,7 @@ pub fn render(
         let is_focused = col_idx == state.focused_column;
         render_column(
             frame,
-            columns[vi],
+            col_rects[vi],
             state,
             col_idx,
             issues,
@@ -395,14 +348,17 @@ fn render_column(
     is_focused: bool,
     _ctx: &RenderCtx,
 ) {
+    let col = &state.columns[col_idx];
     let title = column_title(state, col_idx);
-    let count = state.column_indices[col_idx].len();
-    let total_weight: u32 = state.column_indices[col_idx]
+    let count = col.list.len();
+    let total_weight: u32 = col
+        .list
+        .indices
         .iter()
         .filter_map(|&i| issues.get(i))
         .filter_map(|item| item.issue.weight)
         .sum();
-    let header = format!("{title}  ({count} issues, {total_weight}w)");
+    let header_text = format!("{title}  ({count} issues, {total_weight}w)");
 
     let border_style = if is_focused {
         Style::default()
@@ -412,24 +368,56 @@ fn render_column(
         Style::default().fg(styles::TEXT_DIM)
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(if is_focused {
-            ratatui::widgets::BorderType::Thick
-        } else {
-            ratatui::widgets::BorderType::Rounded
-        })
-        .border_style(border_style)
-        .title(Span::styled(
-            header,
-            if is_focused {
-                Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(styles::TEXT)
-            },
+    // Use search_block style when column has active search
+    let block = if col.filter.is_searching() || col.filter.has_query() {
+        let mut spans = vec![Span::styled(
+            format!(" {header_text} /"),
+            Style::default()
+                .fg(styles::CYAN)
+                .add_modifier(Modifier::BOLD),
+        )];
+        spans.push(Span::styled(
+            col.filter.fuzzy_query.as_str(),
+            Style::default()
+                .fg(styles::TEXT_BRIGHT)
+                .add_modifier(Modifier::BOLD),
         ));
+        if col.filter.is_searching() {
+            spans.push(Span::styled("\u{258e}", Style::default().fg(styles::CYAN)));
+        }
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(if is_focused {
+                ratatui::widgets::BorderType::Thick
+            } else {
+                ratatui::widgets::BorderType::Rounded
+            })
+            .border_style(if col.filter.is_searching() {
+                Style::default().fg(styles::CYAN)
+            } else {
+                border_style
+            })
+            .title(Line::from(spans))
+    } else {
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(if is_focused {
+                ratatui::widgets::BorderType::Thick
+            } else {
+                ratatui::widgets::BorderType::Rounded
+            })
+            .border_style(border_style)
+            .title(Span::styled(
+                header_text,
+                if is_focused {
+                    Style::default()
+                        .fg(styles::TEXT_BRIGHT)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(styles::TEXT)
+                },
+            ))
+    };
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -438,20 +426,40 @@ fn render_column(
         return;
     }
 
-    // Reserve space for member stats footer
-    let stats = member_stats(&state.column_indices[col_idx], issues, team_members);
+    // Layout: filter bar (1 line) + table + member stats footer
+    let stats = member_stats(&col.list.indices, issues, team_members);
     let stats_height = if stats.is_empty() {
         0
     } else {
         (stats.len() as u16).min(inner.height.saturating_sub(2))
     };
 
-    let parts =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(stats_height)]).split(inner);
+    let has_filter_bar = !col.filter.conditions.is_empty() || !col.filter.sort_specs.is_empty();
+    let filter_bar_height = u16::from(has_filter_bar);
+
+    let parts = Layout::vertical([
+        Constraint::Length(filter_bar_height), // filter/sort bar
+        Constraint::Min(1),                    // table
+        Constraint::Length(stats_height),      // member stats
+    ])
+    .split(inner);
+
+    // Filter + sort bar
+    if has_filter_bar {
+        components::filter_bar::render(
+            frame,
+            parts[0],
+            &col.filter.conditions,
+            &col.filter.sort_specs,
+            col.filter.bar_focused,
+            col.filter.bar_selected,
+        );
+    }
 
     // Issue table
-    let indices = &state.column_indices[col_idx];
-    let rows: Vec<Row> = indices
+    let rows: Vec<Row> = col
+        .list
+        .indices
         .iter()
         .filter_map(|&i| issues.get(i))
         .map(|item| {
@@ -468,7 +476,6 @@ fn render_column(
                 .map(|w| format!("{w}w"))
                 .unwrap_or_default();
 
-            // Truncate title to reasonable length
             let title = &item.issue.title;
 
             Row::new(vec![
@@ -502,7 +509,11 @@ fn render_column(
 
     let table = Table::new(rows, widths).row_highlight_style(styles::selected_style());
 
-    frame.render_stateful_widget(table, parts[0], &mut state.column_states[col_idx]);
+    frame.render_stateful_widget(
+        table,
+        parts[1],
+        &mut state.columns[col_idx].list.table_state,
+    );
 
     // Member stats footer
     if stats_height > 0 {
@@ -520,7 +531,7 @@ fn render_column(
             })
             .collect();
         let stats_widget = Paragraph::new(stat_lines);
-        frame.render_widget(stats_widget, parts[1]);
+        frame.render_widget(stats_widget, parts[2]);
     }
 }
 
@@ -541,24 +552,24 @@ fn column_title(state: &PlanningViewState, col_idx: usize) -> String {
     match state.layout_mode {
         PlanningLayout::ThreeColumn => match col_idx {
             0 => state.prev_iteration.as_ref().map_or_else(
-                || "◁ Previous".to_string(),
-                |i| format!("◁ {}", iteration_label(i)),
+                || "\u{25c1} Previous".to_string(),
+                |i| format!("\u{25c1} {}", iteration_label(i)),
             ),
             1 => state.current_iteration.as_ref().map_or_else(
-                || "● Current".to_string(),
-                |i| format!("● {}", iteration_label(i)),
+                || "\u{25cf} Current".to_string(),
+                |i| format!("\u{25cf} {}", iteration_label(i)),
             ),
             2 => state.next_iteration.as_ref().map_or_else(
-                || "▷ Next".to_string(),
-                |i| format!("▷ {}", iteration_label(i)),
+                || "\u{25b7} Next".to_string(),
+                |i| format!("\u{25b7} {}", iteration_label(i)),
             ),
             _ => String::new(),
         },
         PlanningLayout::TwoColumn => match col_idx {
             0 => "Other".to_string(),
             1 => state.current_iteration.as_ref().map_or_else(
-                || "● Current".to_string(),
-                |i| format!("● {}", iteration_label(i)),
+                || "\u{25cf} Current".to_string(),
+                |i| format!("\u{25cf} {}", iteration_label(i)),
             ),
             _ => String::new(),
         },
@@ -567,13 +578,13 @@ fn column_title(state: &PlanningViewState, col_idx: usize) -> String {
 
 fn status_icon_for(custom_status: Option<&String>) -> &'static str {
     match custom_status.map(String::as_str) {
-        Some(s) if s.to_lowercase().contains("done") => "✓",
-        Some(s) if s.to_lowercase().contains("progress") => "▶",
-        Some(s) if s.to_lowercase().contains("review") => "◉",
-        Some(s) if s.to_lowercase().contains("block") => "⊘",
-        Some(s) if s.to_lowercase().contains("cancel") => "✗",
-        Some(_) => "●",
-        None => "○",
+        Some(s) if s.to_lowercase().contains("done") => "\u{2713}",
+        Some(s) if s.to_lowercase().contains("progress") => "\u{25b6}",
+        Some(s) if s.to_lowercase().contains("review") => "\u{25c9}",
+        Some(s) if s.to_lowercase().contains("block") => "\u{2298}",
+        Some(s) if s.to_lowercase().contains("cancel") => "\u{2717}",
+        Some(_) => "\u{25cf}",
+        None => "\u{25cb}",
     }
 }
 

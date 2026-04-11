@@ -161,15 +161,6 @@ pub struct App {
     // Chord popup state (vim-style easymotion codes)
     pub chord_state: Option<chord_popup::ChordState>,
 
-    // Filter state
-    pub issue_filters: Vec<FilterCondition>,
-    pub mr_filters: Vec<FilterCondition>,
-    pub filter_bar_focused: bool,
-    pub filter_bar_selected: usize,
-
-    // Sort state
-    pub issue_sort: Vec<crate::sort::SortSpec>,
-    pub mr_sort: Vec<crate::sort::SortSpec>,
     pub label_sort_orders: std::collections::HashMap<String, Vec<String>>,
 
     // Planning view
@@ -221,12 +212,6 @@ impl App {
             work_item_statuses: std::collections::HashMap::new(),
             focused: None,
             chord_state: None,
-            issue_filters: Vec::new(),
-            mr_filters: Vec::new(),
-            filter_bar_focused: false,
-            filter_bar_selected: 0,
-            issue_sort: Vec::new(),
-            mr_sort: Vec::new(),
             label_sort_orders,
             planning_state: planning::PlanningViewState::default(),
             iterations: Vec::new(),
@@ -795,14 +780,8 @@ impl App {
     pub fn refilter_issues(&mut self) {
         let me = self.config.me.clone();
         let members = self.active_team_members();
-        self.issue_list_state.active_sort = self.issue_sort.clone();
-        self.issue_list_state.apply_filters(
-            &self.issues,
-            &self.issue_filters,
-            &me,
-            &members,
-            &self.label_sort_orders,
-        );
+        self.issue_list_state
+            .apply_filters(&self.issues, &me, &members, &self.label_sort_orders);
     }
 
     pub fn refilter_planning(&mut self) {
@@ -874,14 +853,8 @@ impl App {
     fn refilter_mrs(&mut self) {
         let me = self.config.me.clone();
         let members = self.active_team_members();
-        self.mr_list_state.active_sort = self.mr_sort.clone();
-        self.mr_list_state.apply_filters(
-            &self.mrs,
-            &self.mr_filters,
-            &me,
-            &members,
-            &self.label_sort_orders,
-        );
+        self.mr_list_state
+            .apply_filters(&self.mrs, &me, &members, &self.label_sort_orders);
     }
 
     fn show_sort_preset_picker(&mut self, kind: &str) {
@@ -889,8 +862,8 @@ impl App {
 
         // "Clear sort" when a sort is active
         let has_sort = match self.view {
-            View::IssueList => !self.issue_sort.is_empty(),
-            View::MrList => !self.mr_sort.is_empty(),
+            View::IssueList => !self.issue_list_state.filter.sort_specs.is_empty(),
+            View::MrList => !self.mr_list_state.filter.sort_specs.is_empty(),
             _ => false,
         };
         if has_sort {
@@ -959,11 +932,11 @@ impl App {
 
         match self.view {
             View::IssueList => {
-                self.issue_sort = specs;
+                self.issue_list_state.filter.sort_specs = specs;
                 self.refilter_issues();
             }
             View::MrList => {
-                self.mr_sort = specs;
+                self.mr_list_state.filter.sort_specs = specs;
                 self.refilter_mrs();
             }
             _ => {}
@@ -1005,7 +978,12 @@ impl App {
         }
 
         // Handle filter bar focus
-        if self.filter_bar_focused {
+        let bar_focused = match self.view {
+            View::IssueList => self.issue_list_state.filter.bar_focused,
+            View::MrList => self.mr_list_state.filter.bar_focused,
+            _ => false,
+        };
+        if bar_focused {
             self.handle_filter_bar_key(key);
             return false;
         }
@@ -1032,9 +1010,11 @@ impl App {
             && !self.config.teams.is_empty()
         {
             let in_search = match self.view {
-                View::IssueList => self.issue_list_state.searching,
-                View::MrList => self.mr_list_state.searching,
-                View::Planning => self.planning_state.searching,
+                View::IssueList => self.issue_list_state.filter.is_searching(),
+                View::MrList => self.mr_list_state.filter.is_searching(),
+                View::Planning => self.planning_state.columns[self.planning_state.focused_column]
+                    .filter
+                    .is_searching(),
                 _ => false,
             };
             if !in_search {
@@ -1048,9 +1028,11 @@ impl App {
 
         // Navigation (skip if a view is in search input mode)
         let in_search = match self.view {
-            View::IssueList => self.issue_list_state.searching,
-            View::MrList => self.mr_list_state.searching,
-            View::Planning => self.planning_state.searching,
+            View::IssueList => self.issue_list_state.filter.is_searching(),
+            View::MrList => self.mr_list_state.filter.is_searching(),
+            View::Planning => self.planning_state.columns[self.planning_state.focused_column]
+                .filter
+                .is_searching(),
             _ => false,
         };
         if keys::is_back(&key) && !in_search {
@@ -1130,9 +1112,9 @@ impl App {
 
     fn handle_issue_list_key(&mut self, key: KeyEvent) {
         // Tab to focus filter bar
-        if keys::is_tab(&key) && !self.issue_filters.is_empty() {
-            self.filter_bar_focused = true;
-            self.filter_bar_selected = 0;
+        if keys::is_tab(&key) && !self.issue_list_state.filter.conditions.is_empty() {
+            self.issue_list_state.filter.bar_focused = true;
+            self.issue_list_state.filter.bar_selected = 0;
             return;
         }
 
@@ -1196,7 +1178,7 @@ impl App {
                 self.overlay = Overlay::FilterEditor;
             }
             issue_list::IssueListAction::ClearFilters => {
-                self.issue_filters.clear();
+                self.issue_list_state.filter.conditions.clear();
                 self.refilter_issues();
             }
             issue_list::IssueListAction::PickPreset => {
@@ -1232,9 +1214,9 @@ impl App {
     }
 
     fn handle_mr_list_key(&mut self, key: KeyEvent) {
-        if keys::is_tab(&key) && !self.mr_filters.is_empty() {
-            self.filter_bar_focused = true;
-            self.filter_bar_selected = 0;
+        if keys::is_tab(&key) && !self.mr_list_state.filter.conditions.is_empty() {
+            self.mr_list_state.filter.bar_focused = true;
+            self.mr_list_state.filter.bar_selected = 0;
             return;
         }
 
@@ -1311,7 +1293,7 @@ impl App {
                 self.overlay = Overlay::FilterEditor;
             }
             mr_list::MrListAction::ClearFilters => {
-                self.mr_filters.clear();
+                self.mr_list_state.filter.conditions.clear();
                 self.refilter_mrs();
             }
             mr_list::MrListAction::PickPreset => {
@@ -1486,21 +1468,23 @@ impl App {
                     let iid = item.issue.iid;
                     // Sync issue_list_state so detail view can find the issue
                     let col = self.planning_state.focused_column;
-                    if let Some(sel) = self.planning_state.column_states[col].selected()
-                        && let Some(&idx) = self.planning_state.column_indices[col].get(sel)
+                    if let Some(sel) = self.planning_state.columns[col].list.table_state.selected()
+                        && let Some(&idx) = self.planning_state.columns[col].list.indices.get(sel)
                     {
                         if let Some(pos) = self
                             .issue_list_state
-                            .filtered_indices
+                            .list
+                            .indices
                             .iter()
                             .position(|&i| i == idx)
                         {
-                            self.issue_list_state.table_state.select(Some(pos));
+                            self.issue_list_state.list.table_state.select(Some(pos));
                         } else {
-                            self.issue_list_state.filtered_indices.push(idx);
+                            self.issue_list_state.list.indices.push(idx);
                             self.issue_list_state
+                                .list
                                 .table_state
-                                .select(Some(self.issue_list_state.filtered_indices.len() - 1));
+                                .select(Some(self.issue_list_state.list.indices.len() - 1));
                         }
                     }
                     self.issue_detail_state.reset();
@@ -1554,10 +1538,10 @@ impl App {
 
     fn show_iteration_chord(&mut self) {
         let col = self.planning_state.focused_column;
-        let Some(sel) = self.planning_state.column_states[col].selected() else {
+        let Some(sel) = self.planning_state.columns[col].list.table_state.selected() else {
             return;
         };
-        let Some(&issue_idx) = self.planning_state.column_indices[col].get(sel) else {
+        let Some(&issue_idx) = self.planning_state.columns[col].list.indices.get(sel) else {
             return;
         };
 
@@ -1632,11 +1616,11 @@ impl App {
                     filter_editor::FilterEditorAction::AddCondition(cond) => {
                         match self.view {
                             View::IssueList | View::IssueDetail => {
-                                self.issue_filters.push(cond);
+                                self.issue_list_state.filter.conditions.push(cond);
                                 self.refilter_issues();
                             }
                             View::MrList | View::MrDetail => {
-                                self.mr_filters.push(cond);
+                                self.mr_list_state.filter.conditions.push(cond);
                                 self.refilter_mrs();
                             }
                             _ => {}
@@ -1754,41 +1738,68 @@ impl App {
     }
 
     fn handle_filter_bar_key(&mut self, key: KeyEvent) {
-        let filters = match self.view {
-            View::IssueList => &mut self.issue_filters,
-            View::MrList => &mut self.mr_filters,
-            _ => {
-                self.filter_bar_focused = false;
-                return;
+        match self.view {
+            View::IssueList => {
+                let f = &mut self.issue_list_state.filter;
+                if keys::is_back(&key) || keys::is_tab(&key) {
+                    f.bar_focused = false;
+                    return;
+                }
+                if keys::is_left(&key) {
+                    f.bar_selected = f.bar_selected.saturating_sub(1);
+                } else if keys::is_right(&key) {
+                    if f.bar_selected + 1 < f.conditions.len() {
+                        f.bar_selected += 1;
+                    }
+                } else if (key.code == KeyCode::Char('x') || key.code == KeyCode::Char('d'))
+                    && f.bar_selected < f.conditions.len()
+                {
+                    f.conditions.remove(f.bar_selected);
+                    if f.bar_selected > 0 && f.bar_selected >= f.conditions.len() {
+                        f.bar_selected = f.conditions.len().saturating_sub(1);
+                    }
+                    if f.conditions.is_empty() {
+                        f.bar_focused = false;
+                    }
+                    self.refilter_issues();
+                }
             }
-        };
-
-        if keys::is_back(&key) || keys::is_tab(&key) {
-            self.filter_bar_focused = false;
-            return;
-        }
-
-        if keys::is_left(&key) {
-            self.filter_bar_selected = self.filter_bar_selected.saturating_sub(1);
-        } else if keys::is_right(&key) {
-            if self.filter_bar_selected + 1 < filters.len() {
-                self.filter_bar_selected += 1;
+            View::MrList => {
+                if keys::is_back(&key) || keys::is_tab(&key) {
+                    self.mr_list_state.filter.bar_focused = false;
+                    return;
+                }
+                if keys::is_left(&key) {
+                    self.mr_list_state.filter.bar_selected =
+                        self.mr_list_state.filter.bar_selected.saturating_sub(1);
+                } else if keys::is_right(&key) {
+                    if self.mr_list_state.filter.bar_selected + 1
+                        < self.mr_list_state.filter.conditions.len()
+                    {
+                        self.mr_list_state.filter.bar_selected += 1;
+                    }
+                } else if (key.code == KeyCode::Char('x') || key.code == KeyCode::Char('d'))
+                    && self.mr_list_state.filter.bar_selected
+                        < self.mr_list_state.filter.conditions.len()
+                {
+                    self.mr_list_state
+                        .filter
+                        .conditions
+                        .remove(self.mr_list_state.filter.bar_selected);
+                    if self.mr_list_state.filter.bar_selected > 0
+                        && self.mr_list_state.filter.bar_selected
+                            >= self.mr_list_state.filter.conditions.len()
+                    {
+                        self.mr_list_state.filter.bar_selected =
+                            self.mr_list_state.filter.conditions.len().saturating_sub(1);
+                    }
+                    if self.mr_list_state.filter.conditions.is_empty() {
+                        self.mr_list_state.filter.bar_focused = false;
+                    }
+                    self.refilter_mrs();
+                }
             }
-        } else if (key.code == KeyCode::Char('x') || key.code == KeyCode::Char('d'))
-            && self.filter_bar_selected < filters.len()
-        {
-            filters.remove(self.filter_bar_selected);
-            if self.filter_bar_selected > 0 && self.filter_bar_selected >= filters.len() {
-                self.filter_bar_selected = filters.len().saturating_sub(1);
-            }
-            if filters.is_empty() {
-                self.filter_bar_focused = false;
-            }
-            match self.view {
-                View::IssueList => self.refilter_issues(),
-                View::MrList => self.refilter_mrs(),
-                _ => {}
-            }
+            _ => {}
         }
     }
 
@@ -1974,28 +1985,18 @@ impl App {
     fn selected_item_idx(&self) -> Option<(usize, String, u64, bool)> {
         match self.view {
             View::IssueList | View::IssueDetail => {
-                let idx = self
-                    .issue_list_state
-                    .table_state
-                    .selected()
-                    .and_then(|sel| self.issue_list_state.filtered_indices.get(sel).copied())?;
+                let idx = self.issue_list_state.list.selected_index()?;
                 let item = self.issues.get(idx)?;
                 Some((idx, item.project_path.clone(), item.issue.iid, false))
             }
             View::Planning => {
                 let col = self.planning_state.focused_column;
-                let idx = self.planning_state.column_states[col]
-                    .selected()
-                    .and_then(|sel| self.planning_state.column_indices[col].get(sel).copied())?;
+                let idx = self.planning_state.columns[col].list.selected_index()?;
                 let item = self.issues.get(idx)?;
                 Some((idx, item.project_path.clone(), item.issue.iid, false))
             }
             View::MrList | View::MrDetail => {
-                let idx = self
-                    .mr_list_state
-                    .table_state
-                    .selected()
-                    .and_then(|sel| self.mr_list_state.filtered_indices.get(sel).copied())?;
+                let idx = self.mr_list_state.list.selected_index()?;
                 let item = self.mrs.get(idx)?;
                 Some((idx, item.project_path.clone(), item.mr.iid, true))
             }
@@ -2196,11 +2197,11 @@ impl App {
 
             match self.view {
                 View::IssueList => {
-                    self.issue_filters = conditions;
+                    self.issue_list_state.filter.conditions = conditions;
                     self.refilter_issues();
                 }
                 View::MrList => {
-                    self.mr_filters = conditions;
+                    self.mr_list_state.filter.conditions = conditions;
                     self.refilter_mrs();
                 }
                 _ => {}
@@ -2248,9 +2249,6 @@ impl App {
                     chunks[0],
                     &mut self.issue_list_state,
                     &self.issues,
-                    &self.issue_filters,
-                    self.filter_bar_focused,
-                    self.filter_bar_selected,
                     &ctx,
                 );
             }
@@ -2260,16 +2258,7 @@ impl App {
                 }
             }
             View::MrList => {
-                mr_list::render(
-                    frame,
-                    chunks[0],
-                    &mut self.mr_list_state,
-                    &self.mrs,
-                    &self.mr_filters,
-                    self.filter_bar_focused,
-                    self.filter_bar_selected,
-                    &ctx,
-                );
+                mr_list::render(frame, chunks[0], &mut self.mr_list_state, &self.mrs, &ctx);
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
@@ -2303,13 +2292,13 @@ impl App {
             View::Planning => "Planning",
         };
         let item_count = match self.view {
-            View::IssueList => self.issue_list_state.filtered_indices.len(),
-            View::MrList => self.mr_list_state.filtered_indices.len(),
+            View::IssueList => self.issue_list_state.list.len(),
+            View::MrList => self.mr_list_state.list.len(),
             View::Planning => self
                 .planning_state
-                .column_indices
+                .columns
                 .iter()
-                .map(std::vec::Vec::len)
+                .map(|c| c.list.len())
                 .sum(),
             _ => self.issues.len() + self.mrs.len(),
         };
