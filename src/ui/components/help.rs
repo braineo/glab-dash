@@ -26,6 +26,7 @@ pub fn render(frame: &mut Frame, area: Rect, view: &View) {
         help_line("i", "Go to issues"),
         help_line("m", "Go to merge requests"),
         help_line("p", "Go to planning"),
+        help_line("E", "Show last error"),
         Line::from(""),
     ];
 

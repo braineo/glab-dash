@@ -592,7 +592,7 @@ impl App {
                 }
                 Err(e) => {
                     self.loading = false;
-                    self.show_error(format!("Issues: {e}"));
+                    self.show_error(format!("Issues: {e:#}"));
                 }
             },
             AsyncMsg::MrsLoaded(result, incremental) => match result {
@@ -631,7 +631,7 @@ impl App {
                 }
                 Err(e) => {
                     self.loading = false;
-                    self.show_error(format!("MRs: {e}"));
+                    self.show_error(format!("MRs: {e:#}"));
                 }
             },
             AsyncMsg::DiscussionsLoaded(result) => {
@@ -647,7 +647,7 @@ impl App {
                         }
                     }
                     Err(e) => {
-                        self.show_error(format!("Notes: {e}"));
+                        self.show_error(format!("Notes: {e:#}"));
                     }
                 }
             }
@@ -660,7 +660,7 @@ impl App {
                         self.fetch_all();
                     }
                     Err(e) => {
-                        self.show_error(e.to_string());
+                        self.show_error(format!("{e:#}"));
                     }
                 }
             }
@@ -679,7 +679,7 @@ impl App {
                         self.refilter_issues();
                         self.save_cache();
                     }
-                    Err(e) => self.show_error(e.to_string()),
+                    Err(e) => self.show_error(format!("{e:#}")),
                 }
             }
             AsyncMsg::MrUpdated(result, project_path) => {
@@ -697,7 +697,7 @@ impl App {
                         self.refilter_mrs();
                         self.save_cache();
                     }
-                    Err(e) => self.show_error(e.to_string()),
+                    Err(e) => self.show_error(format!("{e:#}")),
                 }
             }
             AsyncMsg::IssueStatusUpdated(result) => {
@@ -715,7 +715,7 @@ impl App {
                         self.refilter_issues();
                         self.save_cache();
                     }
-                    Err(e) => self.show_error(e.to_string()),
+                    Err(e) => self.show_error(format!("{e:#}")),
                 }
             }
             AsyncMsg::LabelsLoaded(result) => {
@@ -752,7 +752,7 @@ impl App {
                         }
                     }
                     Err(e) => {
-                        self.show_error(format!("Statuses: {e}"));
+                        self.show_error(format!("Statuses: {e:#}"));
                     }
                 }
             }
@@ -765,7 +765,7 @@ impl App {
                     self.refresh_focused();
                 }
                 Err(e) => {
-                    self.show_error(format!("Iterations: {e}"));
+                    self.show_error(format!("Iterations: {e:#}"));
                 }
             },
             AsyncMsg::IterationUpdated(result, issue_id, new_iteration) => {
@@ -784,7 +784,7 @@ impl App {
                             self.refilter_planning();
                             self.refilter_iteration_board();
                         }
-                        self.show_error(format!("Move iteration: {e}"));
+                        self.show_error(format!("Move iteration: {e:#}"));
                     }
                 }
             }
@@ -1050,6 +1050,13 @@ impl App {
 
         if key.code == KeyCode::Char('?') {
             self.overlay = Overlay::Help;
+            return false;
+        }
+
+        if key.code == KeyCode::Char('E') {
+            if let Some(err) = &self.error {
+                self.overlay = Overlay::Error(err.clone());
+            }
             return false;
         }
 
