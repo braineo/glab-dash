@@ -12,6 +12,8 @@ cargo test               # run all tests
 cargo fmt                # format code
 cargo clippy             # lint (pedantic, must pass with zero warnings)
 typos                    # spell check
+make lint                # auto-fix clippy warnings (must run before committing)
+make all                 # format + lint + test (full pre-commit check)
 ```
 
 ## Code Quality
@@ -23,6 +25,8 @@ All code must pass these checks before committing (enforced by CI):
 3. **`cargo build`** — zero warnings (dead code, unused imports, etc.)
 4. **`cargo test`** — all tests pass
 5. **`typos`** — no spelling errors (`_typos.toml` has exceptions)
+
+**Before committing, always run `make lint`** (`cargo clippy --all-targets --all-features --fix --allow-dirty -- -D warnings`) to auto-fix clippy warnings. This matches the CI clippy check and prevents pipeline failures.
 
 Pedantic lint exceptions are configured in `[lints.clippy]` in `Cargo.toml`. Do not add new `#[allow(...)]` attributes without good reason — prefer fixing the lint.
 
