@@ -166,6 +166,9 @@ pub struct App {
     // Planning view
     pub planning_state: planning::PlanningViewState,
     pub iterations: Vec<Iteration>,
+
+    // Iteration board on dashboard
+    pub iteration_board_state: dashboard::IterationBoardState,
 }
 
 impl App {
@@ -215,6 +218,7 @@ impl App {
             label_sort_orders,
             planning_state: planning::PlanningViewState::default(),
             iterations: Vec::new(),
+            iteration_board_state: dashboard::IterationBoardState::default(),
         }
     }
 
@@ -231,6 +235,8 @@ impl App {
             self.rebuild_label_color_map();
             self.refilter_issues();
             self.refilter_mrs();
+            self.rebuild_iteration_board_columns();
+            self.refilter_iteration_board();
         }
     }
 
@@ -262,7 +268,15 @@ impl App {
                     id: item.issue.id,
                     iid: item.issue.iid,
                 }),
-            View::Dashboard => None,
+            View::Dashboard => {
+                self.iteration_board_state
+                    .selected_issue(&self.issues)
+                    .map(|item| FocusedItem::Issue {
+                        project: item.project_path.clone(),
+                        id: item.issue.id,
+                        iid: item.issue.iid,
+                    })
+            }
         };
     }
 
@@ -572,6 +586,7 @@ impl App {
                     self.loading = false;
                     self.refilter_issues();
                     self.refilter_planning();
+                    self.refilter_iteration_board();
                     self.refresh_focused();
                     self.save_cache();
                 }
@@ -730,6 +745,8 @@ impl App {
                         } else {
                             self.work_item_statuses.insert(project.clone(), statuses);
                             self.save_cache();
+                            self.rebuild_iteration_board_columns();
+                            self.refilter_iteration_board();
                             self.refresh_focused();
                             self.show_status_chord(&project, issue_id, iid, close_only);
                         }
@@ -744,6 +761,7 @@ impl App {
                     self.iterations = iters;
                     self.classify_iterations();
                     self.refilter_planning();
+                    self.refilter_iteration_board();
                     self.refresh_focused();
                 }
                 Err(e) => {
@@ -764,6 +782,7 @@ impl App {
                             // We stored the previous iteration in new_iteration for revert
                             self.issues[pos].issue.iteration = new_iteration;
                             self.refilter_planning();
+                            self.refilter_iteration_board();
                         }
                         self.show_error(format!("Move iteration: {e}"));
                     }
@@ -789,6 +808,15 @@ impl App {
             .partition_issues(&self.issues, &self.label_sort_orders);
     }
 
+    pub fn refilter_iteration_board(&mut self) {
+        let current_iter = self.planning_state.current_iteration.as_ref();
+        self.iteration_board_state.partition_issues(
+            &self.issues,
+            current_iter,
+            &self.label_sort_orders,
+        );
+    }
+
     fn classify_iterations(&mut self) {
         // Iterations come sorted by CADENCE_AND_DUE_DATE_ASC.
         // States: "closed", "current", "upcoming".
@@ -804,6 +832,26 @@ impl App {
         self.planning_state.next_iteration = current_pos
             .and_then(|pos| self.iterations.get(pos + 1))
             .cloned();
+
+        // Build iteration board columns from available statuses
+        self.rebuild_iteration_board_columns();
+    }
+
+    fn rebuild_iteration_board_columns(&mut self) {
+        // Collect all statuses from all tracked projects
+        let mut all_statuses: Vec<WorkItemStatus> = Vec::new();
+        for project in &self.config.tracking_projects {
+            if let Some(statuses) = self.work_item_statuses.get(project) {
+                for s in statuses {
+                    if !all_statuses.iter().any(|existing| existing.name == s.name) {
+                        all_statuses.push(s.clone());
+                    }
+                }
+            }
+        }
+        if !all_statuses.is_empty() {
+            self.iteration_board_state.build_columns(&all_statuses);
+        }
     }
 
     fn fetch_iterations(&self) {
@@ -1015,6 +1063,7 @@ impl App {
                 View::Planning => self.planning_state.columns[self.planning_state.focused_column]
                     .filter
                     .is_searching(),
+                View::Dashboard => self.iteration_board_state.filter.is_searching(),
                 _ => false,
             };
             if !in_search {
@@ -1058,6 +1107,7 @@ impl App {
                     self.view_stack.push(View::Dashboard);
                     self.view = View::Planning;
                     self.refilter_planning();
+                    self.refilter_iteration_board();
                     self.refresh_focused();
                     return false;
                 }
@@ -1083,7 +1133,7 @@ impl App {
 
         // View-specific handling
         match self.view {
-            View::Dashboard => {}
+            View::Dashboard => self.handle_dashboard_key(key),
             View::IssueList => self.handle_issue_list_key(key),
             View::IssueDetail => self.handle_issue_detail_key(key),
             View::MrList => self.handle_mr_list_key(key),
@@ -1107,6 +1157,92 @@ impl App {
                 self.apply_iteration_move(issue_idx, value);
             }
             _ => {}
+        }
+    }
+
+    fn handle_dashboard_key(&mut self, key: KeyEvent) {
+        use dashboard::DashboardAction;
+        let action = self.iteration_board_state.handle_key(&key);
+        self.refresh_focused();
+
+        match action {
+            DashboardAction::None => {}
+            DashboardAction::Refilter => {
+                self.refilter_iteration_board();
+                self.refresh_focused();
+            }
+            DashboardAction::OpenDetail => {
+                if let Some(item) = self
+                    .iteration_board_state
+                    .selected_issue(&self.issues)
+                    .cloned()
+                {
+                    let project = item.project_path.clone();
+                    let iid = item.issue.iid;
+                    // Sync issue_list_state for detail view
+                    if let Some(idx) = self
+                        .iteration_board_state
+                        .columns
+                        .get(self.iteration_board_state.focused_column)
+                        .and_then(|col| col.list.selected_index())
+                    {
+                        if let Some(pos) = self
+                            .issue_list_state
+                            .list
+                            .indices
+                            .iter()
+                            .position(|&i| i == idx)
+                        {
+                            self.issue_list_state.list.table_state.select(Some(pos));
+                        } else {
+                            self.issue_list_state.list.indices.push(idx);
+                            self.issue_list_state
+                                .list
+                                .table_state
+                                .select(Some(self.issue_list_state.list.indices.len() - 1));
+                        }
+                    }
+                    self.issue_detail_state.reset();
+                    self.issue_detail_state.loading_notes = true;
+                    self.fetch_notes_for_issue(&project, iid);
+                    self.view_stack.push(View::Dashboard);
+                    self.view = View::IssueDetail;
+                }
+            }
+            DashboardAction::Refresh => self.fetch_all(),
+            DashboardAction::SetStatus => self.do_set_status(),
+            DashboardAction::ToggleState => self.do_toggle_state(),
+            DashboardAction::EditLabels => {
+                if let Some(item) = self
+                    .iteration_board_state
+                    .selected_issue(&self.issues)
+                    .cloned()
+                {
+                    let label_names: Vec<String> =
+                        self.labels.iter().map(|l| l.name.clone()).collect();
+                    self.picker_state = Some(
+                        picker::PickerState::new("Labels", label_names, true)
+                            .with_pre_selected(&item.issue.labels),
+                    );
+                    self.overlay = Overlay::Picker(PickerContext::Labels);
+                }
+            }
+            DashboardAction::EditAssignee => {
+                let members = self.picker_members();
+                self.chord_state = Some(chord_popup::ChordState::new("Set Assignee", members));
+                self.overlay = Overlay::Chord(ChordContext::Assignee);
+            }
+            DashboardAction::Comment => {
+                if self.focused.is_some() {
+                    self.comment_input.clear();
+                    self.overlay = Overlay::CommentInput;
+                }
+            }
+            DashboardAction::OpenBrowser => {
+                if let Some(item) = self.iteration_board_state.selected_issue(&self.issues) {
+                    let _ = open::that_detached(&item.issue.web_url);
+                }
+            }
         }
     }
 
@@ -1460,6 +1596,7 @@ impl App {
             PlanningAction::None => {}
             PlanningAction::Refilter => {
                 self.refilter_planning();
+                self.refilter_iteration_board();
                 self.refresh_focused();
             }
             PlanningAction::OpenDetail => {
@@ -1581,6 +1718,7 @@ impl App {
         self.issues[issue_idx].issue.iteration.clone_from(&target);
         self.issues[issue_idx].issue.updated_at = chrono::Utc::now();
         self.refilter_planning();
+        self.refilter_iteration_board();
 
         let client = self.client.clone();
         let tx = self.async_tx.clone();
@@ -1916,6 +2054,7 @@ impl App {
         {
             self.issues[pos].issue.custom_status = Some(status_name.to_string());
             self.refilter_issues();
+            self.refilter_iteration_board();
             self.save_cache();
         }
 
@@ -2000,7 +2139,16 @@ impl App {
                 let item = self.mrs.get(idx)?;
                 Some((idx, item.project_path.clone(), item.mr.iid, true))
             }
-            View::Dashboard => None,
+            View::Dashboard => {
+                let col = self.iteration_board_state.focused_column;
+                let idx = self
+                    .iteration_board_state
+                    .columns
+                    .get(col)
+                    .and_then(|c| c.list.selected_index())?;
+                let item = self.issues.get(idx)?;
+                Some((idx, item.project_path.clone(), item.issue.iid, false))
+            }
         }
     }
 
@@ -2233,6 +2381,7 @@ impl App {
         // Render main view
         match self.view {
             View::Dashboard => {
+                let current_iter = self.planning_state.current_iteration.as_ref();
                 dashboard::render(
                     frame,
                     chunks[0],
@@ -2241,6 +2390,8 @@ impl App {
                     &self.issues,
                     &self.mrs,
                     self.loading,
+                    &mut self.iteration_board_state,
+                    current_iter,
                 );
             }
             View::IssueList => {
