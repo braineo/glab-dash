@@ -386,8 +386,7 @@ fn render_iteration_board(
     }
 
     // Reserve 1 line at bottom for column indicator
-    let board_parts =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
+    let board_parts = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
     let board_area = board_parts[0];
     let indicator_area = board_parts[1];
 
@@ -490,11 +489,7 @@ fn render_board_column(
 
     let table = Table::new(rows, widths).row_highlight_style(styles::selected_style());
 
-    frame.render_stateful_widget(
-        table,
-        inner,
-        &mut board.columns[col_idx].list.table_state,
-    );
+    frame.render_stateful_widget(table, inner, &mut board.columns[col_idx].list.table_state);
 }
 
 fn render_column_indicator(
