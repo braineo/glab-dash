@@ -66,9 +66,34 @@ Env var overrides: `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_PROJECT`
 - **Rust** + **ratatui** + **crossterm** + **tokio** + **reqwest**
 - Edition 2024, rustfmt edition 2024
 - Async event loop: crossterm events on a thread, API calls via tokio::spawn, messages over mpsc channels
-- Views: Dashboard, IssueList, MrList, IssueDetail, MrDetail
+- Views: Dashboard, IssueList, MrList, IssueDetail, MrDetail, Planning
 - Overlays: Help, FilterEditor, Picker, ConfirmDialog, CommentInput
 - Filter system: composable conditions applied client-side for instant filtering
+
+### List data pipeline
+
+All list views follow a 4-stage pipeline:
+
+```
+Source (Vec<TrackedIssue> or Vec<TrackedMergeRequest>, shared on App)
+  → Prefilter (view-specific: none / by iteration / by status)
+    → User filter + sort + fuzzy search (per-view, via UserFilter)
+      → filtered indices (rendered by the view)
+```
+
+**`ItemList<T>`** (`src/ui/views/list_model.rs`): generic list holding `TableState` + `Vec<usize>` indices into source data. Provides navigation (`handle_nav`), selection (`selected_item`, `selected_index`), and `clamp_selection`. Used by all list views.
+
+**`UserFilter`** (`src/ui/views/list_model.rs`): bundle of filter conditions, sort specs, fuzzy query, and filter bar state. Each view owns its own instance(s). Methods: `handle_fuzzy_input`, `fuzzy_matches`, `start_search`.
+
+**Per-view scope:**
+
+| View | Prefilter | Filter/sort/fuzzy |
+|------|-----------|-------------------|
+| IssueList | none | 1 `UserFilter` |
+| MrList | none | 1 `UserFilter` |
+| Planning | iteration per column | 1 `UserFilter` per column (`PlanningColumn`) |
+
+Filter/sort state lives **in the view**, not on `App`. Views own their `ItemList` and `UserFilter` directly.
 
 ### FocusedItem — centralized view context
 
@@ -104,7 +129,8 @@ When adding new context-dependent behavior, read from `self.focused` instead of 
 - `src/event.rs` — Crossterm event handler
 - `src/gitlab/` — API client and types
 - `src/filter/` — Filter condition model, matching engine, tests
-- `src/ui/views/` — View rendering (dashboard, issue_list, mr_list, etc.)
+- `src/ui/views/list_model.rs` — `ItemList<T>`, `UserFilter`, `NavResult`, shared helpers
+- `src/ui/views/` — View rendering (dashboard, issue_list, mr_list, planning, etc.)
 - `src/ui/components/` — Reusable UI components (status_bar, filter_bar, picker, etc.)
 - `src/ui/styles.rs` — Color/style definitions
 - `src/ui/keys.rs` — Key detection helpers
@@ -124,4 +150,4 @@ When adding new context-dependent behavior, read from `self.focused` instead of 
 
 ## Tests
 
-Tests are in `src/filter/tests.rs`, `src/config_tests.rs`, and `src/onboarding_tests.rs`. Run with `cargo test`.
+Tests are in `src/filter/tests.rs`, `src/config_tests.rs`, `src/onboarding_tests.rs`, and `src/ui/views/list_model_tests.rs`. Run with `cargo test`.

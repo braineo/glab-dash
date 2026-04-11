@@ -248,3 +248,7 @@ pub fn format_age(dt: &chrono::DateTime<chrono::Utc>) -> String {
         format!("{}m", diff.num_minutes())
     }
 }
+
+#[cfg(test)]
+#[path = "list_model_tests.rs"]
+mod tests;
