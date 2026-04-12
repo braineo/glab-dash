@@ -25,6 +25,7 @@ pub struct StatusBarProps<'a> {
     pub loading_msg: &'a str,
     pub error: Option<&'a str>,
     pub last_fetched_at: Option<u64>,
+    pub last_fetch_ms: Option<u64>,
     pub hints: &'a [(&'a str, &'a str)],
 }
 
@@ -75,8 +76,11 @@ pub fn render(frame: &mut Frame, area: Rect, props: &StatusBarProps) {
             .unwrap_or_default()
             .as_secs();
         let age = now.saturating_sub(ts);
+        let duration_str = props
+            .last_fetch_ms
+            .map_or(String::new(), |ms| format!(" {ms}ms"));
         spans.push(Span::styled(
-            format!(" ({})", format_age(age)),
+            format!(" ({}{duration_str})", format_age(age)),
             styles::help_desc_style(),
         ));
     }

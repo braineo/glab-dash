@@ -1255,7 +1255,7 @@ impl GitLabClient {
         &self,
         members: &[String],
         state: Option<&str>,
-        _updated_after: Option<&str>,
+        updated_after: Option<&str>,
     ) -> Result<Vec<TrackedIssue>> {
         let gql_state = match state {
             Some("opened") => serde_json::json!("opened"),
@@ -1264,12 +1264,13 @@ impl GitLabClient {
         };
 
         let query = r"
-            query($assigneeUsernames: [String!], $state: IssuableState, $types: [IssueType!], $after: String) {
+            query($assigneeUsernames: [String!], $state: IssuableState, $types: [IssueType!], $after: String, $updatedAfter: Time) {
                 issues(
                     assigneeUsernames: $assigneeUsernames
                     state: $state
                     types: $types
                     after: $after
+                    updatedAfter: $updatedAfter
                     first: 100
                     sort: UPDATED_DESC
                 ) {
@@ -1301,6 +1302,7 @@ impl GitLabClient {
                     "state": gql_state,
                     "types": ["ISSUE"],
                     "after": cursor,
+                    "updatedAfter": updated_after,
                 });
                 let body = serde_json::json!({ "query": query, "variables": variables });
                 let json = self.graphql_post(&body).await?;
@@ -1456,7 +1458,7 @@ impl GitLabClient {
         &self,
         members: &[String],
         state: &str,
-        _updated_after: Option<&str>,
+        updated_after: Option<&str>,
     ) -> Result<Vec<TrackedMergeRequest>> {
         let gql_state = match state {
             "opened" => serde_json::json!("opened"),
@@ -1467,9 +1469,9 @@ impl GitLabClient {
 
         let assigned_query = format!(
             r"
-            query($username: String!, $state: MergeRequestState, $after: String) {{
+            query($username: String!, $state: MergeRequestState, $after: String, $updatedAfter: Time) {{
                 user(username: $username) {{
-                    assignedMergeRequests(state: $state, after: $after, first: {page_size}, sort: UPDATED_DESC) {{
+                    assignedMergeRequests(state: $state, after: $after, updatedAfter: $updatedAfter, first: {page_size}, sort: UPDATED_DESC) {{
                         nodes {{ {fields} }}
                         pageInfo {{ hasNextPage endCursor }}
                     }}
@@ -1482,9 +1484,9 @@ impl GitLabClient {
 
         let reviewer_query = format!(
             r"
-            query($username: String!, $state: MergeRequestState, $after: String) {{
+            query($username: String!, $state: MergeRequestState, $after: String, $updatedAfter: Time) {{
                 user(username: $username) {{
-                    reviewRequestedMergeRequests(state: $state, after: $after, first: {page_size}, sort: UPDATED_DESC) {{
+                    reviewRequestedMergeRequests(state: $state, after: $after, updatedAfter: $updatedAfter, first: {page_size}, sort: UPDATED_DESC) {{
                         nodes {{ {fields} }}
                         pageInfo {{ hasNextPage endCursor }}
                     }}
@@ -1504,6 +1506,7 @@ impl GitLabClient {
                 &assigned_query,
                 member,
                 &gql_state,
+                updated_after,
                 &mut all,
                 &mut seen_ids,
                 false,
@@ -1514,6 +1517,7 @@ impl GitLabClient {
                 &reviewer_query,
                 member,
                 &gql_state,
+                updated_after,
                 &mut all,
                 &mut seen_ids,
                 true,
@@ -1528,6 +1532,7 @@ impl GitLabClient {
         query: &str,
         member: &str,
         state: &serde_json::Value,
+        updated_after: Option<&str>,
         all: &mut Vec<TrackedMergeRequest>,
         seen_ids: &mut std::collections::HashSet<u64>,
         is_reviewer: bool,
@@ -1538,6 +1543,7 @@ impl GitLabClient {
                 "username": member,
                 "state": state,
                 "after": cursor,
+                "updatedAfter": updated_after,
             });
             let body = serde_json::json!({ "query": query, "variables": variables });
             let json = self.graphql_post(&body).await?;

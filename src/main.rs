@@ -180,6 +180,7 @@ async fn main() -> Result<()> {
     // Load cache for instant startup, then fetch fresh data in background
     app.load_from_db();
     app.loading = true;
+    app.fetch_started_at = Some(app::App::now_millis());
     app.fetch_all();
 
     // Main loop — event-driven rendering with drain-before-paint.
@@ -212,6 +213,7 @@ async fn main() -> Result<()> {
                 app.needs_redraw = true;
             }
             _ = refresh_timer.tick() => {
+                app.fetch_started_at = Some(app::App::now_millis());
                 app.fetch_all();
                 app.needs_redraw = true;
             }
