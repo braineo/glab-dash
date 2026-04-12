@@ -3,14 +3,26 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::cache;
+use crate::filter::FilterCondition;
 use crate::gitlab::types::{
     Iteration, ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus,
 };
+use crate::sort::SortSpec;
 
 const SCHEMA_VERSION: u32 = 1;
+
+/// Persisted filter/sort state for a single list view.
+#[derive(Default, Serialize, Deserialize)]
+pub struct ViewState {
+    #[serde(default)]
+    pub conditions: Vec<FilterCondition>,
+    #[serde(default)]
+    pub sort_specs: Vec<SortSpec>,
+    #[serde(default)]
+    pub fuzzy_query: String,
+}
 
 /// SQLite-backed persistence layer.
 ///
@@ -25,13 +37,8 @@ fn db_path() -> Option<PathBuf> {
     dirs::cache_dir().map(|d| d.join("glab-dash").join("data.db"))
 }
 
-fn json_cache_path() -> Option<PathBuf> {
-    dirs::cache_dir().map(|d| d.join("glab-dash").join("cache.json"))
-}
-
 impl Db {
     /// Open (or create) the database at `~/.cache/glab-dash/data.db`.
-    /// Runs schema migrations and one-time JSON→SQLite migration if needed.
     pub fn open() -> Result<Self> {
         let path = db_path().context("could not determine cache directory")?;
         if let Some(parent) = path.parent() {
@@ -43,14 +50,6 @@ impl Db {
 
         let db = Self { conn };
         db.migrate()?;
-
-        // One-time migration from old JSON cache
-        if let Some(json_path) = json_cache_path()
-            && json_path.exists()
-        {
-            let _ = db.migrate_from_json(&json_path);
-        }
-
         Ok(db)
     }
 
@@ -377,41 +376,6 @@ impl Db {
         }
     }
 
-    // ── JSON cache migration ────────────────────────────────────────
-
-    fn migrate_from_json(&self, json_path: &std::path::Path) -> Result<()> {
-        let data = std::fs::read_to_string(json_path)?;
-        let cached: cache::CacheData = serde_json::from_str(&data)?;
-
-        self.upsert_issues(&cached.issues)?;
-        self.upsert_mrs(&cached.mrs)?;
-        self.upsert_labels(&cached.labels)?;
-        self.upsert_iterations(&cached.iterations)?;
-
-        for (project, statuses) in &cached.work_item_statuses {
-            self.set_work_item_statuses(project, statuses)?;
-        }
-
-        // Migrate shadow work issues into the issues table
-        self.upsert_issues(&cached.shadow_work_issues)?;
-
-        // Migrate key-value data
-        self.set_kv("label_usage", &cached.label_usage)?;
-        self.set_kv("scope_creep_dates", &cached.scope_creep_dates)?;
-
-        if let Some(vs) = &cached.issue_view_state {
-            self.set_kv("issue_view_state", vs)?;
-        }
-        if let Some(vs) = &cached.mr_view_state {
-            self.set_kv("mr_view_state", vs)?;
-        }
-
-        // Rename old cache file
-        let backup = json_path.with_extension("json.bak");
-        std::fs::rename(json_path, backup)?;
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
