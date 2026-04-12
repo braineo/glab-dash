@@ -264,25 +264,19 @@ struct GqlPipelineRef {
 }
 
 #[derive(Deserialize)]
-struct GqlUserAssignedData {
-    user: Option<GqlUserAssigned>,
+struct GqlUserMrData {
+    user: Option<GqlUserMrs>,
 }
 
+/// Unified response for both `assignedMergeRequests` and
+/// `reviewRequestedMergeRequests` — whichever field is present wins.
 #[derive(Deserialize)]
-struct GqlUserAssigned {
-    #[serde(rename = "assignedMergeRequests")]
-    assigned_merge_requests: GqlConnection<GqlMergeRequest>,
-}
-
-#[derive(Deserialize)]
-struct GqlUserReviewData {
-    user: Option<GqlUserReview>,
-}
-
-#[derive(Deserialize)]
-struct GqlUserReview {
-    #[serde(rename = "reviewRequestedMergeRequests")]
-    review_requested_merge_requests: GqlConnection<GqlMergeRequest>,
+struct GqlUserMrs {
+    #[serde(
+        alias = "assignedMergeRequests",
+        alias = "reviewRequestedMergeRequests"
+    )]
+    mrs: GqlConnection<GqlMergeRequest>,
 }
 
 impl From<GqlMergeRequest> for MergeRequest {
@@ -1500,44 +1494,33 @@ impl GitLabClient {
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
 
+        let queries = [&assigned_query, &reviewer_query];
         for member in members {
-            // Assigned MRs
-            self.fetch_user_mrs_paginated(
-                &assigned_query,
-                member,
-                &gql_state,
-                updated_after,
-                &mut all,
-                &mut seen_ids,
-                false,
-            )
-            .await?;
-            // Review-requested MRs
-            self.fetch_user_mrs_paginated(
-                &reviewer_query,
-                member,
-                &gql_state,
-                updated_after,
-                &mut all,
-                &mut seen_ids,
-                true,
-            )
-            .await?;
+            for query in &queries {
+                for item in self
+                    .fetch_user_mrs_page(query, member, &gql_state, updated_after)
+                    .await?
+                {
+                    if !self.config.is_tracking_project(&item.project_path)
+                        && seen_ids.insert(item.mr.id)
+                    {
+                        all.push(item);
+                    }
+                }
+            }
         }
         Ok(all)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn fetch_user_mrs_paginated(
+    /// Paginate a per-user MR query and return the collected results.
+    async fn fetch_user_mrs_page(
         &self,
         query: &str,
         member: &str,
         state: &serde_json::Value,
         updated_after: Option<&str>,
-        all: &mut Vec<TrackedMergeRequest>,
-        seen_ids: &mut std::collections::HashSet<u64>,
-        is_reviewer: bool,
-    ) -> Result<()> {
+    ) -> Result<Vec<TrackedMergeRequest>> {
+        let mut results = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
             let variables = serde_json::json!({
@@ -1549,50 +1532,34 @@ impl GitLabClient {
             let body = serde_json::json!({ "query": query, "variables": variables });
             let json = self.graphql_post(&body).await?;
 
-            let connection = if is_reviewer {
-                let resp: GqlResponse<GqlUserReviewData> =
-                    serde_json::from_value(json).context("failed to deserialize reviewer MRs")?;
-                let Some(user) = resp.data.user else {
-                    break;
-                };
-                user.review_requested_merge_requests
-            } else {
-                let resp: GqlResponse<GqlUserAssignedData> =
-                    serde_json::from_value(json).context("failed to deserialize assigned MRs")?;
-                let Some(user) = resp.data.user else {
-                    break;
-                };
-                user.assigned_merge_requests
+            let resp: GqlResponse<GqlUserMrData> =
+                serde_json::from_value(json).context("failed to deserialize user MRs")?;
+            let Some(user) = resp.data.user else {
+                break;
             };
 
-            let has_next = connection
+            let has_next = user
+                .mrs
                 .page_info
                 .as_ref()
                 .is_some_and(|pi| pi.has_next_page);
 
-            for mr in connection.nodes.into_iter().map(MergeRequest::from) {
+            for mr in user.mrs.nodes.into_iter().map(MergeRequest::from) {
                 let project_path = mr
                     .references
                     .as_ref()
                     .map(|r| extract_project_from_ref(&r.full_ref))
                     .unwrap_or_default();
-
-                if self.config.is_tracking_project(&project_path) {
-                    continue;
-                }
-                if !seen_ids.insert(mr.id) {
-                    continue;
-                }
-                all.push(TrackedMergeRequest { mr, project_path });
+                results.push(TrackedMergeRequest { mr, project_path });
             }
 
             if has_next {
-                cursor = connection.page_info.and_then(|pi| pi.end_cursor);
+                cursor = user.mrs.page_info.and_then(|pi| pi.end_cursor);
             } else {
                 break;
             }
         }
-        Ok(())
+        Ok(results)
     }
 
     // ── Iteration health: scope creep & shadow work ──
