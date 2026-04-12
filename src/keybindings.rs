@@ -43,11 +43,9 @@ pub enum KeyAction {
     // --- Search & Filter ---
     StartSearch,
     FocusFilterBar,
-    AddFilter,
+    FilterMenu,
     ClearFilters,
-    ApplyPreset(u8),
-    PickPreset,
-    PickSortPreset,
+    SortByField,
 
     // --- Shared item actions (resolved via FocusedItem) ---
     Refresh,
@@ -185,27 +183,27 @@ pub static GLOBAL_BINDINGS: &[Binding] = &[
 
 pub static GLOBAL_NAV_BINDINGS: &[Binding] = &[
     Binding {
-        matcher: Char('h'),
+        matcher: Char('1'),
         action: A::NavigateTo(View::Dashboard),
-        label: "h",
+        label: "1",
         description: "Dashboard (home)",
     },
     Binding {
-        matcher: Char('i'),
+        matcher: Char('2'),
         action: A::NavigateTo(View::IssueList),
-        label: "i",
+        label: "2",
         description: "Go to issues",
     },
     Binding {
-        matcher: Char('m'),
+        matcher: Char('3'),
         action: A::NavigateTo(View::MrList),
-        label: "m",
+        label: "3",
         description: "Go to merge requests",
     },
     Binding {
-        matcher: Char('p'),
+        matcher: Char('4'),
         action: A::NavigateTo(View::Planning),
-        label: "p",
+        label: "4",
         description: "Go to planning",
     },
 ];
@@ -351,87 +349,21 @@ pub static DETAIL_NAV_BINDINGS: &[Binding] = &[
 pub static FILTER_BINDINGS: &[Binding] = &[
     Binding {
         matcher: Char('f'),
-        action: A::AddFilter,
+        action: A::FilterMenu,
         label: "f",
-        description: "Add filter condition",
+        description: "Filter menu",
     },
     Binding {
         matcher: Char('F'),
         action: A::ClearFilters,
-        label: "0/F",
+        label: "F",
         description: "Clear all filters",
     },
     Binding {
-        matcher: Char('0'),
-        action: A::ClearFilters,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('1'),
-        action: A::ApplyPreset(1),
-        label: "1-9",
-        description: "Apply filter preset",
-    },
-    Binding {
-        matcher: Char('2'),
-        action: A::ApplyPreset(2),
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('3'),
-        action: A::ApplyPreset(3),
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('4'),
-        action: A::ApplyPreset(4),
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('5'),
-        action: A::ApplyPreset(5),
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('6'),
-        action: A::ApplyPreset(6),
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('7'),
-        action: A::ApplyPreset(7),
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('8'),
-        action: A::ApplyPreset(8),
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('9'),
-        action: A::ApplyPreset(9),
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('e'),
-        action: A::PickPreset,
-        label: "e",
-        description: "Pick saved preset",
-    },
-    Binding {
         matcher: Char('S'),
-        action: A::PickSortPreset,
+        action: A::SortByField,
         label: "S",
-        description: "Pick sort preset",
+        description: "Sort by field",
     },
     Binding {
         matcher: Key(KeyCode::Tab),
@@ -471,6 +403,12 @@ pub static ISSUE_ACTION_BINDINGS: &[Binding] = &[
         action: A::Comment,
         label: "c",
         description: "Add comment",
+    },
+    Binding {
+        matcher: Char('i'),
+        action: A::MoveIteration,
+        label: "i",
+        description: "Move to iteration",
     },
 ];
 
@@ -570,12 +508,6 @@ pub static PLANNING_NAV_BINDINGS: &[Binding] = &[
         action: A::ToggleLayout,
         label: "v",
         description: "Toggle 3-col / 2-col",
-    },
-    Binding {
-        matcher: Char('I'),
-        action: A::MoveIteration,
-        label: "I",
-        description: "Move to iteration",
     },
 ];
 

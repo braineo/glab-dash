@@ -10,6 +10,12 @@ use crate::ui::styles;
 /// Home-row keys used as chord codes for sequential generation (9 keys).
 const CHORD_KEYS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
 
+/// Divider sentinel — labels starting with this are rendered as separator lines.
+pub const DIVIDER: &str = "───";
+
+/// Section header sentinel — labels starting with this are rendered as bold titles.
+pub const HEADER: &str = "§ ";
+
 /// Dim color for inactive/non-matching chord items (against overlay bg #343b58).
 pub const CHORD_DIM: Color = Color::Rgb(80, 87, 120);
 
@@ -58,10 +64,29 @@ impl ChordState {
     ///
     /// - Unique first letter → 1-char code (instant select)
     /// - Shared first letter → 2-char codes: first letter + distinguishing char
+    /// - Divider labels (starting with `DIVIDER`) get empty codes and render as separators.
     pub fn new_for_names(title: &str, labels: Vec<String>) -> Self {
-        let codes = generate_name_codes(&labels);
-        let max_code_len = codes.iter().map(String::len).max().unwrap_or(1);
-        let options = codes.into_iter().zip(labels).collect();
+        // Separate real labels from dividers/headers for code generation
+        let real_labels: Vec<String> = labels
+            .iter()
+            .filter(|l| !l.starts_with(DIVIDER) && !l.starts_with(HEADER))
+            .cloned()
+            .collect();
+        let real_codes = generate_name_codes(&real_labels);
+        let mut real_iter = real_codes.into_iter();
+
+        let options: Vec<(String, String)> = labels
+            .into_iter()
+            .map(|l| {
+                if l.starts_with(DIVIDER) || l.starts_with(HEADER) {
+                    (String::new(), l)
+                } else {
+                    (real_iter.next().unwrap_or_default(), l)
+                }
+            })
+            .collect();
+
+        let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
         Self {
             title: title.to_string(),
             options,
@@ -220,6 +245,20 @@ pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
 // ── Rendering ──
 
 pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
+    let has_sections = state
+        .options
+        .iter()
+        .any(|(_, l)| l.starts_with(HEADER) || l.starts_with(DIVIDER));
+
+    if has_sections {
+        render_sectioned(frame, area, state);
+    } else {
+        render_grid(frame, area, state);
+    }
+}
+
+/// Render as a multi-column grid (default for simple chord lists).
+fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
     let max_label_len = state
         .options
         .iter()
@@ -277,6 +316,81 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
                 }
             }
         }
+        lines.push(Line::from(spans));
+    }
+
+    // ── Hint line ──
+    lines.push(render_hint(state, typed_len));
+
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
+}
+
+/// Render as a single-column sectioned list with headers and dividers.
+fn render_sectioned(frame: &mut Frame, area: Rect, state: &ChordState) {
+    let max_label_len = state
+        .options
+        .iter()
+        .filter(|(c, _)| !c.is_empty())
+        .map(|(_, l)| l.len())
+        .max()
+        .unwrap_or(6);
+    let item_width = state.max_code_len + 1 + max_label_len + 2;
+
+    let popup_width = u16::try_from(item_width + 4)
+        .unwrap_or(u16::MAX)
+        .min(area.width.saturating_sub(2));
+    let popup_height = u16::try_from(state.options.len() + 3)
+        .unwrap_or(u16::MAX)
+        .min(area.height.saturating_sub(2));
+
+    let popup = centered_rect(popup_width, popup_height, area);
+    frame.render_widget(Clear, popup);
+
+    let block = styles::overlay_block(&state.title);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let mut lines = Vec::new();
+    let typed_len = state.input.len();
+
+    for (code, label) in &state.options {
+        // Section header
+        if let Some(title) = label.strip_prefix(HEADER) {
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    title.to_string(),
+                    Style::default()
+                        .fg(styles::TEXT_DIM)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+            continue;
+        }
+
+        // Divider
+        if label.starts_with(DIVIDER) {
+            let line = "─".repeat(item_width);
+            lines.push(Line::from(Span::styled(
+                line,
+                Style::default().fg(CHORD_DIM),
+            )));
+            continue;
+        }
+
+        // Normal item
+        let is_active = state.input.is_empty() || code.starts_with(&state.input);
+        let mut spans = Vec::new();
+        render_code(&mut spans, code, state.max_code_len, typed_len, is_active);
+        spans.push(Span::raw(" "));
+
+        let label_style = if is_active {
+            styles::overlay_text_style()
+        } else {
+            Style::default().fg(CHORD_DIM)
+        };
+        spans.push(Span::styled(label.clone(), label_style));
         lines.push(Line::from(spans));
     }
 

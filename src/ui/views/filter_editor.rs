@@ -136,8 +136,8 @@ impl FilterEditorState {
         }
         match key.code {
             KeyCode::Esc => {
-                self.step = EditorStep::SelectOp;
-                FilterEditorAction::Continue
+                // Cancel directly — field/op are selected via chords, not editor steps
+                FilterEditorAction::Cancel
             }
             KeyCode::Enter => {
                 // If a suggestion is highlighted, use it

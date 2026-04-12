@@ -18,25 +18,25 @@ const TABS: &[Tab] = &[
     Tab {
         icon: "◈",
         label: "Dashboard",
-        key: 'h',
+        key: '1',
         view: View::Dashboard,
     },
     Tab {
         icon: "●",
         label: "Issues",
-        key: 'i',
+        key: '2',
         view: View::IssueList,
     },
     Tab {
         icon: "⑂",
         label: "MRs",
-        key: 'm',
+        key: '3',
         view: View::MrList,
     },
     Tab {
         icon: "▦",
         label: "Planning",
-        key: 'p',
+        key: '4',
         view: View::Planning,
     },
 ];

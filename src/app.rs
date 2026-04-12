@@ -71,8 +71,6 @@ pub enum ConfirmAction {
 #[derive(Debug)]
 pub enum PickerContext {
     Assignee,
-    Preset,
-    SortPreset,
     Team,
     /// Reply to a discussion thread; stores thread metadata parallel to picker items.
     ReplyThread(Vec<ThreadPickerInfo>),
@@ -97,6 +95,16 @@ pub enum ChordContext {
     Assignee,
     /// Move issue to iteration: (`issue_index` in self.issues)
     Iteration(usize),
+    /// Sort: pick a field
+    SortField,
+    /// Sort: pick direction for chosen field (field_name, optional label_scope)
+    SortDirection(String, Option<String>),
+    /// Filter menu: presets, existing conditions, add/clear
+    FilterMenu,
+    /// Filter: pick a field for new condition
+    FilterField,
+    /// Filter: pick an operator for chosen field
+    FilterOp(crate::filter::Field),
 }
 
 /// Messages from async operations
@@ -514,7 +522,8 @@ impl App {
             )
         };
         self.chord_state = Some(
-            chord_popup::ChordState::new(title, names).with_kind(chord_popup::ChordKind::Status),
+            chord_popup::ChordState::new_for_names(title, names)
+                .with_kind(chord_popup::ChordKind::Status),
         );
         self.overlay = Overlay::Chord(ChordContext::Status(project.to_string(), issue_id, iid));
     }
@@ -911,8 +920,14 @@ impl App {
             .apply_filters(&self.mrs, &me, &members, &self.label_sort_orders);
     }
 
-    fn show_sort_preset_picker(&mut self, kind: &str) {
-        let mut names: Vec<String> = Vec::new();
+    fn action_sort_by_field(&mut self) {
+        let kind = match self.view {
+            View::IssueList | View::IssueDetail => "issue",
+            View::MrList | View::MrDetail => "merge_request",
+            _ => return,
+        };
+
+        let mut labels = Vec::new();
 
         // "Clear sort" when a sort is active
         let has_sort = match self.view {
@@ -921,69 +936,87 @@ impl App {
             _ => false,
         };
         if has_sort {
-            names.push("⊘ Clear sort".to_string());
+            labels.push("⊘ Clear sort".to_string());
         }
 
-        // Config presets
+        // Sort config presets
         for p in &self.config.sort_presets {
             if p.kind == kind {
-                names.push(format!("▸ {}", p.name));
+                labels.push(format!("▸ {}", p.name));
             }
         }
 
-        // Built-in field sorts (always available)
+        // Built-in field sorts
         let fields: &[crate::sort::SortField] = match kind {
             "merge_request" => crate::sort::SortField::all_mr(),
             _ => crate::sort::SortField::all_issue(),
         };
         for field in fields {
-            names.push(format!("↓ {} (newest first)", field.name()));
-            names.push(format!("↑ {} (oldest first)", field.name()));
+            labels.push(field.name().to_string());
         }
 
         // Label scope sorts from config
         for order in &self.config.label_sort_orders {
-            names.push(format!("↓ {}:: (high priority first)", order.scope));
-            names.push(format!("↑ {}:: (low priority first)", order.scope));
+            labels.push(format!("{}::", order.scope));
         }
 
-        self.picker_state = Some(picker::PickerState::new("Sort", names, false));
-        self.overlay = Overlay::Picker(PickerContext::SortPreset);
+        self.chord_state = Some(chord_popup::ChordState::new_for_names("Sort by", labels));
+        self.overlay = Overlay::Chord(ChordContext::SortField);
     }
 
-    fn apply_sort_preset(&mut self, name: &str) {
-        let specs = if name == "⊘ Clear sort" {
-            Vec::new()
-        } else if let Some(preset_name) = name.strip_prefix("▸ ") {
-            // Config preset
-            self.config
-                .sort_presets
-                .iter()
-                .find(|p| p.name == preset_name)
-                .map(|preset| {
-                    preset
-                        .specs
-                        .iter()
-                        .filter_map(|s| {
-                            let field = crate::sort::SortField::from_str(&s.field)?;
-                            let direction = crate::sort::SortDirection::from_str(&s.direction)?;
-                            Some(crate::sort::SortSpec {
-                                field,
-                                direction,
-                                label_scope: s.label_scope.clone(),
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else if let Some(rest) = name.strip_prefix("↓ ") {
-            Self::parse_inline_sort(rest, crate::sort::SortDirection::Desc)
-        } else if let Some(rest) = name.strip_prefix("↑ ") {
-            Self::parse_inline_sort(rest, crate::sort::SortDirection::Asc)
+    fn handle_sort_field_chosen(&mut self, value: &str) {
+        // Clear sort — apply immediately
+        if value == "⊘ Clear sort" {
+            self.apply_sort_specs(Vec::new());
+            return;
+        }
+
+        // Config preset — apply immediately
+        if let Some(preset_name) = value.strip_prefix("▸ ") {
+            self.apply_sort_preset(preset_name);
+            return;
+        }
+
+        // Field or label scope — show direction chord
+        let (field_name, label_scope) = if let Some(scope) = value.strip_suffix("::") {
+            ("label".to_string(), Some(scope.to_string()))
         } else {
+            (value.to_string(), None)
+        };
+
+        let labels = vec!["↓ Descending".to_string(), "↑ Ascending".to_string()];
+        self.chord_state = Some(chord_popup::ChordState::new_for_names(
+            &format!("Sort {value}"),
+            labels,
+        ));
+        self.overlay = Overlay::Chord(ChordContext::SortDirection(field_name, label_scope));
+    }
+
+    fn handle_sort_direction_chosen(
+        &mut self,
+        field_name: &str,
+        label_scope: Option<&str>,
+        value: &str,
+    ) {
+        let direction = if value.starts_with('↑') {
+            crate::sort::SortDirection::Asc
+        } else {
+            crate::sort::SortDirection::Desc
+        };
+
+        let Some(field) = crate::sort::SortField::from_str(field_name) else {
             return;
         };
 
+        let specs = vec![crate::sort::SortSpec {
+            field,
+            direction,
+            label_scope: label_scope.map(String::from),
+        }];
+        self.apply_sort_specs(specs);
+    }
+
+    fn apply_sort_specs(&mut self, specs: Vec<crate::sort::SortSpec>) {
         match self.view {
             View::IssueList => {
                 self.issue_list_state.filter.sort_specs = specs;
@@ -997,32 +1030,29 @@ impl App {
         }
     }
 
-    fn parse_inline_sort(
-        text: &str,
-        direction: crate::sort::SortDirection,
-    ) -> Vec<crate::sort::SortSpec> {
-        // "field_name (description)" or "scope:: (description)"
-        let field_part = text.split(" (").next().unwrap_or(text);
-
-        // Label scope sort: "workflow::"
-        if let Some(scope) = field_part.strip_suffix("::") {
-            return vec![crate::sort::SortSpec {
-                field: crate::sort::SortField::Label,
-                direction,
-                label_scope: Some(scope.to_string()),
-            }];
-        }
-
-        // Regular field sort
-        if let Some(field) = crate::sort::SortField::from_str(field_part) {
-            return vec![crate::sort::SortSpec {
-                field,
-                direction,
-                label_scope: None,
-            }];
-        }
-
-        Vec::new()
+    fn apply_sort_preset(&mut self, name: &str) {
+        let specs = self
+            .config
+            .sort_presets
+            .iter()
+            .find(|p| p.name == name)
+            .map(|preset| {
+                preset
+                    .specs
+                    .iter()
+                    .filter_map(|s| {
+                        let field = crate::sort::SortField::from_str(&s.field)?;
+                        let direction = crate::sort::SortDirection::from_str(&s.direction)?;
+                        Some(crate::sort::SortSpec {
+                            field,
+                            direction,
+                            label_scope: s.label_scope.clone(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.apply_sort_specs(specs);
     }
 
     // ── InputMode ──────────────────────────────────────────────────────
@@ -1208,14 +1238,9 @@ impl App {
             // === Search & Filter ===
             KeyAction::StartSearch => self.action_start_search(),
             KeyAction::FocusFilterBar => self.action_focus_filter_bar(),
-            KeyAction::AddFilter => {
-                self.filter_editor_state.reset();
-                self.overlay = Overlay::FilterEditor;
-            }
+            KeyAction::FilterMenu => self.action_show_filter_menu(),
             KeyAction::ClearFilters => self.action_clear_filters(),
-            KeyAction::ApplyPreset(n) => self.action_apply_preset(n),
-            KeyAction::PickPreset => self.action_pick_preset(),
-            KeyAction::PickSortPreset => self.action_pick_sort_preset(),
+            KeyAction::SortByField => self.action_sort_by_field(),
 
             // === Item actions (resolved via view/FocusedItem) ===
             KeyAction::Refresh => {
@@ -1594,50 +1619,139 @@ impl App {
         }
     }
 
-    fn action_apply_preset(&mut self, n: u8) {
+    fn action_show_filter_menu(&mut self) {
         let kind = match self.view {
             View::IssueList | View::IssueDetail => "issue",
             View::MrList | View::MrDetail => "merge_request",
             _ => return,
         };
-        if let Some(name) = self
-            .config
-            .filters
-            .iter()
-            .filter(|f| f.kind == kind)
-            .nth(usize::from(n) - 1)
-            .map(|f| f.name.clone())
-        {
-            self.apply_preset(&name);
+
+        let mut labels = Vec::new();
+
+        // ── Builder section ──
+        labels.push(format!("{}Builder", chord_popup::HEADER));
+
+        let conditions = match self.view {
+            View::IssueList => &self.issue_list_state.filter.conditions,
+            View::MrList => &self.mr_list_state.filter.conditions,
+            _ => return,
+        };
+        for cond in conditions {
+            labels.push(format!("✕ {}", cond.display()));
+        }
+        labels.push("+ Add condition".to_string());
+        if !conditions.is_empty() {
+            labels.push("⊘ Clear all".to_string());
+        }
+
+        // ── Presets section ──
+        let has_presets = self.config.filters.iter().any(|f| f.kind == kind);
+        if has_presets {
+            labels.push(chord_popup::DIVIDER.to_string());
+            labels.push(format!("{}Presets", chord_popup::HEADER));
+            for f in &self.config.filters {
+                if f.kind == kind {
+                    labels.push(format!("▸ {}", f.name));
+                }
+            }
+        }
+
+        self.chord_state = Some(chord_popup::ChordState::new_for_names("Filter", labels));
+        self.overlay = Overlay::Chord(ChordContext::FilterMenu);
+    }
+
+    fn handle_filter_menu_chosen(&mut self, value: &str) {
+        if value == "+ Add condition" {
+            self.show_filter_field_chord();
+            return;
+        }
+
+        if value == "⊘ Clear all" {
+            self.action_clear_filters();
+            return;
+        }
+
+        if let Some(preset_name) = value.strip_prefix("▸ ") {
+            self.apply_preset(preset_name);
+            return;
+        }
+
+        // Remove a condition (strip "✕ " prefix, find and remove matching)
+        if let Some(display) = value.strip_prefix("✕ ") {
+            let conditions = match self.view {
+                View::IssueList => &mut self.issue_list_state.filter.conditions,
+                View::MrList => &mut self.mr_list_state.filter.conditions,
+                _ => return,
+            };
+            if let Some(idx) = conditions.iter().position(|c| c.display() == display) {
+                conditions.remove(idx);
+            }
+            match self.view {
+                View::IssueList => self.refilter_issues(),
+                View::MrList => self.refilter_mrs(),
+                _ => {}
+            }
+            // Reopen the filter menu
+            self.action_show_filter_menu();
         }
     }
 
-    fn action_pick_preset(&mut self) {
-        let kind = match self.view {
-            View::IssueList | View::IssueDetail => "issue",
-            View::MrList | View::MrDetail => "merge_request",
-            _ => return,
+    fn show_filter_field_chord(&mut self) {
+        let labels: Vec<String> = Field::all().iter().map(|f| f.name().to_string()).collect();
+        self.chord_state = Some(chord_popup::ChordState::new_for_names(
+            "Filter Field",
+            labels,
+        ));
+        self.overlay = Overlay::Chord(ChordContext::FilterField);
+    }
+
+    fn handle_filter_field_chosen(&mut self, value: &str) {
+        let Some(field) = Field::from_str(value) else {
+            return;
         };
-        let presets: Vec<String> = self
-            .config
-            .filters
+        let labels: Vec<String> = Op::all()
             .iter()
-            .filter(|f| f.kind == kind)
-            .map(|f| f.name.clone())
+            .map(|o| {
+                format!(
+                    "{} ({})",
+                    match o {
+                        Op::Eq => "equals",
+                        Op::Neq => "not equals",
+                        Op::Contains => "contains",
+                        Op::NotContains => "not contains",
+                    },
+                    o.symbol()
+                )
+            })
             .collect();
-        if !presets.is_empty() {
-            self.picker_state = Some(picker::PickerState::new("Filter Preset", presets, false));
-            self.overlay = Overlay::Picker(PickerContext::Preset);
-        }
+        self.chord_state = Some(chord_popup::ChordState::new_for_names(
+            &format!("{value}:"),
+            labels,
+        ));
+        self.overlay = Overlay::Chord(ChordContext::FilterOp(field));
     }
 
-    fn action_pick_sort_preset(&mut self) {
-        let kind = match self.view {
-            View::IssueList | View::IssueDetail => "issue",
-            View::MrList | View::MrDetail => "merge_request",
-            _ => return,
+    fn handle_filter_op_chosen(&mut self, field: Field, value: &str) {
+        // Parse op from the display label (e.g., "equals (=)" → Eq)
+        let op = if value.starts_with("equals") {
+            Op::Eq
+        } else if value.starts_with("not equals") {
+            Op::Neq
+        } else if value.starts_with("not contains") {
+            Op::NotContains
+        } else if value.starts_with("contains") {
+            Op::Contains
+        } else {
+            return;
         };
-        self.show_sort_preset_picker(kind);
+
+        // Set up filter editor at the value step with field and op pre-selected
+        self.filter_editor_state.reset();
+        self.filter_editor_state.selected_field = Some(field);
+        self.filter_editor_state.selected_op = Some(op);
+        self.filter_editor_state.step = filter_editor::EditorStep::EnterValue;
+        self.filter_editor_state.suggestions = self.get_filter_suggestions();
+        self.overlay = Overlay::FilterEditor;
     }
 
     fn action_open_browser(&mut self) {
@@ -1792,16 +1906,30 @@ impl App {
             Overlay::Chord(ChordContext::Iteration(issue_idx)) => {
                 self.apply_iteration_move(issue_idx, value);
             }
+            Overlay::Chord(ChordContext::SortField) => {
+                self.handle_sort_field_chosen(value);
+            }
+            Overlay::Chord(ChordContext::SortDirection(field, scope)) => {
+                self.handle_sort_direction_chosen(&field, scope.as_deref(), value);
+            }
+            Overlay::Chord(ChordContext::FilterMenu) => {
+                self.handle_filter_menu_chosen(value);
+            }
+            Overlay::Chord(ChordContext::FilterField) => {
+                self.handle_filter_field_chosen(value);
+            }
+            Overlay::Chord(ChordContext::FilterOp(field)) => {
+                self.handle_filter_op_chosen(field, value);
+            }
             _ => {}
         }
     }
 
     fn show_iteration_chord(&mut self) {
-        let col = self.planning_state.focused_column;
-        let Some(sel) = self.planning_state.columns[col].list.table_state.selected() else {
+        let Some(FocusedItem::Issue { id, .. }) = &self.focused else {
             return;
         };
-        let Some(&issue_idx) = self.planning_state.columns[col].list.indices.get(sel) else {
+        let Some(issue_idx) = self.issues.iter().position(|i| i.issue.id == *id) else {
             return;
         };
 
@@ -1873,6 +2001,7 @@ impl App {
                     filter_editor::FilterEditorAction::Continue => {}
                     filter_editor::FilterEditorAction::Cancel => {
                         self.overlay = Overlay::None;
+                        self.action_show_filter_menu();
                     }
                     filter_editor::FilterEditorAction::AddCondition(cond) => {
                         match self.view {
@@ -1886,7 +2015,9 @@ impl App {
                             }
                             _ => {}
                         }
+                        // Reopen filter menu for adding more conditions
                         self.overlay = Overlay::None;
+                        self.action_show_filter_menu();
                     }
                 }
             }
@@ -2205,16 +2336,6 @@ impl App {
             Overlay::Picker(PickerContext::Assignee) => {
                 if let Some(username) = values.first() {
                     self.update_assignee(username);
-                }
-            }
-            Overlay::Picker(PickerContext::Preset) => {
-                if let Some(preset_name) = values.first() {
-                    self.apply_preset(preset_name);
-                }
-            }
-            Overlay::Picker(PickerContext::SortPreset) => {
-                if let Some(name) = values.first() {
-                    self.apply_sort_preset(name);
                 }
             }
             Overlay::Picker(PickerContext::Team) => {

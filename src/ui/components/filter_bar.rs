@@ -19,8 +19,6 @@ pub fn render(
         let hint = Paragraph::new(Line::from(vec![
             Span::styled(" f", styles::help_key_style()),
             Span::styled(":filter ", styles::help_desc_style()),
-            Span::styled("e", styles::help_key_style()),
-            Span::styled(":preset ", styles::help_desc_style()),
             Span::styled("S", styles::help_key_style()),
             Span::styled(":sort ", styles::help_desc_style()),
         ]));
@@ -54,12 +52,8 @@ pub fn render(
             styles::help_desc_style(),
         ));
     } else if !conditions.is_empty() || !sort_specs.is_empty() {
-        if !conditions.is_empty() {
-            spans.push(Span::styled("Tab", styles::help_key_style()));
-            spans.push(Span::styled(":edit ", styles::help_desc_style()));
-            spans.push(Span::styled("F", styles::help_key_style()));
-            spans.push(Span::styled(":clear-filter ", styles::help_desc_style()));
-        }
+        spans.push(Span::styled("f", styles::help_key_style()));
+        spans.push(Span::styled(":filter ", styles::help_desc_style()));
         if !sort_specs.is_empty() {
             spans.push(Span::styled("S", styles::help_key_style()));
             spans.push(Span::styled(":change-sort ", styles::help_desc_style()));
