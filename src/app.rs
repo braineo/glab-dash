@@ -182,6 +182,10 @@ pub struct App {
 
     // Cache / incremental fetch
     pub last_fetched_at: Option<u64>,
+    /// Timestamp (ms) when the current fetch cycle started.
+    pub fetch_started_at: Option<u64>,
+    /// Duration of the last completed fetch cycle (ms), shown in status bar.
+    pub last_fetch_ms: Option<u64>,
 
     // Work item statuses per project (project_path -> available statuses)
     pub work_item_statuses: std::collections::HashMap<String, Vec<WorkItemStatus>>,
@@ -259,6 +263,8 @@ impl App {
             autocomplete: crate::ui::components::autocomplete::AutocompleteState::default(),
             reply_discussion_id: None,
             last_fetched_at: None,
+            fetch_started_at: None,
+            last_fetch_ms: None,
             work_item_statuses: std::collections::HashMap::new(),
             focused: None,
             chord_state: None,
@@ -291,6 +297,10 @@ impl App {
         // Load key-value metadata
         if let Ok(Some(usage)) = self.db.get_kv("label_usage") {
             self.label_usage = usage;
+        }
+        // Restore last_fetched_at so the first fetch is incremental (fast)
+        if let Ok(Some(ts)) = self.db.get_kv::<u64>("last_fetched_at") {
+            self.last_fetched_at = Some(ts);
         }
 
         // Restore persisted view state (filters, sorts, fuzzy queries)
@@ -426,17 +436,20 @@ impl App {
 
         if d.issues || d.view_state {
             self.refilter_issues();
+        }
+        if d.issues || d.iterations || d.view_state {
             self.refilter_planning();
-            self.refilter_iteration_board();
         }
         if d.mrs || d.view_state {
             self.refilter_mrs();
         }
         if d.statuses {
             self.rebuild_iteration_board_columns();
+        }
+        if d.issues || d.iterations || d.statuses || d.view_state {
             self.refilter_iteration_board();
         }
-        if d.issues || d.mrs || d.selection || d.view_state || d.statuses {
+        if d.issues || d.mrs || d.iterations || d.selection || d.view_state || d.statuses {
             self.refresh_focused();
         }
         if d.issues || d.iterations || d.statuses {
@@ -495,7 +508,10 @@ impl App {
             }
 
             // ── API fetches ──────────────────────────────────────────
-            Cmd::FetchAll => self.fetch_all(),
+            Cmd::FetchAll => {
+                self.fetch_started_at = Some(Self::now_millis());
+                self.fetch_all();
+            }
             Cmd::FetchHealthData => self.maybe_fetch_health_data(),
 
             // ── API mutations ────────────────────────────────────────
@@ -643,6 +659,24 @@ impl App {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
+    }
+
+    pub fn now_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX)
+    }
+
+    /// Record fetch duration. Called by each data handler; the last one to arrive
+    /// captures the total wall-clock time from `fetch_all()`.
+    fn record_fetch_done(&mut self) {
+        self.loading = false;
+        if let Some(started) = self.fetch_started_at {
+            self.last_fetch_ms = Some(Self::now_millis().saturating_sub(started));
+        }
     }
 
     fn fetch_issues(&self) {
@@ -906,14 +940,16 @@ impl App {
                     // in-memory to open-only for display.
                     let _ = self.db.upsert_issues(&self.issues);
                     self.issues.retain(|i| i.issue.state == "opened");
-                    self.last_fetched_at = Some(Self::now_secs());
+                    let now = Self::now_secs();
+                    self.last_fetched_at = Some(now);
+                    let _ = self.db.set_kv("last_fetched_at", &now);
                     self.error = None;
-                    self.loading = false;
+                    self.record_fetch_done();
                     self.dirty.issues = true;
                     self.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
-                    self.loading = false;
+                    self.record_fetch_done();
                     self.show_error(format!("Issues: {e:#}"));
                 }
             },
@@ -924,13 +960,15 @@ impl App {
                     // Persist ALL MRs to DB, then filter in-memory to open-only
                     let _ = self.db.upsert_mrs(&self.mrs);
                     self.mrs.retain(|m| m.mr.state == "opened");
-                    self.last_fetched_at = Some(Self::now_secs());
-                    self.loading = false;
+                    let now = Self::now_secs();
+                    self.last_fetched_at = Some(now);
+                    let _ = self.db.set_kv("last_fetched_at", &now);
+                    self.record_fetch_done();
                     self.error = None;
                     self.dirty.mrs = true;
                 }
                 Err(e) => {
-                    self.loading = false;
+                    self.record_fetch_done();
                     self.show_error(format!("MRs: {e:#}"));
                 }
             },
@@ -3334,6 +3372,7 @@ impl App {
                 loading_msg: self.loading_msg,
                 error: self.error.as_deref(),
                 last_fetched_at: self.last_fetched_at,
+                last_fetch_ms: self.last_fetch_ms,
                 hints,
             },
         );
