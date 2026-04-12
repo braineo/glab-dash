@@ -1,5 +1,6 @@
 mod app;
 mod cache;
+mod cmd;
 mod config;
 #[cfg(test)]
 mod config_tests;
@@ -194,7 +195,7 @@ async fn main() -> Result<()> {
                 match event {
                     CEvent::Key(key)
                         if key.kind == crossterm::event::KeyEventKind::Press
-                            && app.handle_key(key) =>
+                            && app.process_key(key) =>
                     {
                         break; // quit
                     }
@@ -205,7 +206,7 @@ async fn main() -> Result<()> {
                 }
             }
             Some(msg) = async_rx.recv() => {
-                app.handle_async_msg(msg);
+                app.process_async_msg(msg);
                 app.needs_redraw = true;
             }
             _ = refresh_timer.tick() => {
@@ -219,14 +220,14 @@ async fn main() -> Result<()> {
         while crossterm::event::poll(Duration::ZERO)? {
             if let CEvent::Key(key) = crossterm::event::read()?
                 && key.kind == crossterm::event::KeyEventKind::Press
-                && app.handle_key(key)
+                && app.process_key(key)
             {
                 quit = true;
                 break;
             }
         }
         while let Ok(msg) = async_rx.try_recv() {
-            app.handle_async_msg(msg);
+            app.process_async_msg(msg);
             app.needs_redraw = true;
         }
         if quit {
