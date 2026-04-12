@@ -11,15 +11,20 @@ use crate::gitlab::types::Iteration;
 /// and send the result" are modelled as `Spawn*` variants.  Complex flows
 /// that need state access for GID lookups, user searches, etc. keep their
 /// `tokio::spawn` in the originating method and only use dirty flags +
-/// `Cmd::Persist` for the persistence side.
+/// `Cmd::Persist*` for the persistence side.
 #[derive(Debug)]
 pub enum Cmd {
-    // ── Persistence ──────────────────────────────────────────────────
-    /// Write the full cache to disk (Phase 1).
-    /// Phase 2 will split this into targeted SQLite writes.
-    Persist,
-    /// Persist only issue/MR view-state (filter, sort, fuzzy query).
+    // ── Persistence (targeted SQLite writes) ─────────────────────────
+    PersistIssues,
+    PersistMrs,
+    PersistLabels,
+    PersistIterations,
+    PersistStatuses {
+        project: String,
+    },
     PersistViewState,
+    PersistScopeCreep,
+    PersistLabelUsage,
 
     // ── API fetches ──────────────────────────────────────────────────
     FetchAll,

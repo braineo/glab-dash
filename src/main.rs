@@ -4,6 +4,7 @@ mod cmd;
 mod config;
 #[cfg(test)]
 mod config_tests;
+mod db;
 mod filter;
 mod gitlab;
 mod keybindings;
@@ -102,7 +103,8 @@ async fn debug_fetch() -> Result<()> {
     // Simulate what the app does: store issues, refilter, check count
     println!("\nSimulating app flow ...");
     let (async_tx, _async_rx) = mpsc::unbounded_channel();
-    let mut app = App::new(config, client, async_tx);
+    let db = crate::db::Db::open().context("Failed to open database")?;
+    let mut app = App::new(config, client, async_tx, db);
     let tracking = app
         .client
         .fetch_tracking_issues(Some("opened"), None)
@@ -147,11 +149,12 @@ async fn main() -> Result<()> {
         Config::load().context("Failed to load configuration")?
     };
     let client = GitLabClient::new(&config).context("Failed to create GitLab client")?;
+    let db = crate::db::Db::open().context("Failed to open database")?;
 
     // Async message channel
     let (async_tx, mut async_rx) = mpsc::unbounded_channel();
 
-    let mut app = App::new(config, client, async_tx);
+    let mut app = App::new(config, client, async_tx, db);
 
     // Setup terminal
     enable_raw_mode()?;
@@ -176,7 +179,7 @@ async fn main() -> Result<()> {
     refresh_timer.tick().await; // consume the immediate first tick
 
     // Load cache for instant startup, then fetch fresh data in background
-    app.load_cache();
+    app.load_from_db();
     app.loading = true;
     app.fetch_all();
 
