@@ -5,7 +5,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::filter::FilterCondition;
 use crate::gitlab::types::{ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus};
+use crate::sort::SortSpec;
+
+/// Persisted filter/sort state for a single list view.
+#[derive(Default, Serialize, Deserialize)]
+pub struct ViewState {
+    #[serde(default)]
+    pub conditions: Vec<FilterCondition>,
+    #[serde(default)]
+    pub sort_specs: Vec<SortSpec>,
+    #[serde(default)]
+    pub fuzzy_query: String,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct CacheData {
@@ -17,6 +30,10 @@ pub struct CacheData {
     pub work_item_statuses: HashMap<String, Vec<WorkItemStatus>>,
     #[serde(default)]
     pub label_usage: HashMap<String, u32>,
+    #[serde(default)]
+    pub issue_view_state: Option<ViewState>,
+    #[serde(default)]
+    pub mr_view_state: Option<ViewState>,
 }
 
 fn cache_path() -> Option<PathBuf> {
@@ -44,6 +61,8 @@ pub fn save(
     labels: &[ProjectLabel],
     work_item_statuses: &HashMap<String, Vec<WorkItemStatus>>,
     label_usage: &HashMap<String, u32>,
+    issue_view_state: Option<ViewState>,
+    mr_view_state: Option<ViewState>,
 ) {
     let Some(path) = cache_path() else { return };
     if let Some(parent) = path.parent() {
@@ -56,6 +75,8 @@ pub fn save(
         labels: labels.to_vec(),
         work_item_statuses: work_item_statuses.clone(),
         label_usage: label_usage.clone(),
+        issue_view_state,
+        mr_view_state,
     };
     if let Ok(json) = serde_json::to_string(&data) {
         let _ = fs::write(&path, json);

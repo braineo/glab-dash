@@ -1,6 +1,6 @@
 use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Field {
     Assignee,
     Author,
@@ -74,7 +74,7 @@ impl Field {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Op {
     Eq,
     Neq,
@@ -107,7 +107,7 @@ impl Op {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FilterCondition {
     pub field: Field,
     pub op: Op,
