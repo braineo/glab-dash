@@ -199,6 +199,8 @@ impl IterationBoardState {
         issues: &[TrackedIssue],
         current_iteration: Option<&Iteration>,
         label_orders: &HashMap<String, Vec<String>>,
+        me: &str,
+        team_members: &[String],
     ) {
         for col in &mut self.columns {
             col.list.indices.clear();
@@ -232,10 +234,18 @@ impl IterationBoardState {
             self.columns[col_idx].list.indices.push(i);
         }
 
-        // Apply shared fuzzy filter and sort to each column
+        // Apply shared filter conditions, fuzzy filter, and sort to each column
         for col in &mut self.columns {
             col.list.indices.retain(|&i| {
                 let item = &issues[i];
+                if !crate::filter::condition::matches_issue(
+                    item,
+                    &self.filter.conditions,
+                    me,
+                    team_members,
+                ) {
+                    return false;
+                }
                 let mut haystack = item.issue.title.to_lowercase();
                 for a in &item.issue.assignees {
                     haystack.push(' ');
@@ -441,10 +451,30 @@ fn render_iteration_board(
         return;
     }
 
-    // Reserve 1 line at bottom for column indicator
-    let board_parts = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
-    let board_area = board_parts[0];
-    let indicator_area = board_parts[1];
+    // Filter + sort bar
+    let has_filter_bar = !board.filter.conditions.is_empty() || !board.filter.sort_specs.is_empty();
+    let filter_bar_height = u16::from(has_filter_bar);
+
+    // Reserve 1 line at bottom for column indicator, optional filter bar at top
+    let board_parts = Layout::vertical([
+        Constraint::Length(filter_bar_height),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    if has_filter_bar {
+        crate::ui::components::filter_bar::render(
+            frame,
+            board_parts[0],
+            &board.filter.conditions,
+            &board.filter.sort_specs,
+            board.filter.bar_focused,
+            board.filter.bar_selected,
+        );
+    }
+    let board_area = board_parts[1];
+    let indicator_area = board_parts[2];
 
     // Sliding window: show up to DEFAULT_VISIBLE_COLUMNS columns
     let visible = DEFAULT_VISIBLE_COLUMNS.min(board.columns.len());
@@ -1356,7 +1386,13 @@ mod tests {
         ];
 
         // Must not panic even though columns is empty
-        board.partition_issues(&issues, Some(&iter), &std::collections::HashMap::new());
+        board.partition_issues(
+            &issues,
+            Some(&iter),
+            &std::collections::HashMap::new(),
+            "",
+            &[],
+        );
         assert!(board.columns.is_empty());
     }
 
@@ -1391,7 +1427,13 @@ mod tests {
         let no_status = make_issue(2, Some("gid://gitlab/Iteration/1"));
 
         let issues = vec![in_progress, no_status];
-        board.partition_issues(&issues, Some(&iter), &std::collections::HashMap::new());
+        board.partition_issues(
+            &issues,
+            Some(&iter),
+            &std::collections::HashMap::new(),
+            "",
+            &[],
+        );
 
         assert_eq!(board.columns[0].list.indices.len(), 1); // "No Status"
         assert_eq!(board.columns[1].list.indices.len(), 1); // "In Progress"

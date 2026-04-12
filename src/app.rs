@@ -21,6 +21,7 @@ use crate::ui::components::{
     chord_popup, confirm_dialog, error_popup, help, input, label_editor, picker,
 };
 use crate::ui::keys;
+use crate::ui::views::list_model::UserFilter;
 use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
 };
@@ -1226,10 +1227,14 @@ impl App {
 
     pub fn refilter_iteration_board(&mut self) {
         let current_iter = self.planning_state.current_iteration.as_ref();
+        let me = self.config.me.clone();
+        let members = self.active_team_members();
         self.iteration_board_state.partition_issues(
             &self.issues,
             current_iter,
             &self.label_sort_orders,
+            &me,
+            &members,
         );
     }
 
@@ -1436,21 +1441,41 @@ impl App {
             .apply_filters(&self.mrs, &me, &members, &self.label_sort_orders);
     }
 
+    /// Returns a mutable reference to the `UserFilter` for the current view.
+    fn active_filter_mut(&mut self) -> &mut UserFilter {
+        match self.view {
+            View::IssueList | View::IssueDetail => &mut self.issue_list_state.filter,
+            View::MrList | View::MrDetail => &mut self.mr_list_state.filter,
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                &mut self.planning_state.columns[col].filter
+            }
+            View::Dashboard => &mut self.iteration_board_state.filter,
+        }
+    }
+
+    fn active_filter(&self) -> &UserFilter {
+        match self.view {
+            View::IssueList | View::IssueDetail => &self.issue_list_state.filter,
+            View::MrList | View::MrDetail => &self.mr_list_state.filter,
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                &self.planning_state.columns[col].filter
+            }
+            View::Dashboard => &self.iteration_board_state.filter,
+        }
+    }
+
     fn action_sort_by_field(&mut self) {
         let kind = match self.view {
-            View::IssueList | View::IssueDetail => "issue",
+            View::IssueList | View::IssueDetail | View::Planning | View::Dashboard => "issue",
             View::MrList | View::MrDetail => "merge_request",
-            _ => return,
         };
 
         let mut labels = Vec::new();
 
         // "Clear sort" when a sort is active
-        let has_sort = match self.view {
-            View::IssueList => !self.issue_list_state.filter.sort_specs.is_empty(),
-            View::MrList => !self.mr_list_state.filter.sort_specs.is_empty(),
-            _ => false,
-        };
+        let has_sort = !self.active_filter().sort_specs.is_empty();
         if has_sort {
             labels.push("⊘ Clear sort".to_string());
         }
@@ -1533,15 +1558,7 @@ impl App {
     }
 
     fn apply_sort_specs(&mut self, specs: Vec<crate::sort::SortSpec>) {
-        match self.view {
-            View::IssueList => {
-                self.issue_list_state.filter.sort_specs = specs;
-            }
-            View::MrList => {
-                self.mr_list_state.filter.sort_specs = specs;
-            }
-            _ => {}
-        }
+        self.active_filter_mut().sort_specs = specs;
         self.dirty.view_state = true;
         self.pending_cmds.push(Cmd::PersistViewState);
     }
@@ -1595,16 +1612,7 @@ impl App {
         }
 
         // Inline fuzzy search
-        let is_searching = match self.view {
-            View::IssueList => self.issue_list_state.filter.is_searching(),
-            View::MrList => self.mr_list_state.filter.is_searching(),
-            View::Planning => self.planning_state.columns[self.planning_state.focused_column]
-                .filter
-                .is_searching(),
-            View::Dashboard => self.iteration_board_state.filter.is_searching(),
-            _ => false,
-        };
-        if is_searching {
+        if self.active_filter().is_searching() {
             return InputMode::TextInput;
         }
 
@@ -1655,12 +1663,7 @@ impl App {
     /// Normal mode: filter bar check, then binding registry dispatch.
     fn handle_normal_input(&mut self, key: KeyEvent) -> bool {
         // Filter bar captures all keys when focused
-        let bar_focused = match self.view {
-            View::IssueList => self.issue_list_state.filter.bar_focused,
-            View::MrList => self.mr_list_state.filter.bar_focused,
-            _ => false,
-        };
-        if bar_focused {
+        if self.active_filter().bar_focused {
             self.handle_filter_bar_key(key);
             return false;
         }
@@ -1682,18 +1685,7 @@ impl App {
         let is_issue_or_mr = matches!(self.view, View::IssueList | View::MrList);
         let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
 
-        let needs_refilter = match self.view {
-            View::IssueList => self.issue_list_state.filter.handle_fuzzy_input(&key),
-            View::MrList => self.mr_list_state.filter.handle_fuzzy_input(&key),
-            View::Dashboard => self.iteration_board_state.filter.handle_fuzzy_input(&key),
-            View::Planning => {
-                let col = self.planning_state.focused_column;
-                self.planning_state.columns[col]
-                    .filter
-                    .handle_fuzzy_input(&key)
-            }
-            _ => None,
-        };
+        let needs_refilter = self.active_filter_mut().handle_fuzzy_input(&key);
         if needs_refilter == Some(true) {
             self.dirty.view_state = true;
         }
@@ -2191,51 +2183,27 @@ impl App {
     }
 
     fn action_start_search(&mut self) {
-        match self.view {
-            View::IssueList => self.issue_list_state.filter.start_search(),
-            View::MrList => self.mr_list_state.filter.start_search(),
-            View::Dashboard => self.iteration_board_state.filter.start_search(),
-            View::Planning => {
-                let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].filter.start_search();
-            }
-            _ => {}
-        }
+        self.active_filter_mut().start_search();
     }
 
     fn action_focus_filter_bar(&mut self) {
-        match self.view {
-            View::IssueList if !self.issue_list_state.filter.conditions.is_empty() => {
-                self.issue_list_state.filter.bar_focused = true;
-                self.issue_list_state.filter.bar_selected = 0;
-            }
-            View::MrList if !self.mr_list_state.filter.conditions.is_empty() => {
-                self.mr_list_state.filter.bar_focused = true;
-                self.mr_list_state.filter.bar_selected = 0;
-            }
-            _ => {}
+        let f = self.active_filter_mut();
+        if !f.conditions.is_empty() {
+            f.bar_focused = true;
+            f.bar_selected = 0;
         }
     }
 
     fn action_clear_filters(&mut self) {
-        match self.view {
-            View::IssueList => {
-                self.issue_list_state.filter.conditions.clear();
-            }
-            View::MrList => {
-                self.mr_list_state.filter.conditions.clear();
-            }
-            _ => {}
-        }
+        self.active_filter_mut().conditions.clear();
         self.dirty.view_state = true;
         self.pending_cmds.push(Cmd::PersistViewState);
     }
 
     fn action_show_filter_menu(&mut self) {
         let kind = match self.view {
-            View::IssueList | View::IssueDetail => "issue",
+            View::IssueList | View::IssueDetail | View::Planning | View::Dashboard => "issue",
             View::MrList | View::MrDetail => "merge_request",
-            _ => return,
         };
 
         let mut labels = Vec::new();
@@ -2243,11 +2211,7 @@ impl App {
         // ── Builder section ──
         labels.push(format!("{}Builder", chord_popup::HEADER));
 
-        let conditions = match self.view {
-            View::IssueList => &self.issue_list_state.filter.conditions,
-            View::MrList => &self.mr_list_state.filter.conditions,
-            _ => return,
-        };
+        let conditions = &self.active_filter().conditions;
         for cond in conditions {
             labels.push(format!("✕ {}", cond.display()));
         }
@@ -2290,11 +2254,7 @@ impl App {
 
         // Remove a condition (strip "✕ " prefix, find and remove matching)
         if let Some(display) = value.strip_prefix("✕ ") {
-            let conditions = match self.view {
-                View::IssueList => &mut self.issue_list_state.filter.conditions,
-                View::MrList => &mut self.mr_list_state.filter.conditions,
-                _ => return,
-            };
+            let conditions = &mut self.active_filter_mut().conditions;
             if let Some(idx) = conditions.iter().position(|c| c.display() == display) {
                 conditions.remove(idx);
             }
@@ -2635,15 +2595,7 @@ impl App {
                         self.action_show_filter_menu();
                     }
                     filter_editor::FilterEditorAction::AddCondition(cond) => {
-                        match self.view {
-                            View::IssueList | View::IssueDetail => {
-                                self.issue_list_state.filter.conditions.push(cond);
-                            }
-                            View::MrList | View::MrDetail => {
-                                self.mr_list_state.filter.conditions.push(cond);
-                            }
-                            _ => {}
-                        }
+                        self.active_filter_mut().conditions.push(cond);
                         self.dirty.view_state = true;
                         self.pending_cmds.push(Cmd::PersistViewState);
                         // Reopen filter menu for adding more conditions
@@ -2773,70 +2725,31 @@ impl App {
     }
 
     fn handle_filter_bar_key(&mut self, key: KeyEvent) {
-        match self.view {
-            View::IssueList => {
-                let f = &mut self.issue_list_state.filter;
-                if keys::is_back(&key) || keys::is_tab(&key) {
+        if keys::is_back(&key) || keys::is_tab(&key) {
+            self.active_filter_mut().bar_focused = false;
+            return;
+        }
+        if keys::is_left(&key) {
+            let f = self.active_filter_mut();
+            f.bar_selected = f.bar_selected.saturating_sub(1);
+        } else if keys::is_right(&key) {
+            let f = self.active_filter_mut();
+            if f.bar_selected + 1 < f.conditions.len() {
+                f.bar_selected += 1;
+            }
+        } else if key.code == KeyCode::Char('x') || key.code == KeyCode::Char('d') {
+            let f = self.active_filter_mut();
+            if f.bar_selected < f.conditions.len() {
+                f.conditions.remove(f.bar_selected);
+                if f.bar_selected > 0 && f.bar_selected >= f.conditions.len() {
+                    f.bar_selected = f.conditions.len().saturating_sub(1);
+                }
+                if f.conditions.is_empty() {
                     f.bar_focused = false;
-                    return;
                 }
-                if keys::is_left(&key) {
-                    f.bar_selected = f.bar_selected.saturating_sub(1);
-                } else if keys::is_right(&key) {
-                    if f.bar_selected + 1 < f.conditions.len() {
-                        f.bar_selected += 1;
-                    }
-                } else if (key.code == KeyCode::Char('x') || key.code == KeyCode::Char('d'))
-                    && f.bar_selected < f.conditions.len()
-                {
-                    f.conditions.remove(f.bar_selected);
-                    if f.bar_selected > 0 && f.bar_selected >= f.conditions.len() {
-                        f.bar_selected = f.conditions.len().saturating_sub(1);
-                    }
-                    if f.conditions.is_empty() {
-                        f.bar_focused = false;
-                    }
-                    self.dirty.view_state = true;
-                    self.pending_cmds.push(Cmd::PersistViewState);
-                }
+                self.dirty.view_state = true;
+                self.pending_cmds.push(Cmd::PersistViewState);
             }
-            View::MrList => {
-                if keys::is_back(&key) || keys::is_tab(&key) {
-                    self.mr_list_state.filter.bar_focused = false;
-                    return;
-                }
-                if keys::is_left(&key) {
-                    self.mr_list_state.filter.bar_selected =
-                        self.mr_list_state.filter.bar_selected.saturating_sub(1);
-                } else if keys::is_right(&key) {
-                    if self.mr_list_state.filter.bar_selected + 1
-                        < self.mr_list_state.filter.conditions.len()
-                    {
-                        self.mr_list_state.filter.bar_selected += 1;
-                    }
-                } else if (key.code == KeyCode::Char('x') || key.code == KeyCode::Char('d'))
-                    && self.mr_list_state.filter.bar_selected
-                        < self.mr_list_state.filter.conditions.len()
-                {
-                    self.mr_list_state
-                        .filter
-                        .conditions
-                        .remove(self.mr_list_state.filter.bar_selected);
-                    if self.mr_list_state.filter.bar_selected > 0
-                        && self.mr_list_state.filter.bar_selected
-                            >= self.mr_list_state.filter.conditions.len()
-                    {
-                        self.mr_list_state.filter.bar_selected =
-                            self.mr_list_state.filter.conditions.len().saturating_sub(1);
-                    }
-                    if self.mr_list_state.filter.conditions.is_empty() {
-                        self.mr_list_state.filter.bar_focused = false;
-                    }
-                    self.dirty.view_state = true;
-                    self.pending_cmds.push(Cmd::PersistViewState);
-                }
-            }
-            _ => {}
         }
     }
 
@@ -3234,15 +3147,7 @@ impl App {
                 })
                 .collect();
 
-            match self.view {
-                View::IssueList => {
-                    self.issue_list_state.filter.conditions = conditions;
-                }
-                View::MrList => {
-                    self.mr_list_state.filter.conditions = conditions;
-                }
-                _ => {}
-            }
+            self.active_filter_mut().conditions = conditions;
             self.dirty.view_state = true;
             self.pending_cmds.push(Cmd::PersistViewState);
         }

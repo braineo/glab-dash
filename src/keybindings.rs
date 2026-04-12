@@ -593,6 +593,7 @@ pub fn binding_groups_for_view(view: View) -> Vec<&'static BindingGroup> {
             &BOARD_NAV_GROUP,
             &LIST_NAV_GROUP,
             &ISSUE_ACTION_GROUP,
+            &FILTER_GROUP,
         ],
         View::IssueList => vec![
             &GLOBAL_GROUP,
@@ -626,6 +627,7 @@ pub fn binding_groups_for_view(view: View) -> Vec<&'static BindingGroup> {
             &PLANNING_NAV_GROUP,
             &LIST_NAV_GROUP,
             &ISSUE_ACTION_GROUP,
+            &FILTER_GROUP,
         ],
     }
 }

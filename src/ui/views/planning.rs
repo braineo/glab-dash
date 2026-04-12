@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use crate::config::Config;
 use crate::gitlab::types::{Iteration, TrackedIssue};
-use crate::sort::{self, SortDirection, SortField, SortSpec};
+use crate::sort;
 use crate::ui::views::list_model::{ItemList, UserFilter};
 use crate::ui::{RenderCtx, components, styles};
 
@@ -18,6 +18,7 @@ pub enum PlanningLayout {
     TwoColumn,
 }
 
+#[derive(Default)]
 pub struct PlanningColumn {
     pub list: ItemList<TrackedIssue>,
     pub filter: UserFilter,
@@ -31,33 +32,6 @@ pub struct PlanningViewState {
     pub current_iteration: Option<Iteration>,
     pub next_iteration: Option<Iteration>,
     pub layout_mode: PlanningLayout,
-}
-
-fn default_planning_filter() -> UserFilter {
-    UserFilter {
-        sort_specs: vec![
-            SortSpec {
-                field: SortField::Label,
-                direction: SortDirection::Asc,
-                label_scope: Some("workflow".to_string()),
-            },
-            SortSpec {
-                field: SortField::Label,
-                direction: SortDirection::Asc,
-                label_scope: Some("p".to_string()),
-            },
-        ],
-        ..UserFilter::default()
-    }
-}
-
-impl Default for PlanningColumn {
-    fn default() -> Self {
-        Self {
-            list: ItemList::default(),
-            filter: default_planning_filter(),
-        }
-    }
 }
 
 impl Default for PlanningViewState {
