@@ -128,6 +128,22 @@ pub enum AsyncMsg {
     IterationsLoaded(Result<Vec<Iteration>>),
     /// Iteration update result: (result, `issue_id`, `new_iteration`)
     IterationUpdated(Result<()>, u64, Option<Iteration>),
+    /// Scope creep: issue_id → added_to_iteration_at timestamp
+    ScopeCreepLoaded(Result<std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>>),
+    /// Shadow work: closed issues updated during iteration date range
+    ShadowWorkLoaded(Result<Vec<TrackedIssue>>),
+}
+
+/// Lifecycle of an async health data fetch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FetchState {
+    /// Data has not been requested yet.
+    #[default]
+    Idle,
+    /// Async request is in flight.
+    InFlight,
+    /// Data has been received (success or error).
+    Done,
 }
 
 pub struct App {
@@ -187,6 +203,13 @@ pub struct App {
     // Iteration board on dashboard
     pub iteration_board_state: dashboard::IterationBoardState,
 
+    // Iteration health
+    pub iteration_health: Option<dashboard::IterationHealth>,
+    pub scope_creep_cache: std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>,
+    pub shadow_work_cache: Vec<TrackedIssue>,
+    pub scope_creep_state: FetchState,
+    pub shadow_work_state: FetchState,
+
     // Redraw flag — only render when state has changed
     pub needs_redraw: bool,
 }
@@ -237,6 +260,11 @@ impl App {
             planning_state: planning::PlanningViewState::default(),
             iterations: Vec::new(),
             iteration_board_state: dashboard::IterationBoardState::default(),
+            iteration_health: None,
+            scope_creep_cache: std::collections::HashMap::new(),
+            shadow_work_cache: Vec::new(),
+            scope_creep_state: FetchState::default(),
+            shadow_work_state: FetchState::default(),
             needs_redraw: true,
         }
     }
@@ -263,6 +291,16 @@ impl App {
                 self.mr_list_state.filter.conditions = vs.conditions;
                 self.mr_list_state.filter.sort_specs = vs.sort_specs;
                 self.mr_list_state.filter.fuzzy_query = vs.fuzzy_query;
+            }
+
+            // Restore health data (show cached immediately, re-fetch in background)
+            if !cached.scope_creep_dates.is_empty() {
+                self.scope_creep_cache = cached.scope_creep_dates;
+                self.scope_creep_state = FetchState::Done;
+            }
+            if !cached.shadow_work_issues.is_empty() {
+                self.shadow_work_cache = cached.shadow_work_issues;
+                self.shadow_work_state = FetchState::Done;
             }
 
             self.rebuild_label_color_map();
@@ -356,6 +394,8 @@ impl App {
                 sort_specs: self.mr_list_state.filter.sort_specs.clone(),
                 fuzzy_query: self.mr_list_state.filter.fuzzy_query.clone(),
             }),
+            &self.scope_creep_cache,
+            &self.shadow_work_cache,
         );
     }
 
@@ -674,6 +714,8 @@ impl App {
                     self.refilter_planning();
                     self.refilter_iteration_board();
                     self.refresh_focused();
+                    self.compute_iteration_health();
+                    self.maybe_fetch_health_data();
                     self.save_cache();
                 }
                 Err(e) => {
@@ -852,6 +894,8 @@ impl App {
                     self.refilter_planning();
                     self.refilter_iteration_board();
                     self.refresh_focused();
+                    self.compute_iteration_health();
+                    self.maybe_fetch_health_data();
                 }
                 Err(e) => {
                     self.show_error(format!("Iterations: {e:#}"));
@@ -876,6 +920,22 @@ impl App {
                         self.show_error(format!("Move iteration: {e:#}"));
                     }
                 }
+            }
+            AsyncMsg::ScopeCreepLoaded(result) => {
+                if let Ok(dates) = result {
+                    self.scope_creep_cache.extend(dates);
+                }
+                self.scope_creep_state = FetchState::Done;
+                self.compute_iteration_health();
+                self.save_cache();
+            }
+            AsyncMsg::ShadowWorkLoaded(result) => {
+                if let Ok(issues) = result {
+                    self.shadow_work_cache = issues;
+                }
+                self.shadow_work_state = FetchState::Done;
+                self.compute_iteration_health();
+                self.save_cache();
             }
         }
     }
@@ -912,7 +972,23 @@ impl App {
         // Find current, then adjacent entries are previous/next.
         let current_pos = self.iterations.iter().position(|i| i.state == "current");
 
-        self.planning_state.current_iteration = current_pos.map(|pos| self.iterations[pos].clone());
+        let new_current = current_pos.map(|pos| self.iterations[pos].clone());
+
+        // Reset health caches if the current iteration changed
+        let iter_changed = match (&self.planning_state.current_iteration, &new_current) {
+            (Some(old), Some(new)) => old.id != new.id,
+            (None, Some(_)) | (Some(_), None) => true,
+            (None, None) => false,
+        };
+        if iter_changed {
+            self.scope_creep_cache.clear();
+            self.shadow_work_cache.clear();
+            self.scope_creep_state = FetchState::Idle;
+            self.shadow_work_state = FetchState::Idle;
+            self.iteration_health = None;
+        }
+
+        self.planning_state.current_iteration = new_current;
 
         self.planning_state.prev_iteration = current_pos
             .and_then(|pos| pos.checked_sub(1))
@@ -951,6 +1027,104 @@ impl App {
             let result = client.fetch_iterations().await;
             let _ = tx.send(AsyncMsg::IterationsLoaded(result));
         });
+    }
+
+    /// Fetch "added to iteration" dates for scope creep detection.
+    fn fetch_scope_creep_data(&mut self) {
+        let Some(current_iter) = self.planning_state.current_iteration.as_ref() else {
+            return;
+        };
+        let current_id = current_iter.id.clone();
+
+        // Collect issues in the current iteration that we haven't cached yet
+        let items: Vec<(String, String, u64)> = self
+            .issues
+            .iter()
+            .filter(|i| {
+                i.issue
+                    .iteration
+                    .as_ref()
+                    .is_some_and(|it| it.id == current_id)
+                    && !self.scope_creep_cache.contains_key(&i.issue.id)
+            })
+            .map(|i| {
+                // Derive namespace from project_path (same as the tracking project ancestor)
+                let namespace = self
+                    .config
+                    .tracking_projects
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| i.project_path.clone());
+                (namespace, i.issue.iid.to_string(), i.issue.id)
+            })
+            .collect();
+
+        if items.is_empty() {
+            self.scope_creep_state = FetchState::Done;
+            self.compute_iteration_health();
+            return;
+        }
+
+        self.scope_creep_state = FetchState::InFlight;
+
+        let client = self.client.clone();
+        let tx = self.async_tx.clone();
+        tokio::spawn(async move {
+            let result = client.fetch_iteration_added_dates_batch(items).await;
+            let _ = tx.send(AsyncMsg::ScopeCreepLoaded(result));
+        });
+    }
+
+    /// Fetch closed issues for shadow work detection.
+    fn fetch_shadow_work_data(&mut self) {
+        let Some(current_iter) = self.planning_state.current_iteration.as_ref() else {
+            return;
+        };
+        let Some(start_date) = current_iter.start_date.as_ref() else {
+            self.shadow_work_state = FetchState::Done;
+            return;
+        };
+
+        self.shadow_work_state = FetchState::InFlight;
+        let updated_after = format!("{start_date}T00:00:00Z");
+        let client = self.client.clone();
+        let tx = self.async_tx.clone();
+        tokio::spawn(async move {
+            let result = client.fetch_closed_issues_in_range(&updated_after).await;
+            let _ = tx.send(AsyncMsg::ShadowWorkLoaded(result));
+        });
+    }
+
+    /// Trigger scope creep and shadow work fetches if conditions are met.
+    fn maybe_fetch_health_data(&mut self) {
+        if self.planning_state.current_iteration.is_none() {
+            return;
+        }
+        if self.scope_creep_state == FetchState::Idle {
+            self.fetch_scope_creep_data();
+        }
+        if self.shadow_work_state == FetchState::Idle {
+            self.fetch_shadow_work_data();
+        }
+    }
+
+    /// Recompute iteration health metrics from current data.
+    fn compute_iteration_health(&mut self) {
+        let Some(current_iter) = self.planning_state.current_iteration.as_ref() else {
+            self.iteration_health = None;
+            return;
+        };
+
+        self.iteration_health = Some(dashboard::compute_health(
+            &self.issues,
+            current_iter,
+            &self.work_item_statuses,
+            &self.scope_creep_cache,
+            self.scope_creep_state != FetchState::Done,
+            &self.shadow_work_cache,
+            self.shadow_work_state != FetchState::Done,
+            self.iteration_health.as_ref(),
+        ));
     }
 
     fn get_filter_suggestions(&self) -> Vec<String> {
@@ -1239,8 +1413,7 @@ impl App {
 
     /// Centralized fuzzy search handler.
     fn handle_fuzzy_text(&mut self, key: KeyEvent) {
-        let is_issue_or_mr =
-            matches!(self.view, View::IssueList | View::MrList);
+        let is_issue_or_mr = matches!(self.view, View::IssueList | View::MrList);
         let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
 
         let needs_refilter = match self.view {
@@ -1364,6 +1537,13 @@ impl App {
             KeyAction::ReplyThread => self.action_reply_thread(),
 
             // === Board / column navigation ===
+            KeyAction::ToggleDashboardFocus => {
+                if self.view == View::Dashboard {
+                    self.iteration_board_state.health_focused =
+                        !self.iteration_board_state.health_focused;
+                    self.refresh_focused();
+                }
+            }
             KeyAction::ColumnLeft => self.action_column_left(),
             KeyAction::ColumnRight => self.action_column_right(),
 
@@ -1432,6 +1612,14 @@ impl App {
                     return;
                 }
             }
+            View::Dashboard if self.iteration_board_state.health_focused => {
+                if let Some(ref mut health) = self.iteration_health {
+                    let max = health.active_items().len().saturating_sub(1);
+                    if health.scroll_offset < max {
+                        health.scroll_offset += 1;
+                    }
+                }
+            }
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
                 let moved = self
@@ -1469,6 +1657,11 @@ impl App {
                 if !self.planning_state.columns[col].list.select_prev() {
                     self.needs_redraw = false;
                     return;
+                }
+            }
+            View::Dashboard if self.iteration_board_state.health_focused => {
+                if let Some(ref mut health) = self.iteration_health {
+                    health.scroll_offset = health.scroll_offset.saturating_sub(1);
                 }
             }
             View::Dashboard => {
@@ -1971,6 +2164,12 @@ impl App {
 
     fn action_column_left(&mut self) {
         match self.view {
+            View::Dashboard if self.iteration_board_state.health_focused => {
+                if let Some(ref mut health) = self.iteration_health {
+                    health.active_tab = health.active_tab.prev();
+                    health.scroll_offset = 0;
+                }
+            }
             View::Dashboard if !self.iteration_board_state.columns.is_empty() => {
                 self.iteration_board_state.focused_column =
                     self.iteration_board_state.focused_column.saturating_sub(1);
@@ -1985,6 +2184,12 @@ impl App {
 
     fn action_column_right(&mut self) {
         match self.view {
+            View::Dashboard if self.iteration_board_state.health_focused => {
+                if let Some(ref mut health) = self.iteration_health {
+                    health.active_tab = health.active_tab.next();
+                    health.scroll_offset = 0;
+                }
+            }
             View::Dashboard
                 if !self.iteration_board_state.columns.is_empty()
                     && self.iteration_board_state.focused_column + 1
@@ -2796,6 +3001,7 @@ impl App {
                     self.loading,
                     &mut self.iteration_board_state,
                     current_iter,
+                    self.iteration_health.as_ref(),
                 );
             }
             View::IssueList => {

@@ -1588,6 +1588,156 @@ impl GitLabClient {
         Ok(())
     }
 
+    // ── Iteration health: scope creep & shadow work ──
+
+    /// GraphQL query to fetch system notes for a work item (for iteration change detection).
+    const WORK_ITEM_NOTES_QUERY: &str = r"
+        query($fullPath: ID!, $iid: String!) {
+            workspace: namespace(fullPath: $fullPath) {
+                workItem(iid: $iid) {
+                    widgets(onlyTypes: [NOTES]) {
+                        ... on WorkItemWidgetNotes {
+                            discussions(first: 100, filter: ONLY_ACTIVITY) {
+                                nodes {
+                                    notes {
+                                        nodes {
+                                            system
+                                            systemNoteIconName
+                                            body
+                                            createdAt
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ";
+
+    /// Fetch the timestamp when an issue was added to its current iteration,
+    /// by looking for system notes with `systemNoteIconName == "iteration"`.
+    /// Returns the `createdAt` of the *last* matching note (most recent assignment).
+    pub async fn fetch_work_item_iteration_added_at(
+        &self,
+        namespace: &str,
+        iid: &str,
+    ) -> Result<Option<DateTime<Utc>>> {
+        let body = serde_json::json!({
+            "query": Self::WORK_ITEM_NOTES_QUERY,
+            "variables": { "fullPath": namespace, "iid": iid },
+        });
+        let json = self.graphql_post(&body).await?;
+
+        // Navigate: data.workspace.workItem.widgets[0].discussions.nodes[].notes.nodes[]
+        let discussions = json
+            .pointer("/data/workspace/workItem/widgets")
+            .and_then(|w| w.as_array())
+            .and_then(|widgets| {
+                widgets
+                    .iter()
+                    .find_map(|w| w.pointer("/discussions/nodes").and_then(|n| n.as_array()))
+            });
+
+        let Some(discussions) = discussions else {
+            return Ok(None);
+        };
+
+        let mut latest: Option<DateTime<Utc>> = None;
+
+        for disc in discussions {
+            let notes = disc.pointer("/notes/nodes").and_then(|n| n.as_array());
+            let Some(notes) = notes else { continue };
+            for note in notes {
+                let is_system = note
+                    .get("system")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let icon = note
+                    .get("systemNoteIconName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                if is_system
+                    && icon == "iteration"
+                    && let Some(ts_str) = note.get("createdAt").and_then(serde_json::Value::as_str)
+                {
+                    // GitLab returns ISO 8601 with timezone
+                    if let Ok(dt) = DateTime::<FixedOffset>::parse_from_rfc3339(ts_str) {
+                        let utc = dt.with_timezone(&Utc);
+                        if latest.is_none_or(|prev| utc > prev) {
+                            latest = Some(utc);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(latest)
+    }
+
+    /// Batch-fetch "added to iteration" timestamps for multiple issues.
+    /// Uses a semaphore to limit concurrency.
+    pub async fn fetch_iteration_added_dates_batch(
+        &self,
+        items: Vec<(String, String, u64)>, // (namespace, iid_str, issue_id)
+    ) -> Result<std::collections::HashMap<u64, DateTime<Utc>>> {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use tokio::sync::Semaphore;
+
+        let sem = Arc::new(Semaphore::new(5));
+        let mut handles = Vec::with_capacity(items.len());
+
+        for (namespace, iid, issue_id) in items {
+            let client = self.clone();
+            let permit = Arc::clone(&sem);
+            handles.push(tokio::spawn(async move {
+                let _permit = permit.acquire().await;
+                let result = client
+                    .fetch_work_item_iteration_added_at(&namespace, &iid)
+                    .await;
+                (issue_id, result)
+            }));
+        }
+
+        let mut map: HashMap<u64, DateTime<Utc>> = HashMap::new();
+        for handle in handles {
+            if let Ok((issue_id, Ok(Some(dt)))) = handle.await {
+                map.insert(issue_id, dt);
+            }
+        }
+        Ok(map)
+    }
+
+    /// Fetch closed issues in tracking namespaces updated after a given date.
+    /// Used for shadow work detection.
+    pub async fn fetch_closed_issues_in_range(
+        &self,
+        updated_after: &str,
+    ) -> Result<Vec<TrackedIssue>> {
+        let mut all = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        for project in &self.config.tracking_projects {
+            let issues = self
+                .graphql_list_work_items(project, Some("closed"), None, Some(updated_after))
+                .await?;
+            for issue in issues {
+                let project_path = issue.references.as_ref().map_or_else(
+                    || project.clone(),
+                    |r| extract_project_from_ref(&r.full_ref),
+                );
+                if seen_ids.insert(issue.id) {
+                    all.push(TrackedIssue {
+                        issue,
+                        project_path,
+                    });
+                }
+            }
+        }
+        Ok(all)
+    }
+
     async fn handle_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
         let status = resp.status();
         if !status.is_success() {
