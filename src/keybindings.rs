@@ -66,6 +66,8 @@ pub enum KeyAction {
     // --- Board / column navigation (Dashboard & Planning) ---
     ColumnLeft,
     ColumnRight,
+    /// Toggle focus between health panel and iteration board on dashboard.
+    ToggleDashboardFocus,
 
     // --- Planning-specific ---
     ToggleColumnPrev,
@@ -453,10 +455,16 @@ pub static MR_ACTION_BINDINGS: &[Binding] = &[
 
 pub static BOARD_NAV_BINDINGS: &[Binding] = &[
     Binding {
+        matcher: Key(KeyCode::Tab),
+        action: A::ToggleDashboardFocus,
+        label: "Tab",
+        description: "Toggle health/board focus",
+    },
+    Binding {
         matcher: Char('['),
         action: A::ColumnLeft,
         label: "[/]",
-        description: "Switch column",
+        description: "Switch column/tab",
     },
     Binding {
         matcher: Key(KeyCode::Left),

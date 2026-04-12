@@ -1,3 +1,4 @@
+use chrono::{DateTime, NaiveDate, Utc};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -11,6 +12,91 @@ use crate::ui::styles;
 use crate::ui::views::list_model::{ItemList, UserFilter};
 
 use std::collections::HashMap;
+
+// ── Iteration Health ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HealthTab {
+    #[default]
+    ScopeCreep,
+    ShadowWork,
+    AtRisk,
+}
+
+impl HealthTab {
+    pub fn next(self) -> Self {
+        match self {
+            Self::ScopeCreep => Self::ShadowWork,
+            Self::ShadowWork => Self::AtRisk,
+            Self::AtRisk => Self::ScopeCreep,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::ScopeCreep => Self::AtRisk,
+            Self::ShadowWork => Self::ScopeCreep,
+            Self::AtRisk => Self::ShadowWork,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BurnRate {
+    OnTrack,
+    Behind,
+    Ahead,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub struct HealthItem {
+    pub iid: u64,
+    pub title: String,
+    pub assignee: Option<String>,
+    /// Context-specific detail: "added Apr 10", "closed Apr 8", "5d no update"
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IterationHealth {
+    // Progress
+    pub total_issues: usize,
+    pub done_issues: usize,
+    pub days_elapsed: i64,
+    pub days_remaining: i64,
+    pub days_total: i64,
+    pub burn_rate: BurnRate,
+    // Tabbed lists
+    pub scope_creep: Vec<HealthItem>,
+    pub shadow_work: Vec<HealthItem>,
+    pub at_risk: Vec<HealthItem>,
+    // Loading states (derived from fetch state, not stored separately)
+    pub scope_creep_loading: bool,
+    pub shadow_work_loading: bool,
+    // Tab navigation
+    pub active_tab: HealthTab,
+    pub scroll_offset: usize,
+}
+
+impl IterationHealth {
+    pub fn active_items(&self) -> &[HealthItem] {
+        match self.active_tab {
+            HealthTab::ScopeCreep => &self.scope_creep,
+            HealthTab::ShadowWork => &self.shadow_work,
+            HealthTab::AtRisk => &self.at_risk,
+        }
+    }
+
+    pub fn active_tab_loading(&self) -> bool {
+        match self.active_tab {
+            HealthTab::ScopeCreep => self.scope_creep_loading,
+            HealthTab::ShadowWork => self.shadow_work_loading,
+            HealthTab::AtRisk => false,
+        }
+    }
+}
 
 // ── Iteration Board ──
 
@@ -29,6 +115,8 @@ pub struct IterationBoardState {
     pub columns: Vec<StatusColumn>,
     pub focused_column: usize,
     pub filter: UserFilter,
+    /// When true, `[`/`]` and `j`/`k` navigate the health panel instead of the board.
+    pub health_focused: bool,
 }
 
 impl IterationBoardState {
@@ -172,10 +260,11 @@ pub fn render(
     loading: bool,
     board: &mut IterationBoardState,
     current_iteration: Option<&Iteration>,
+    health: Option<&IterationHealth>,
 ) {
     let chunks = Layout::vertical([
         Constraint::Length(3),      // Header
-        Constraint::Percentage(35), // Summary
+        Constraint::Percentage(35), // Summary + Health
         Constraint::Min(5),         // Iteration board
     ])
     .split(area);
@@ -200,6 +289,14 @@ pub fn render(
             format!("Tracking: {tracking_display}"),
             styles::help_desc_style(),
         ),
+        if loading {
+            Span::styled(
+                format!(" {}", styles::ICON_LOADING),
+                Style::default().fg(styles::YELLOW),
+            )
+        } else {
+            Span::raw("")
+        },
     ]);
     let header = Paragraph::new(header_text).block(
         Block::default()
@@ -209,12 +306,18 @@ pub fn render(
     );
     frame.render_widget(header, chunks[0]);
 
-    // Summary (top half)
+    // Summary (left) + Health panel (right)
     let content_chunks =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(chunks[1]);
-    render_member_summary(frame, content_chunks[0], config, active_team, issues, mrs);
-    render_quick_stats(frame, content_chunks[1], config, issues, mrs, loading);
+    render_quick_stats(frame, content_chunks[0], config, active_team, issues, mrs);
+    render_iteration_health(
+        frame,
+        content_chunks[1],
+        health,
+        current_iteration,
+        board.health_focused,
+    );
 
     // Iteration board (bottom half)
     render_iteration_board(frame, chunks[2], board, issues, current_iteration);
@@ -470,50 +573,242 @@ fn render_column_indicator(
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-// ── Existing summary renderers ──
+// ── Iteration Health Rendering ──
 
-fn render_member_summary(
+fn render_iteration_health(
     frame: &mut Frame,
     area: Rect,
-    config: &Config,
-    active_team: Option<usize>,
-    issues: &[TrackedIssue],
-    mrs: &[TrackedMergeRequest],
+    health: Option<&IterationHealth>,
+    current_iteration: Option<&Iteration>,
+    is_focused: bool,
 ) {
-    let members = match active_team {
-        Some(idx) => config.team_members(idx),
-        None => config.all_members(),
+    let border_color = if is_focused {
+        styles::CYAN
+    } else {
+        styles::BORDER
     };
-    let rows: Vec<Row> = members
+
+    let Some(health) = health else {
+        let msg = if current_iteration.is_some() {
+            "Loading iteration health\u{2026}"
+        } else {
+            "No active iteration"
+        };
+        let paragraph = Paragraph::new(Line::from(Span::styled(
+            format!("  {msg}"),
+            styles::help_desc_style(),
+        )))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(border_color))
+                .title(Span::styled(" Iteration Health ", styles::title_style())),
+        );
+        frame.render_widget(paragraph, area);
+        return;
+    };
+
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color));
+    let inner = outer_block.inner(area);
+    frame.render_widget(outer_block, area);
+
+    if inner.height < 3 {
+        return;
+    }
+
+    let parts = Layout::vertical([
+        Constraint::Length(1), // Progress line
+        Constraint::Length(1), // Tab bar
+        Constraint::Min(1),    // List area
+    ])
+    .split(inner);
+
+    render_progress_line(frame, parts[0], health, current_iteration);
+    render_health_tabs(frame, parts[1], health);
+    render_health_list(frame, parts[2], health);
+}
+
+fn render_progress_line(
+    frame: &mut Frame,
+    area: Rect,
+    health: &IterationHealth,
+    current_iteration: Option<&Iteration>,
+) {
+    let iter_label = current_iteration.map_or_else(
+        || "Iteration".to_string(),
+        |i| {
+            if i.title.is_empty() {
+                match (&i.start_date, &i.due_date) {
+                    (Some(s), Some(d)) => format!("{s} \u{2014} {d}"),
+                    _ => "Current".to_string(),
+                }
+            } else {
+                i.title.clone()
+            }
+        },
+    );
+
+    // Progress bar: manual █░ rendering
+    let pct = (health.done_issues * 100)
+        .checked_div(health.total_issues)
+        .unwrap_or(0);
+    let bar_width = 12;
+    let filled = (pct * bar_width) / 100;
+    let empty = bar_width - filled;
+    let bar_filled: String = "\u{2588}".repeat(filled);
+    let bar_empty: String = "\u{2591}".repeat(empty);
+
+    // Burn rate indicator
+    let (burn_label, burn_color) = match health.burn_rate {
+        BurnRate::Ahead => ("\u{25b2} Ahead", styles::GREEN),
+        BurnRate::OnTrack => ("\u{25cf} On Track", styles::GREEN),
+        BurnRate::Behind => ("\u{25bc} Behind", styles::RED),
+        BurnRate::Unknown => ("\u{25cb} \u{2014}", styles::TEXT_DIM),
+    };
+
+    let mut spans = vec![
+        Span::styled(
+            format!(" {iter_label}"),
+            Style::default()
+                .fg(styles::TEXT_BRIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" \u{2502} ", Style::default().fg(styles::BORDER)),
+    ];
+
+    // Day X/Y (N days left)
+    if health.days_total > 0 {
+        spans.push(Span::styled(
+            format!(
+                "Day {}/{} ({}d left)",
+                health.days_elapsed, health.days_total, health.days_remaining
+            ),
+            Style::default().fg(styles::TEXT),
+        ));
+        spans.push(Span::styled(
+            " \u{2502} ",
+            Style::default().fg(styles::BORDER),
+        ));
+    }
+
+    // Progress bar
+    spans.push(Span::styled(bar_filled, Style::default().fg(styles::GREEN)));
+    spans.push(Span::styled(
+        bar_empty,
+        Style::default().fg(styles::TEXT_DIM),
+    ));
+    spans.push(Span::styled(
+        format!(" {}/{} done", health.done_issues, health.total_issues),
+        Style::default().fg(styles::TEXT),
+    ));
+    spans.push(Span::styled(
+        " \u{2502} ",
+        Style::default().fg(styles::BORDER),
+    ));
+
+    // Burn rate
+    spans.push(Span::styled(burn_label, Style::default().fg(burn_color)));
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn render_health_tabs(frame: &mut Frame, area: Rect, health: &IterationHealth) {
+    let tabs = [
+        (
+            HealthTab::ScopeCreep,
+            "Scope Creep",
+            health.scope_creep.len(),
+            health.scope_creep_loading,
+        ),
+        (
+            HealthTab::ShadowWork,
+            "Shadow Work",
+            health.shadow_work.len(),
+            health.shadow_work_loading,
+        ),
+        (HealthTab::AtRisk, "At Risk", health.at_risk.len(), false),
+    ];
+
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (tab, label, count, loading)) in tabs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ", Style::default()));
+        }
+        let is_active = *tab == health.active_tab;
+        let count_str = if *loading {
+            format!("{label} {}", styles::ICON_LOADING)
+        } else {
+            format!("{label} {count}")
+        };
+        if is_active {
+            spans.push(Span::styled(
+                format!("[{count_str}]"),
+                Style::default()
+                    .fg(styles::CYAN)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            let color = if *count > 0 {
+                styles::YELLOW
+            } else {
+                styles::TEXT_DIM
+            };
+            spans.push(Span::styled(
+                format!(" {count_str} "),
+                Style::default().fg(color),
+            ));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn render_health_list(frame: &mut Frame, area: Rect, health: &IterationHealth) {
+    let items = health.active_items();
+
+    if items.is_empty() {
+        let msg = if health.active_tab_loading() {
+            "  Loading\u{2026}"
+        } else {
+            match health.active_tab {
+                HealthTab::ScopeCreep => "  No scope creep detected",
+                HealthTab::ShadowWork => "  No shadow work detected",
+                HealthTab::AtRisk => "  No at-risk issues",
+            }
+        };
+        let paragraph = Paragraph::new(Line::from(Span::styled(msg, styles::help_desc_style())));
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    let visible_height = area.height as usize;
+    let offset = health.scroll_offset.min(items.len().saturating_sub(1));
+    let end = (offset + visible_height).min(items.len());
+
+    let rows: Vec<Row> = items[offset..end]
         .iter()
         .enumerate()
-        .map(|(i, member)| {
-            let issue_count = issues
-                .iter()
-                .filter(|issue| {
-                    issue
-                        .issue
-                        .assignees
-                        .iter()
-                        .any(|a| a.username.eq_ignore_ascii_case(member))
-                })
-                .count();
-            let mr_count = mrs
-                .iter()
-                .filter(|m| {
-                    m.mr.assignees
-                        .iter()
-                        .any(|a| a.username.eq_ignore_ascii_case(member))
-                        || m.mr
-                            .reviewers
-                            .iter()
-                            .any(|r| r.username.eq_ignore_ascii_case(member))
-                })
-                .count();
+        .map(|(i, item)| {
+            let iid_str = format!(" #{}", item.iid);
+            let assignee = item
+                .assignee
+                .as_deref()
+                .map_or(String::new(), |a| format!("@{a}"));
             let row = Row::new(vec![
-                member.clone(),
-                issue_count.to_string(),
-                mr_count.to_string(),
+                Cell::from(Span::styled(iid_str, Style::default().fg(styles::TEXT_DIM))),
+                Cell::from(Span::styled(
+                    item.title.as_str(),
+                    Style::default().fg(styles::TEXT),
+                )),
+                Cell::from(Span::styled(assignee, Style::default().fg(styles::CYAN))),
+                Cell::from(Span::styled(
+                    item.detail.as_str(),
+                    Style::default().fg(styles::YELLOW),
+                )),
             ]);
             if i % 2 == 1 {
                 row.style(styles::row_alt_style())
@@ -524,28 +819,47 @@ fn render_member_summary(
         .collect();
 
     let widths = [
-        Constraint::Min(20),
-        Constraint::Length(10),
-        Constraint::Length(10),
+        Constraint::Length(7),  // #iid
+        Constraint::Min(15),    // title
+        Constraint::Length(12), // @assignee
+        Constraint::Length(16), // detail
     ];
-    let table = Table::new(rows, widths)
-        .header(
-            Row::new(vec!["Member", "Issues", "MRs"])
-                .style(styles::header_style())
-                .bottom_margin(1),
-        )
-        .block(styles::block("Team Members"));
 
+    let table = Table::new(rows, widths);
     frame.render_widget(table, area);
 }
+
+// ── Summary Panel (left side) ──
 
 fn render_quick_stats(
     frame: &mut Frame,
     area: Rect,
     config: &Config,
+    active_team: Option<usize>,
     issues: &[TrackedIssue],
     mrs: &[TrackedMergeRequest],
-    loading: bool,
+) {
+    let outer = styles::block("Overview");
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+
+    if inner.height < 4 {
+        return;
+    }
+
+    // Split: stats summary (3 lines) + member table (rest)
+    let parts = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).split(inner);
+
+    render_stats_summary(frame, parts[0], config, issues, mrs);
+    render_member_table(frame, parts[1], config, active_team, issues, mrs);
+}
+
+fn render_stats_summary(
+    frame: &mut Frame,
+    area: Rect,
+    config: &Config,
+    issues: &[TrackedIssue],
+    mrs: &[TrackedMergeRequest],
 ) {
     let tracking_issues = issues
         .iter()
@@ -573,81 +887,342 @@ fn render_quick_stats(
         })
         .count();
 
-    let loading_indicator = if loading {
-        format!(" {}", styles::ICON_LOADING)
-    } else {
-        String::new()
-    };
+    let mut issue_spans = vec![
+        Span::styled(
+            format!(" {} ", styles::ICON_ISSUES),
+            styles::section_header_style(),
+        ),
+        Span::styled(
+            format!("{tracking_issues}"),
+            Style::default()
+                .fg(styles::TEXT_BRIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" tracking  ", Style::default().fg(styles::TEXT_DIM)),
+        Span::styled(
+            format!("{external_issues}"),
+            Style::default()
+                .fg(styles::TEXT_BRIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" external", Style::default().fg(styles::TEXT_DIM)),
+    ];
+    if unassigned_issues > 0 {
+        issue_spans.push(Span::styled("  ", Style::default()));
+        issue_spans.push(Span::styled(
+            format!("{unassigned_issues} unassigned"),
+            styles::error_style(),
+        ));
+    }
+
+    let mut mr_spans = vec![
+        Span::styled(
+            format!(" {} ", styles::ICON_MRS),
+            styles::section_header_style(),
+        ),
+        Span::styled(
+            format!("{open_mrs}"),
+            Style::default()
+                .fg(styles::TEXT_BRIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" open  ", Style::default().fg(styles::TEXT_DIM)),
+        Span::styled(
+            format!("{draft_mrs}"),
+            Style::default()
+                .fg(styles::TEXT_BRIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" draft", Style::default().fg(styles::TEXT_DIM)),
+    ];
+    if my_review_mrs > 0 {
+        mr_spans.push(Span::styled("  ", Style::default()));
+        mr_spans.push(Span::styled(
+            format!("{my_review_mrs} review"),
+            Style::default().fg(styles::YELLOW),
+        ));
+    }
 
     let lines = vec![
+        Line::from(issue_spans),
+        Line::from(mr_spans),
         Line::from(""),
-        Line::from(vec![Span::styled(
-            format!("  {} Issues{loading_indicator}", styles::ICON_ISSUES),
-            styles::section_header_style(),
-        )]),
-        Line::from(vec![
-            Span::styled("    Tracking repo:   ", styles::help_desc_style()),
-            Span::styled(
-                tracking_issues.to_string(),
-                Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("    External:        ", styles::help_desc_style()),
-            Span::styled(
-                external_issues.to_string(),
-                Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(if unassigned_issues > 0 {
-            vec![
-                Span::styled("    Unassigned:      ", styles::help_desc_style()),
-                Span::styled(unassigned_issues.to_string(), styles::error_style()),
-            ]
-        } else {
-            vec![
-                Span::styled("    Unassigned:      ", styles::help_desc_style()),
-                Span::styled("0", Style::default().fg(styles::TEXT_BRIGHT)),
-            ]
-        }),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  {} Merge Requests", styles::ICON_MRS),
-            styles::section_header_style(),
-        )),
-        Line::from(vec![
-            Span::styled("    Open:            ", styles::help_desc_style()),
-            Span::styled(
-                open_mrs.to_string(),
-                Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("    Draft:           ", styles::help_desc_style()),
-            Span::styled(
-                draft_mrs.to_string(),
-                Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("    Needs my review: ", styles::help_desc_style()),
-            Span::styled(
-                my_review_mrs.to_string(),
-                Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
     ];
+    frame.render_widget(Paragraph::new(lines), area);
+}
 
-    let paragraph = Paragraph::new(lines).block(styles::block("Overview"));
-    frame.render_widget(paragraph, area);
+fn render_member_table(
+    frame: &mut Frame,
+    area: Rect,
+    config: &Config,
+    active_team: Option<usize>,
+    issues: &[TrackedIssue],
+    mrs: &[TrackedMergeRequest],
+) {
+    let members = match active_team {
+        Some(idx) => config.team_members(idx),
+        None => config.all_members(),
+    };
+
+    let rows: Vec<Row> = members
+        .iter()
+        .enumerate()
+        .map(|(i, member)| {
+            let issue_count = issues
+                .iter()
+                .filter(|issue| {
+                    issue
+                        .issue
+                        .assignees
+                        .iter()
+                        .any(|a| a.username.eq_ignore_ascii_case(member))
+                })
+                .count();
+            let mr_count = mrs
+                .iter()
+                .filter(|m| {
+                    m.mr.assignees
+                        .iter()
+                        .any(|a| a.username.eq_ignore_ascii_case(member))
+                        || m.mr
+                            .reviewers
+                            .iter()
+                            .any(|r| r.username.eq_ignore_ascii_case(member))
+                })
+                .count();
+            let row = Row::new(vec![
+                Cell::from(Span::styled(
+                    member.clone(),
+                    Style::default().fg(styles::TEXT),
+                )),
+                Cell::from(Span::styled(
+                    issue_count.to_string(),
+                    Style::default()
+                        .fg(styles::TEXT_BRIGHT)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Cell::from(Span::styled(
+                    mr_count.to_string(),
+                    Style::default()
+                        .fg(styles::TEXT_BRIGHT)
+                        .add_modifier(Modifier::BOLD),
+                )),
+            ]);
+            if i % 2 == 1 {
+                row.style(styles::row_alt_style())
+            } else {
+                row
+            }
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Min(12),   // member name
+        Constraint::Length(6), // issues
+        Constraint::Length(6), // MRs
+    ];
+    let table = Table::new(rows, widths).header(Row::new(vec![
+        Cell::from(Span::styled(" Member", styles::header_style())),
+        Cell::from(Span::styled("Iss", styles::header_style())),
+        Cell::from(Span::styled("MRs", styles::header_style())),
+    ]));
+    frame.render_widget(table, area);
+}
+
+/// Compute iteration health metrics from available data.
+///
+/// This is a pure function that derives all health metrics from the provided data.
+/// Called from `App::compute_iteration_health()`.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_health(
+    issues: &[TrackedIssue],
+    current_iteration: &Iteration,
+    work_item_statuses: &HashMap<String, Vec<WorkItemStatus>>,
+    scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
+    scope_creep_loading: bool,
+    shadow_work_cache: &[TrackedIssue],
+    shadow_work_loading: bool,
+    prev_health: Option<&IterationHealth>,
+) -> IterationHealth {
+    let current_id = &current_iteration.id;
+
+    // Parse iteration dates
+    let start_date = current_iteration
+        .start_date
+        .as_deref()
+        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+    let due_date = current_iteration
+        .due_date
+        .as_deref()
+        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+    let today = Utc::now().date_naive();
+
+    let (days_elapsed, days_remaining, days_total) = match (start_date, due_date) {
+        (Some(start), Some(end)) => {
+            let total = (end - start).num_days();
+            let elapsed = (today - start).num_days().max(0).min(total);
+            let remaining = (end - today).num_days().max(0);
+            (elapsed, remaining, total)
+        }
+        _ => (0, 0, 0),
+    };
+
+    // Collect iteration issues
+    let iter_issues: Vec<&TrackedIssue> = issues
+        .iter()
+        .filter(|i| {
+            i.issue
+                .iteration
+                .as_ref()
+                .is_some_and(|it| it.id == *current_id)
+        })
+        .collect();
+
+    let total_issues = iter_issues.len();
+
+    // Determine "done" via status category or state
+    let is_done = |ti: &TrackedIssue| -> bool {
+        let status_name = ti.issue.custom_status.as_deref().unwrap_or("");
+        work_item_statuses
+            .get(&ti.project_path)
+            .and_then(|statuses| {
+                statuses
+                    .iter()
+                    .find(|s| s.name.eq_ignore_ascii_case(status_name))
+            })
+            .and_then(|s| s.category.as_deref())
+            .map_or(ti.issue.state == "closed", |cat| cat == "done")
+    };
+
+    let done_issues = iter_issues.iter().filter(|i| is_done(i)).count();
+
+    // Burn rate — precision loss is fine for small counts
+    #[allow(clippy::cast_precision_loss)]
+    let burn_rate = if days_total > 0 && total_issues > 0 {
+        let expected_pct = days_elapsed as f64 / days_total as f64;
+        let actual_pct = done_issues as f64 / total_issues as f64;
+        if expected_pct < 0.05 {
+            // Too early to judge
+            BurnRate::Unknown
+        } else {
+            let ratio = actual_pct / expected_pct;
+            if ratio >= 1.1 {
+                BurnRate::Ahead
+            } else if ratio >= 0.8 {
+                BurnRate::OnTrack
+            } else {
+                BurnRate::Behind
+            }
+        }
+    } else {
+        BurnRate::Unknown
+    };
+
+    // Scope creep: issues added 3+ days after iteration start
+    let scope_creep_threshold = start_date
+        .map(|s| s.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc() + chrono::Duration::days(3));
+    let mut scope_creep = Vec::new();
+    if let Some(threshold) = scope_creep_threshold {
+        for ti in &iter_issues {
+            if let Some(added_at) = scope_creep_cache.get(&ti.issue.id)
+                && *added_at > threshold
+            {
+                scope_creep.push(HealthItem {
+                    iid: ti.issue.iid,
+                    title: ti.issue.title.clone(),
+                    assignee: ti.issue.assignees.first().map(|a| a.username.clone()),
+                    detail: format!("added {}", added_at.format("%b %d")),
+                });
+            }
+        }
+    }
+
+    // Shadow work: closed issues updated during iteration but not in it.
+    // Exclude "canceled" category (duplicates, won't do, etc.) — only real completed work.
+    let is_canceled = |ti: &TrackedIssue| -> bool {
+        let status_name = ti.issue.custom_status.as_deref().unwrap_or("");
+        work_item_statuses
+            .get(&ti.project_path)
+            .and_then(|statuses| {
+                statuses
+                    .iter()
+                    .find(|s| s.name.eq_ignore_ascii_case(status_name))
+            })
+            .and_then(|s| s.category.as_deref())
+            .is_some_and(|cat| cat == "canceled")
+    };
+
+    let mut shadow_work = Vec::new();
+    if let (Some(start), Some(end)) = (start_date, due_date) {
+        let start_dt = start.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc();
+        let end_dt = end.and_hms_opt(23, 59, 59).unwrap_or_default().and_utc();
+        for ti in shadow_work_cache {
+            let has_current_iter = ti
+                .issue
+                .iteration
+                .as_ref()
+                .is_some_and(|it| it.id == *current_id);
+            if !has_current_iter
+                && !is_canceled(ti)
+                && ti.issue.updated_at >= start_dt
+                && ti.issue.updated_at <= end_dt
+            {
+                shadow_work.push(HealthItem {
+                    iid: ti.issue.iid,
+                    title: ti.issue.title.clone(),
+                    assignee: ti.issue.assignees.first().map(|a| a.username.clone()),
+                    detail: format!("closed {}", ti.issue.updated_at.format("%b %d")),
+                });
+            }
+        }
+    }
+
+    // At risk: iteration issues with "active" category status, not updated in 5+ days
+    let stale_threshold = Utc::now() - chrono::Duration::days(5);
+    let is_active_status = |ti: &TrackedIssue| -> bool {
+        let status_name = ti.issue.custom_status.as_deref().unwrap_or("");
+        work_item_statuses
+            .get(&ti.project_path)
+            .and_then(|statuses| {
+                statuses
+                    .iter()
+                    .find(|s| s.name.eq_ignore_ascii_case(status_name))
+            })
+            .and_then(|s| s.category.as_deref())
+            .is_some_and(|cat| cat == "active")
+    };
+
+    let mut at_risk = Vec::new();
+    for ti in &iter_issues {
+        if is_active_status(ti) && ti.issue.updated_at < stale_threshold && !is_done(ti) {
+            let days_stale = (Utc::now() - ti.issue.updated_at).num_days();
+            at_risk.push(HealthItem {
+                iid: ti.issue.iid,
+                title: ti.issue.title.clone(),
+                assignee: ti.issue.assignees.first().map(|a| a.username.clone()),
+                detail: format!("{days_stale}d no update"),
+            });
+        }
+    }
+
+    // Preserve tab/scroll state from previous health
+    let (active_tab, scroll_offset) = prev_health.map_or((HealthTab::default(), 0), |h| {
+        (h.active_tab, h.scroll_offset)
+    });
+
+    IterationHealth {
+        total_issues,
+        done_issues,
+        days_elapsed,
+        days_remaining,
+        days_total,
+        burn_rate,
+        scope_creep,
+        shadow_work,
+        at_risk,
+        scope_creep_loading,
+        shadow_work_loading,
+        active_tab,
+        scroll_offset,
+    }
 }

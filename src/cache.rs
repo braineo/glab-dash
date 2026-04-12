@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::filter::FilterCondition;
@@ -34,6 +35,12 @@ pub struct CacheData {
     pub issue_view_state: Option<ViewState>,
     #[serde(default)]
     pub mr_view_state: Option<ViewState>,
+    /// Scope creep: issue_id → timestamp when added to current iteration.
+    #[serde(default)]
+    pub scope_creep_dates: HashMap<u64, DateTime<Utc>>,
+    /// Shadow work: closed issues updated during current iteration date range.
+    #[serde(default)]
+    pub shadow_work_issues: Vec<TrackedIssue>,
 }
 
 fn cache_path() -> Option<PathBuf> {
@@ -55,6 +62,7 @@ pub fn load() -> Option<CacheData> {
 }
 
 /// Save data to cache. Errors are silently ignored (cache is best-effort).
+#[allow(clippy::too_many_arguments)]
 pub fn save(
     issues: &[TrackedIssue],
     mrs: &[TrackedMergeRequest],
@@ -63,6 +71,8 @@ pub fn save(
     label_usage: &HashMap<String, u32>,
     issue_view_state: Option<ViewState>,
     mr_view_state: Option<ViewState>,
+    scope_creep_dates: &HashMap<u64, DateTime<Utc>>,
+    shadow_work_issues: &[TrackedIssue],
 ) {
     let Some(path) = cache_path() else { return };
     if let Some(parent) = path.parent() {
@@ -77,6 +87,8 @@ pub fn save(
         label_usage: label_usage.clone(),
         issue_view_state,
         mr_view_state,
+        scope_creep_dates: scope_creep_dates.clone(),
+        shadow_work_issues: shadow_work_issues.to_vec(),
     };
     if let Ok(json) = serde_json::to_string(&data) {
         let _ = fs::write(&path, json);
