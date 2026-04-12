@@ -30,9 +30,10 @@ pub struct StatusBarProps<'a> {
 
 pub fn render(frame: &mut Frame, area: Rect, props: &StatusBarProps) {
     let view_icon = match props.view_name {
-        "Dashboard" => "◈",
-        "Issues" => "●",
-        "Merge Requests" => "⑂",
+        "Dashboard" => styles::ICON_DASHBOARD,
+        "Issues" => styles::ICON_ISSUES,
+        "Merge Requests" => styles::ICON_MRS,
+        "Planning" => styles::ICON_PLANNING,
         _ => "›",
     };
 
@@ -52,9 +53,15 @@ pub fn render(frame: &mut Frame, area: Rect, props: &StatusBarProps) {
         } else {
             props.loading_msg
         };
-        spans.push(Span::styled(format!("⟳ {msg}"), styles::draft_style()));
+        spans.push(Span::styled(
+            format!("{} {msg}", styles::ICON_LOADING),
+            styles::draft_style(),
+        ));
     } else if let Some(err) = props.error {
-        spans.push(Span::styled(format!("✗ {err}"), styles::error_style()));
+        spans.push(Span::styled(
+            format!("{} {err}", styles::ICON_CLOSED),
+            styles::error_style(),
+        ));
     } else {
         spans.push(Span::styled(
             format!("{} items", props.item_count),

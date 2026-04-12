@@ -16,25 +16,25 @@ struct Tab {
 
 const TABS: &[Tab] = &[
     Tab {
-        icon: "◈",
+        icon: styles::ICON_DASHBOARD,
         label: "Dashboard",
         key: '1',
         view: View::Dashboard,
     },
     Tab {
-        icon: "●",
+        icon: styles::ICON_ISSUES,
         label: "Issues",
         key: '2',
         view: View::IssueList,
     },
     Tab {
-        icon: "⑂",
+        icon: styles::ICON_MRS,
         label: "MRs",
         key: '3',
         view: View::MrList,
     },
     Tab {
-        icon: "▦",
+        icon: styles::ICON_PLANNING,
         label: "Planning",
         key: '4',
         view: View::Planning,
@@ -74,11 +74,11 @@ pub fn render(frame: &mut Frame, area: Rect, current_view: View) {
             ));
         } else {
             spans.push(Span::styled(
-                format!(" {}", tab.key),
+                format!(" {} ", tab.icon),
                 Style::default().fg(styles::TEXT_DIM).bg(styles::SURFACE),
             ));
             spans.push(Span::styled(
-                format!(":{} ", tab.label),
+                format!("{}:{} ", tab.key, tab.label),
                 Style::default().fg(styles::TEXT).bg(styles::SURFACE),
             ));
         }
