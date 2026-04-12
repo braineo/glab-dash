@@ -50,16 +50,7 @@ pub enum BurnRate {
     Unknown,
 }
 
-#[derive(Debug, Clone)]
-pub struct HealthItem {
-    pub iid: u64,
-    pub title: String,
-    pub assignee: Option<String>,
-    /// Context-specific detail: "added Apr 10", "closed Apr 8", "5d no update"
-    pub detail: String,
-}
-
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub struct IterationHealth {
     // Progress
     pub total_issues: usize,
@@ -68,24 +59,32 @@ pub struct IterationHealth {
     pub days_remaining: i64,
     pub days_total: i64,
     pub burn_rate: BurnRate,
-    // Tabbed lists
-    pub scope_creep: Vec<HealthItem>,
-    pub shadow_work: Vec<HealthItem>,
-    pub at_risk: Vec<HealthItem>,
+    // Focusable lists (indices into App::issues for scope_creep/at_risk,
+    // into App::shadow_work_cache for shadow_work)
+    pub scope_creep: ItemList<TrackedIssue>,
+    pub shadow_work: ItemList<TrackedIssue>,
+    pub at_risk: ItemList<TrackedIssue>,
     // Loading states (derived from fetch state, not stored separately)
     pub scope_creep_loading: bool,
     pub shadow_work_loading: bool,
     // Tab navigation
     pub active_tab: HealthTab,
-    pub scroll_offset: usize,
 }
 
 impl IterationHealth {
-    pub fn active_items(&self) -> &[HealthItem] {
+    pub fn active_list(&self) -> &ItemList<TrackedIssue> {
         match self.active_tab {
             HealthTab::ScopeCreep => &self.scope_creep,
             HealthTab::ShadowWork => &self.shadow_work,
             HealthTab::AtRisk => &self.at_risk,
+        }
+    }
+
+    pub fn active_list_mut(&mut self) -> &mut ItemList<TrackedIssue> {
+        match self.active_tab {
+            HealthTab::ScopeCreep => &mut self.scope_creep,
+            HealthTab::ShadowWork => &mut self.shadow_work,
+            HealthTab::AtRisk => &mut self.at_risk,
         }
     }
 
@@ -94,6 +93,21 @@ impl IterationHealth {
             HealthTab::ScopeCreep => self.scope_creep_loading,
             HealthTab::ShadowWork => self.shadow_work_loading,
             HealthTab::AtRisk => false,
+        }
+    }
+
+    /// Resolve the selected issue from the active health tab.
+    /// `issues` is the main issue list (for scope_creep/at_risk),
+    /// `shadow_work_cache` is the separate shadow work source.
+    pub fn selected_issue<'a>(
+        &self,
+        issues: &'a [TrackedIssue],
+        shadow_work_cache: &'a [TrackedIssue],
+    ) -> Option<&'a TrackedIssue> {
+        match self.active_tab {
+            HealthTab::ScopeCreep => self.scope_creep.selected_item(issues),
+            HealthTab::ShadowWork => self.shadow_work.selected_item(shadow_work_cache),
+            HealthTab::AtRisk => self.at_risk.selected_item(issues),
         }
     }
 }
@@ -260,7 +274,9 @@ pub fn render(
     loading: bool,
     board: &mut IterationBoardState,
     current_iteration: Option<&Iteration>,
-    health: Option<&IterationHealth>,
+    health: Option<&mut IterationHealth>,
+    shadow_work_cache: &[TrackedIssue],
+    scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
 ) {
     let chunks = Layout::vertical([
         Constraint::Length(3),      // Header
@@ -317,10 +333,20 @@ pub fn render(
         health,
         current_iteration,
         board.health_focused,
+        issues,
+        shadow_work_cache,
+        scope_creep_cache,
     );
 
     // Iteration board (bottom half)
-    render_iteration_board(frame, chunks[2], board, issues, current_iteration);
+    render_iteration_board(
+        frame,
+        chunks[2],
+        board,
+        issues,
+        current_iteration,
+        !board.health_focused,
+    );
 }
 
 fn render_iteration_board(
@@ -329,6 +355,7 @@ fn render_iteration_board(
     board: &mut IterationBoardState,
     issues: &[TrackedIssue],
     current_iteration: Option<&Iteration>,
+    board_focused: bool,
 ) {
     if board.columns.is_empty() {
         let msg = Paragraph::new(Line::from(vec![
@@ -428,7 +455,7 @@ fn render_iteration_board(
 
     for (slot, col_rect) in col_rects.iter().enumerate() {
         let col_idx = win_start + slot;
-        let is_focused = col_idx == board.focused_column;
+        let is_focused = board_focused && col_idx == board.focused_column;
         render_board_column(frame, *col_rect, board, col_idx, issues, is_focused);
     }
 
@@ -575,12 +602,16 @@ fn render_column_indicator(
 
 // ── Iteration Health Rendering ──
 
+#[allow(clippy::too_many_arguments)]
 fn render_iteration_health(
     frame: &mut Frame,
     area: Rect,
-    health: Option<&IterationHealth>,
+    health: Option<&mut IterationHealth>,
     current_iteration: Option<&Iteration>,
     is_focused: bool,
+    issues: &[TrackedIssue],
+    shadow_work_cache: &[TrackedIssue],
+    scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
 ) {
     let border_color = if is_focused {
         styles::CYAN
@@ -627,9 +658,17 @@ fn render_iteration_health(
     ])
     .split(inner);
 
-    render_progress_line(frame, parts[0], health, current_iteration);
-    render_health_tabs(frame, parts[1], health);
-    render_health_list(frame, parts[2], health);
+    render_progress_line(frame, parts[0], &*health, current_iteration);
+    render_health_tabs(frame, parts[1], &*health);
+    render_health_list(
+        frame,
+        parts[2],
+        health,
+        is_focused,
+        issues,
+        shadow_work_cache,
+        scope_creep_cache,
+    );
 }
 
 fn render_progress_line(
@@ -721,16 +760,21 @@ fn render_health_tabs(frame: &mut Frame, area: Rect, health: &IterationHealth) {
         (
             HealthTab::ScopeCreep,
             "Scope Creep",
-            health.scope_creep.len(),
+            health.scope_creep.indices.len(),
             health.scope_creep_loading,
         ),
         (
             HealthTab::ShadowWork,
             "Shadow Work",
-            health.shadow_work.len(),
+            health.shadow_work.indices.len(),
             health.shadow_work_loading,
         ),
-        (HealthTab::AtRisk, "At Risk", health.at_risk.len(), false),
+        (
+            HealthTab::AtRisk,
+            "At Risk",
+            health.at_risk.indices.len(),
+            false,
+        ),
     ];
 
     let mut spans = vec![Span::raw(" ")];
@@ -767,14 +811,24 @@ fn render_health_tabs(frame: &mut Frame, area: Rect, health: &IterationHealth) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn render_health_list(frame: &mut Frame, area: Rect, health: &IterationHealth) {
-    let items = health.active_items();
+#[allow(clippy::too_many_arguments)]
+fn render_health_list(
+    frame: &mut Frame,
+    area: Rect,
+    health: &mut IterationHealth,
+    is_focused: bool,
+    issues: &[TrackedIssue],
+    shadow_work_cache: &[TrackedIssue],
+    scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
+) {
+    let list = health.active_list();
+    let tab = health.active_tab;
 
-    if items.is_empty() {
+    if list.indices.is_empty() {
         let msg = if health.active_tab_loading() {
             "  Loading\u{2026}"
         } else {
-            match health.active_tab {
+            match tab {
                 HealthTab::ScopeCreep => "  No scope creep detected",
                 HealthTab::ShadowWork => "  No shadow work detected",
                 HealthTab::AtRisk => "  No at-risk issues",
@@ -785,30 +839,44 @@ fn render_health_list(frame: &mut Frame, area: Rect, health: &IterationHealth) {
         return;
     }
 
-    let visible_height = area.height as usize;
-    let offset = health.scroll_offset.min(items.len().saturating_sub(1));
-    let end = (offset + visible_height).min(items.len());
+    // Pick the right source slice for this tab
+    let source: &[TrackedIssue] = match tab {
+        HealthTab::ScopeCreep | HealthTab::AtRisk => issues,
+        HealthTab::ShadowWork => shadow_work_cache,
+    };
 
-    let rows: Vec<Row> = items[offset..end]
+    let rows: Vec<Row> = list
+        .indices
         .iter()
+        .filter_map(|&i| source.get(i))
         .enumerate()
         .map(|(i, item)| {
-            let iid_str = format!(" #{}", item.iid);
+            let iid_str = format!(" #{}", item.issue.iid);
             let assignee = item
-                .assignee
-                .as_deref()
-                .map_or(String::new(), |a| format!("@{a}"));
+                .issue
+                .assignees
+                .first()
+                .map_or(String::new(), |a| format!("@{}", a.username));
+            let detail = match tab {
+                HealthTab::ScopeCreep => scope_creep_cache
+                    .get(&item.issue.id)
+                    .map_or_else(String::new, |dt| format!("added {}", dt.format("%b %d"))),
+                HealthTab::ShadowWork => {
+                    format!("closed {}", item.issue.updated_at.format("%b %d"))
+                }
+                HealthTab::AtRisk => {
+                    let days = (Utc::now() - item.issue.updated_at).num_days();
+                    format!("{days}d no update")
+                }
+            };
             let row = Row::new(vec![
                 Cell::from(Span::styled(iid_str, Style::default().fg(styles::TEXT_DIM))),
                 Cell::from(Span::styled(
-                    item.title.as_str(),
+                    item.issue.title.as_str(),
                     Style::default().fg(styles::TEXT),
                 )),
                 Cell::from(Span::styled(assignee, Style::default().fg(styles::CYAN))),
-                Cell::from(Span::styled(
-                    item.detail.as_str(),
-                    Style::default().fg(styles::YELLOW),
-                )),
+                Cell::from(Span::styled(detail, Style::default().fg(styles::YELLOW))),
             ]);
             if i % 2 == 1 {
                 row.style(styles::row_alt_style())
@@ -825,8 +893,13 @@ fn render_health_list(frame: &mut Frame, area: Rect, health: &IterationHealth) {
         Constraint::Length(16), // detail
     ];
 
-    let table = Table::new(rows, widths);
-    frame.render_widget(table, area);
+    let table = if is_focused {
+        Table::new(rows, widths).row_highlight_style(styles::selected_style())
+    } else {
+        Table::new(rows, widths)
+    };
+
+    frame.render_stateful_widget(table, area, &mut health.active_list_mut().table_state);
 }
 
 // ── Summary Panel (left side) ──
@@ -1118,26 +1191,28 @@ pub fn compute_health(
         BurnRate::Unknown
     };
 
-    // Scope creep: issues added 3+ days after iteration start
+    // Scope creep: issues added 3+ days after iteration start (indices into `issues`)
     let scope_creep_threshold = start_date
         .map(|s| s.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc() + chrono::Duration::days(3));
-    let mut scope_creep = Vec::new();
+    let mut scope_creep = ItemList::<TrackedIssue>::default();
     if let Some(threshold) = scope_creep_threshold {
-        for ti in &iter_issues {
-            if let Some(added_at) = scope_creep_cache.get(&ti.issue.id)
+        for (i, item) in issues.iter().enumerate() {
+            let in_iter = item
+                .issue
+                .iteration
+                .as_ref()
+                .is_some_and(|it| it.id == *current_id);
+            if in_iter
+                && let Some(added_at) = scope_creep_cache.get(&item.issue.id)
                 && *added_at > threshold
             {
-                scope_creep.push(HealthItem {
-                    iid: ti.issue.iid,
-                    title: ti.issue.title.clone(),
-                    assignee: ti.issue.assignees.first().map(|a| a.username.clone()),
-                    detail: format!("added {}", added_at.format("%b %d")),
-                });
+                scope_creep.indices.push(i);
             }
         }
     }
+    scope_creep.clamp_selection();
 
-    // Shadow work: closed issues updated during iteration but not in it.
+    // Shadow work: closed issues updated during iteration but not in it (indices into `shadow_work_cache`).
     // Exclude "canceled" category (duplicates, won't do, etc.) — only real completed work.
     let is_canceled = |ti: &TrackedIssue| -> bool {
         let status_name = ti.issue.custom_status.as_deref().unwrap_or("");
@@ -1152,11 +1227,11 @@ pub fn compute_health(
             .is_some_and(|cat| cat == "canceled")
     };
 
-    let mut shadow_work = Vec::new();
+    let mut shadow_work = ItemList::<TrackedIssue>::default();
     if let (Some(start), Some(end)) = (start_date, due_date) {
         let start_dt = start.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc();
         let end_dt = end.and_hms_opt(23, 59, 59).unwrap_or_default().and_utc();
-        for ti in shadow_work_cache {
+        for (i, ti) in shadow_work_cache.iter().enumerate() {
             let has_current_iter = ti
                 .issue
                 .iteration
@@ -1167,17 +1242,13 @@ pub fn compute_health(
                 && ti.issue.updated_at >= start_dt
                 && ti.issue.updated_at <= end_dt
             {
-                shadow_work.push(HealthItem {
-                    iid: ti.issue.iid,
-                    title: ti.issue.title.clone(),
-                    assignee: ti.issue.assignees.first().map(|a| a.username.clone()),
-                    detail: format!("closed {}", ti.issue.updated_at.format("%b %d")),
-                });
+                shadow_work.indices.push(i);
             }
         }
     }
+    shadow_work.clamp_selection();
 
-    // At risk: iteration issues with "active" category status, not updated in 5+ days
+    // At risk: iteration issues with "active" category status, not updated in 5+ days (indices into `issues`)
     let stale_threshold = Utc::now() - chrono::Duration::days(5);
     let is_active_status = |ti: &TrackedIssue| -> bool {
         let status_name = ti.issue.custom_status.as_deref().unwrap_or("");
@@ -1192,23 +1263,25 @@ pub fn compute_health(
             .is_some_and(|cat| cat == "active")
     };
 
-    let mut at_risk = Vec::new();
-    for ti in &iter_issues {
-        if is_active_status(ti) && ti.issue.updated_at < stale_threshold && !is_done(ti) {
-            let days_stale = (Utc::now() - ti.issue.updated_at).num_days();
-            at_risk.push(HealthItem {
-                iid: ti.issue.iid,
-                title: ti.issue.title.clone(),
-                assignee: ti.issue.assignees.first().map(|a| a.username.clone()),
-                detail: format!("{days_stale}d no update"),
-            });
+    let mut at_risk = ItemList::<TrackedIssue>::default();
+    for (i, item) in issues.iter().enumerate() {
+        let in_iter = item
+            .issue
+            .iteration
+            .as_ref()
+            .is_some_and(|it| it.id == *current_id);
+        if in_iter
+            && is_active_status(item)
+            && item.issue.updated_at < stale_threshold
+            && !is_done(item)
+        {
+            at_risk.indices.push(i);
         }
     }
+    at_risk.clamp_selection();
 
-    // Preserve tab/scroll state from previous health
-    let (active_tab, scroll_offset) = prev_health.map_or((HealthTab::default(), 0), |h| {
-        (h.active_tab, h.scroll_offset)
-    });
+    // Preserve tab state from previous health
+    let active_tab = prev_health.map_or(HealthTab::default(), |h| h.active_tab);
 
     IterationHealth {
         total_issues,
@@ -1223,6 +1296,5 @@ pub fn compute_health(
         scope_creep_loading,
         shadow_work_loading,
         active_tab,
-        scroll_offset,
     }
 }

@@ -7,7 +7,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::filter::FilterCondition;
-use crate::gitlab::types::{ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus};
+use crate::gitlab::types::{
+    Iteration, ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus,
+};
 use crate::sort::SortSpec;
 
 /// Persisted filter/sort state for a single list view.
@@ -41,6 +43,9 @@ pub struct CacheData {
     /// Shadow work: closed issues updated during current iteration date range.
     #[serde(default)]
     pub shadow_work_issues: Vec<TrackedIssue>,
+    /// Cached iterations so health data can show instantly on restart.
+    #[serde(default)]
+    pub iterations: Vec<Iteration>,
 }
 
 fn cache_path() -> Option<PathBuf> {
@@ -73,6 +78,7 @@ pub fn save(
     mr_view_state: Option<ViewState>,
     scope_creep_dates: &HashMap<u64, DateTime<Utc>>,
     shadow_work_issues: &[TrackedIssue],
+    iterations: &[Iteration],
 ) {
     let Some(path) = cache_path() else { return };
     if let Some(parent) = path.parent() {
@@ -89,6 +95,7 @@ pub fn save(
         mr_view_state,
         scope_creep_dates: scope_creep_dates.clone(),
         shadow_work_issues: shadow_work_issues.to_vec(),
+        iterations: iterations.to_vec(),
     };
     if let Ok(json) = serde_json::to_string(&data) {
         let _ = fs::write(&path, json);

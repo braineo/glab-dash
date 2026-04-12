@@ -293,6 +293,15 @@ impl App {
                 self.mr_list_state.filter.fuzzy_query = vs.fuzzy_query;
             }
 
+            // Restore iterations first so classify_iterations() can set
+            // current_iteration before health caches are loaded — this prevents
+            // classify_iterations() from wiping cached health data when it
+            // detects the None→Some transition.
+            if !cached.iterations.is_empty() {
+                self.iterations = cached.iterations;
+                self.classify_iterations();
+            }
+
             // Restore health data (show cached immediately, re-fetch in background)
             if !cached.scope_creep_dates.is_empty() {
                 self.scope_creep_cache = cached.scope_creep_dates;
@@ -308,6 +317,8 @@ impl App {
             self.refilter_mrs();
             self.rebuild_iteration_board_columns();
             self.refilter_iteration_board();
+            self.refilter_planning();
+            self.compute_iteration_health();
         }
     }
 
@@ -334,6 +345,15 @@ impl App {
             View::Planning => self
                 .planning_state
                 .selected_issue(&self.issues)
+                .map(|item| FocusedItem::Issue {
+                    project: item.project_path.clone(),
+                    id: item.issue.id,
+                    iid: item.issue.iid,
+                }),
+            View::Dashboard if self.iteration_board_state.health_focused => self
+                .iteration_health
+                .as_ref()
+                .and_then(|h| h.selected_issue(&self.issues, &self.shadow_work_cache))
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
                     id: item.issue.id,
@@ -396,6 +416,7 @@ impl App {
             }),
             &self.scope_creep_cache,
             &self.shadow_work_cache,
+            &self.iterations,
         );
     }
 
@@ -1613,11 +1634,11 @@ impl App {
                 }
             }
             View::Dashboard if self.iteration_board_state.health_focused => {
-                if let Some(ref mut health) = self.iteration_health {
-                    let max = health.active_items().len().saturating_sub(1);
-                    if health.scroll_offset < max {
-                        health.scroll_offset += 1;
-                    }
+                if let Some(ref mut health) = self.iteration_health
+                    && !health.active_list_mut().select_next()
+                {
+                    self.needs_redraw = false;
+                    return;
                 }
             }
             View::Dashboard => {
@@ -1660,8 +1681,11 @@ impl App {
                 }
             }
             View::Dashboard if self.iteration_board_state.health_focused => {
-                if let Some(ref mut health) = self.iteration_health {
-                    health.scroll_offset = health.scroll_offset.saturating_sub(1);
+                if let Some(ref mut health) = self.iteration_health
+                    && !health.active_list_mut().select_prev()
+                {
+                    self.needs_redraw = false;
+                    return;
                 }
             }
             View::Dashboard => {
@@ -1688,6 +1712,10 @@ impl App {
                 let col = self.planning_state.focused_column;
                 self.planning_state.columns[col].list.select_first()
             }
+            View::Dashboard if self.iteration_board_state.health_focused => self
+                .iteration_health
+                .as_mut()
+                .is_some_and(|h| h.active_list_mut().select_first()),
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
                 self.iteration_board_state
@@ -1712,6 +1740,10 @@ impl App {
                 let col = self.planning_state.focused_column;
                 self.planning_state.columns[col].list.select_last()
             }
+            View::Dashboard if self.iteration_board_state.health_focused => self
+                .iteration_health
+                .as_mut()
+                .is_some_and(|h| h.active_list_mut().select_last()),
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
                 self.iteration_board_state
@@ -1736,6 +1768,10 @@ impl App {
                 let col = self.planning_state.focused_column;
                 self.planning_state.columns[col].list.page_down()
             }
+            View::Dashboard if self.iteration_board_state.health_focused => self
+                .iteration_health
+                .as_mut()
+                .is_some_and(|h| h.active_list_mut().page_down()),
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
                 self.iteration_board_state
@@ -1760,6 +1796,10 @@ impl App {
                 let col = self.planning_state.focused_column;
                 self.planning_state.columns[col].list.page_up()
             }
+            View::Dashboard if self.iteration_board_state.health_focused => self
+                .iteration_health
+                .as_mut()
+                .is_some_and(|h| h.active_list_mut().page_up()),
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
                 self.iteration_board_state
@@ -1773,6 +1813,48 @@ impl App {
             self.refresh_focused();
         } else {
             self.needs_redraw = false;
+        }
+    }
+
+    /// Ensure `issue_list_state` points at the issue identified by (project, iid)
+    /// so the detail view can display it via `current_detail_issue()`.
+    /// If the issue isn't in `self.issues` (e.g. shadow work from a separate cache),
+    /// it is appended so the detail view can render it.
+    fn sync_issue_list_for_detail(&mut self, project: &str, iid: u64) {
+        let pos = self
+            .issues
+            .iter()
+            .position(|i| i.issue.iid == iid && i.project_path == project)
+            .or_else(|| {
+                // Shadow work issues live in a separate cache — copy into issues
+                let sw = self
+                    .shadow_work_cache
+                    .iter()
+                    .find(|i| i.issue.iid == iid && i.project_path == project)?
+                    .clone();
+                self.issues.push(sw);
+                Some(self.issues.len() - 1)
+            });
+
+        if let Some(pos) = pos {
+            if let Some(list_pos) = self
+                .issue_list_state
+                .list
+                .indices
+                .iter()
+                .position(|&i| i == pos)
+            {
+                self.issue_list_state
+                    .list
+                    .table_state
+                    .select(Some(list_pos));
+            } else {
+                self.issue_list_state.list.indices.push(pos);
+                self.issue_list_state
+                    .list
+                    .table_state
+                    .select(Some(self.issue_list_state.list.indices.len() - 1));
+            }
         }
     }
 
@@ -1798,6 +1880,16 @@ impl App {
                     self.fetch_notes_for_mr(&project, iid);
                     self.view_stack.push(View::MrList);
                     self.view = View::MrDetail;
+                }
+            }
+            View::Dashboard if self.iteration_board_state.health_focused => {
+                if let Some(FocusedItem::Issue { project, iid, .. }) = self.focused.clone() {
+                    self.sync_issue_list_for_detail(&project, iid);
+                    self.issue_detail_state.reset();
+                    self.issue_detail_state.loading_notes = true;
+                    self.fetch_notes_for_issue(&project, iid);
+                    self.view_stack.push(View::Dashboard);
+                    self.view = View::IssueDetail;
                 }
             }
             View::Dashboard => {
@@ -2071,6 +2163,15 @@ impl App {
                     let _ = open::that_detached(&item.mr.web_url);
                 }
             }
+            View::Dashboard if self.iteration_board_state.health_focused => {
+                if let Some(item) = self
+                    .iteration_health
+                    .as_ref()
+                    .and_then(|h| h.selected_issue(&self.issues, &self.shadow_work_cache))
+                {
+                    let _ = open::that_detached(&item.issue.web_url);
+                }
+            }
             View::Dashboard => {
                 if let Some(item) = self.iteration_board_state.selected_issue(&self.issues) {
                     let _ = open::that_detached(&item.issue.web_url);
@@ -2097,6 +2198,11 @@ impl App {
                 .selected_mr(&self.mrs)
                 .map(|m| m.mr.labels.clone()),
             View::MrDetail => self.current_detail_mr().map(|m| m.mr.labels.clone()),
+            View::Dashboard if self.iteration_board_state.health_focused => self
+                .iteration_health
+                .as_ref()
+                .and_then(|h| h.selected_issue(&self.issues, &self.shadow_work_cache))
+                .map(|i| i.issue.labels.clone()),
             View::Dashboard => self
                 .iteration_board_state
                 .selected_issue(&self.issues)
@@ -2167,7 +2273,7 @@ impl App {
             View::Dashboard if self.iteration_board_state.health_focused => {
                 if let Some(ref mut health) = self.iteration_health {
                     health.active_tab = health.active_tab.prev();
-                    health.scroll_offset = 0;
+                    health.active_list_mut().table_state.select(Some(0));
                 }
             }
             View::Dashboard if !self.iteration_board_state.columns.is_empty() => {
@@ -2187,7 +2293,7 @@ impl App {
             View::Dashboard if self.iteration_board_state.health_focused => {
                 if let Some(ref mut health) = self.iteration_health {
                     health.active_tab = health.active_tab.next();
-                    health.scroll_offset = 0;
+                    health.active_list_mut().table_state.select(Some(0));
                 }
             }
             View::Dashboard
@@ -3001,7 +3107,9 @@ impl App {
                     self.loading,
                     &mut self.iteration_board_state,
                     current_iter,
-                    self.iteration_health.as_ref(),
+                    self.iteration_health.as_mut(),
+                    &self.shadow_work_cache,
+                    &self.scope_creep_cache,
                 );
             }
             View::IssueList => {
