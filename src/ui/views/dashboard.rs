@@ -1362,19 +1362,21 @@ mod tests {
 
     #[test]
     fn partition_issues_with_columns_assigns_correctly() {
-        let mut board = IterationBoardState::default();
-        board.columns = vec![
-            StatusColumn {
-                list: ItemList::default(),
-                status_name: "No Status".to_string(),
-                status_matches: vec![String::new()],
-            },
-            StatusColumn {
-                list: ItemList::default(),
-                status_name: "In Progress".to_string(),
-                status_matches: vec!["in progress".to_string()],
-            },
-        ];
+        let mut board = IterationBoardState {
+            columns: vec![
+                StatusColumn {
+                    list: ItemList::default(),
+                    status_name: "No Status".to_string(),
+                    status_matches: vec![String::new()],
+                },
+                StatusColumn {
+                    list: ItemList::default(),
+                    status_name: "In Progress".to_string(),
+                    status_matches: vec!["in progress".to_string()],
+                },
+            ],
+            ..Default::default()
+        };
 
         let iter = crate::gitlab::types::Iteration {
             id: "gid://gitlab/Iteration/1".to_string(),
@@ -1384,12 +1386,11 @@ mod tests {
             state: "current".to_string(),
         };
 
-        let mut issue1 = make_issue(1, Some("gid://gitlab/Iteration/1"));
-        issue1.issue.custom_status = Some("In Progress".to_string());
-        let issue2 = make_issue(2, Some("gid://gitlab/Iteration/1"));
-        // issue2 has no custom_status → should go to "No Status" column
+        let mut in_progress = make_issue(1, Some("gid://gitlab/Iteration/1"));
+        in_progress.issue.custom_status = Some("In Progress".to_string());
+        let no_status = make_issue(2, Some("gid://gitlab/Iteration/1"));
 
-        let issues = vec![issue1, issue2];
+        let issues = vec![in_progress, no_status];
         board.partition_issues(&issues, Some(&iter), &std::collections::HashMap::new());
 
         assert_eq!(board.columns[0].list.indices.len(), 1); // "No Status"
