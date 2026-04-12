@@ -82,6 +82,11 @@ fn make_tracked_mr(
                 .iter()
                 .map(|u| ApprovalUser { user: make_user(u) })
                 .collect(),
+            diff_additions: None,
+            diff_deletions: None,
+            diff_file_count: None,
+            approved: None,
+            unresolved_threads: None,
         },
         project_path: project.to_string(),
     }

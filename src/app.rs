@@ -664,7 +664,9 @@ impl App {
                     if incremental {
                         for item in mrs {
                             if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == item.mr.id) {
-                                if self.mrs[pos].mr.updated_at <= item.mr.updated_at {
+                                let old_secs = self.mrs[pos].mr.updated_at.timestamp();
+                                let new_secs = item.mr.updated_at.timestamp();
+                                if old_secs <= new_secs {
                                     self.mrs[pos] = item;
                                 }
                             } else {
@@ -677,7 +679,12 @@ impl App {
                             if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == new_mr.mr.id)
                             {
                                 let old_mr = &self.mrs[pos];
-                                if old_mr.mr.updated_at > new_mr.mr.updated_at {
+                                // Compare at second precision: GraphQL truncates
+                                // sub-second timestamps, so a cached MR from REST
+                                // with e.g. .975s would falsely appear "newer".
+                                let old_secs = old_mr.mr.updated_at.timestamp();
+                                let new_secs = new_mr.mr.updated_at.timestamp();
+                                if old_secs > new_secs {
                                     *new_mr = old_mr.clone();
                                 }
                             }

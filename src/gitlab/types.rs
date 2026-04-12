@@ -118,6 +118,19 @@ pub struct MergeRequest {
     pub references: Option<References>,
     #[serde(default)]
     pub approved_by: Vec<ApprovalUser>,
+    // ── Enrichment fields (populated via GraphQL, not REST list endpoints) ──
+    #[serde(default)]
+    pub diff_additions: Option<u64>,
+    #[serde(default)]
+    pub diff_deletions: Option<u64>,
+    #[serde(default)]
+    pub diff_file_count: Option<u64>,
+    /// Whether the MR has been approved (from GraphQL `approved` field).
+    #[serde(default)]
+    pub approved: Option<bool>,
+    /// Number of unresolved discussion threads.
+    #[serde(default)]
+    pub unresolved_threads: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

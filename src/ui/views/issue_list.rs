@@ -1,5 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Paragraph, Row, Table};
 
@@ -144,17 +145,29 @@ pub fn render(
             };
 
             let row = Row::new([
-                Cell::from(format!("#{}", item.issue.iid)),
-                Cell::from(source_span.to_string()),
+                Cell::from(Span::styled(
+                    format!("#{}", item.issue.iid),
+                    Style::default().fg(styles::TEXT_DIM),
+                )),
+                Cell::from(Span::styled(
+                    source_span.to_string(),
+                    styles::source_external_style(),
+                )),
                 Cell::from(item.issue.title.clone()),
                 Cell::from(Line::from(Span::styled(
                     format!("{state_icon} {state_text}"),
                     state_style,
                 ))),
-                Cell::from(author.to_string()),
-                Cell::from(assignees),
+                Cell::from(Span::styled(
+                    author.to_string(),
+                    Style::default().fg(styles::CYAN),
+                )),
+                Cell::from(Span::styled(
+                    assignees,
+                    Style::default().fg(styles::MAGENTA),
+                )),
                 Cell::from(labels),
-                Cell::from(age),
+                Cell::from(Span::styled(age, Style::default().fg(styles::TEXT_DIM))),
             ]);
             let is_selected = selected_idx == Some(row_idx);
             let is_closed = item.issue.state == "closed";

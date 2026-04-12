@@ -316,10 +316,7 @@ pub fn title_style() -> Style {
 }
 
 pub fn selected_style() -> Style {
-    Style::default()
-        .bg(HIGHLIGHT)
-        .fg(TEXT_BRIGHT)
-        .add_modifier(Modifier::BOLD)
+    Style::default().bg(HIGHLIGHT).add_modifier(Modifier::BOLD)
 }
 
 pub fn header_style() -> Style {

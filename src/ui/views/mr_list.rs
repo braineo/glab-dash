@@ -1,7 +1,8 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Row, Table};
+use ratatui::widgets::{Cell, Paragraph, Row, Table};
 
 use std::collections::HashMap;
 
@@ -98,6 +99,7 @@ pub fn render(
         state.filter.bar_selected,
     );
 
+    let selected_idx = state.list.table_state.selected();
     let rows: Vec<Row> = state
         .list
         .indices
@@ -129,25 +131,89 @@ pub fn render(
             } else {
                 item.mr.title.clone()
             };
-            let approvals = item
+
+            let reviewers = item
                 .mr
-                .approved_by
+                .reviewers
                 .iter()
-                .map(|a| a.user.username.as_str())
+                .map(|r| r.username.as_str())
                 .collect::<Vec<_>>()
                 .join(",");
+
+            // Diff: green additions, red deletions
+            let diff_cell = match (item.mr.diff_additions, item.mr.diff_deletions) {
+                (Some(a), Some(d)) => Cell::from(Line::from(vec![
+                    Span::styled(format!("+{a}"), Style::default().fg(styles::GREEN)),
+                    Span::raw(" "),
+                    Span::styled(format!("-{d}"), Style::default().fg(styles::RED)),
+                ])),
+                _ => Cell::default(),
+            };
+
+            // Approval: green check, red uncheck
+            let approval_cell = match item.mr.approved {
+                Some(true) => Cell::from(Span::styled(
+                    styles::ICON_CHECK,
+                    Style::default().fg(styles::GREEN),
+                )),
+                Some(false) => Cell::from(Span::styled(
+                    styles::ICON_UNCHECK,
+                    Style::default().fg(styles::RED),
+                )),
+                None if !item.mr.approved_by.is_empty() => Cell::from(Span::styled(
+                    styles::ICON_CHECK,
+                    Style::default().fg(styles::GREEN),
+                )),
+                None => Cell::default(),
+            };
+
+            // Threads: unresolved in orange, total in dim
+            let threads_cell = match (item.mr.unresolved_threads, item.mr.user_notes_count) {
+                (Some(u), n) if u > 0 && n > 0 => Cell::from(Line::from(vec![
+                    Span::styled(format!("{u}!"), Style::default().fg(styles::ORANGE)),
+                    Span::styled(format!(" {n}"), Style::default().fg(styles::TEXT_DIM)),
+                ])),
+                (Some(u), 0) if u > 0 => Cell::from(Span::styled(
+                    format!("{u}!"),
+                    Style::default().fg(styles::ORANGE),
+                )),
+                (_, n) if n > 0 => Cell::from(Span::styled(
+                    format!("{n}"),
+                    Style::default().fg(styles::TEXT_DIM),
+                )),
+                _ => Cell::default(),
+            };
+
             let age = list_model::format_age(&item.mr.updated_at);
 
-            let row = Row::new(vec![
-                format!("!{}", item.mr.iid),
-                source_str,
-                title,
-                author.to_string(),
-                format!("{pipeline_icon} {pipeline_status}"),
-                approvals,
-                age,
+            let row = Row::new([
+                Cell::from(Span::styled(
+                    format!("!{}", item.mr.iid),
+                    Style::default().fg(styles::TEXT_DIM),
+                )),
+                Cell::from(Span::styled(source_str, styles::source_external_style())),
+                Cell::from(title),
+                Cell::from(Span::styled(
+                    author.to_string(),
+                    Style::default().fg(styles::CYAN),
+                )),
+                Cell::from(Span::styled(
+                    reviewers,
+                    Style::default().fg(styles::MAGENTA),
+                )),
+                diff_cell,
+                Cell::from(Span::styled(
+                    format!("{pipeline_icon} {pipeline_status}"),
+                    styles::pipeline_style(pipeline_status),
+                )),
+                approval_cell,
+                threads_cell,
+                Cell::from(Span::styled(age, Style::default().fg(styles::TEXT_DIM))),
             ]);
-            if item.mr.draft {
+            let is_selected = selected_idx == Some(row_idx);
+            if is_selected {
+                row.style(styles::selected_style())
+            } else if item.mr.draft {
                 row.style(styles::draft_style())
             } else if row_idx % 2 == 1 {
                 row.style(styles::row_alt_style())
@@ -160,15 +226,19 @@ pub fn render(
     let widths = [
         Constraint::Length(7),  // IID
         Constraint::Length(10), // Source
-        Constraint::Min(30),    // Title
+        Constraint::Min(20),    // Title
         Constraint::Length(12), // Author
+        Constraint::Length(12), // Reviewer
+        Constraint::Length(12), // +/- diff
         Constraint::Length(12), // Pipeline
-        Constraint::Length(15), // Approvals
+        Constraint::Length(3),  // Approved (icon only)
+        Constraint::Length(8),  // Threads
         Constraint::Length(8),  // Age
     ];
 
     let header = Row::new(vec![
-        "ID", "Source", "Title", "Author", "Pipeline", "Approved", "Updated",
+        "ID", "Source", "Title", "Author", "Reviewer", "+/-", "Pipeline", " A", "Threads",
+        "Updated",
     ])
     .style(styles::header_style())
     .bottom_margin(1);
@@ -177,7 +247,6 @@ pub fn render(
 
     let table = Table::new(rows, widths)
         .header(header)
-        .row_highlight_style(styles::selected_style())
         .highlight_symbol(styles::ICON_SELECTOR)
         .block(table_block);
 
@@ -202,27 +271,62 @@ pub fn render(
             .head_pipeline
             .as_ref()
             .map_or("none", |p| p.status.as_str());
-        let preview = Paragraph::new(vec![
-            Line::from(spans),
-            Line::from(vec![
-                Span::styled(" Branch: ", styles::help_desc_style()),
-                Span::styled(
-                    &item.mr.source_branch,
-                    ratatui::style::Style::default().fg(styles::TEAL),
-                ),
-                Span::styled(
-                    format!(" {} ", styles::ICON_ARROW),
+
+        // Build detail line: branch info, pipeline, approvals, diff stats
+        let mut detail_spans = vec![
+            Span::styled(" Branch: ", styles::help_desc_style()),
+            Span::styled(
+                &item.mr.source_branch,
+                ratatui::style::Style::default().fg(styles::TEAL),
+            ),
+            Span::styled(
+                format!(" {} ", styles::ICON_ARROW),
+                styles::help_desc_style(),
+            ),
+            Span::styled(
+                &item.mr.target_branch,
+                ratatui::style::Style::default().fg(styles::TEAL),
+            ),
+            Span::styled("  Pipeline: ", styles::help_desc_style()),
+            Span::styled(pipeline_status, styles::pipeline_style(pipeline_status)),
+        ];
+
+        // Approvals
+        let approved_by: Vec<&str> = item
+            .mr
+            .approved_by
+            .iter()
+            .map(|a| a.user.username.as_str())
+            .collect();
+        if !approved_by.is_empty() {
+            detail_spans.push(Span::styled("  Approved: ", styles::help_desc_style()));
+            detail_spans.push(Span::styled(
+                format!("{} {}", styles::ICON_CHECK, approved_by.join(", ")),
+                styles::source_tracking_style(),
+            ));
+        }
+
+        // Diff stats
+        if let (Some(a), Some(d)) = (item.mr.diff_additions, item.mr.diff_deletions) {
+            detail_spans.push(Span::styled("  Diff: ", styles::help_desc_style()));
+            detail_spans.push(Span::styled(
+                format!("+{a}"),
+                ratatui::style::Style::default().fg(styles::GREEN),
+            ));
+            detail_spans.push(Span::styled(
+                format!(" -{d}"),
+                ratatui::style::Style::default().fg(styles::RED),
+            ));
+            if let Some(f) = item.mr.diff_file_count {
+                detail_spans.push(Span::styled(
+                    format!(" ({f} files)"),
                     styles::help_desc_style(),
-                ),
-                Span::styled(
-                    &item.mr.target_branch,
-                    ratatui::style::Style::default().fg(styles::TEAL),
-                ),
-                Span::styled("  Pipeline: ", styles::help_desc_style()),
-                Span::styled(pipeline_status, styles::pipeline_style(pipeline_status)),
-            ]),
-        ])
-        .style(ratatui::style::Style::default().bg(styles::SURFACE));
+                ));
+            }
+        }
+
+        let preview = Paragraph::new(vec![Line::from(spans), Line::from(detail_spans)])
+            .style(ratatui::style::Style::default().bg(styles::SURFACE));
         frame.render_widget(preview, chunks[2]);
     }
 }

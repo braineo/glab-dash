@@ -5,8 +5,8 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::gitlab::types::{
-    Discussion, Issue, Iteration, MergeRequest, MergeRequestApprovals, Milestone, Note,
-    ProjectLabel, References, TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
+    ApprovalUser, Discussion, Issue, Iteration, MergeRequest, MergeRequestApprovals, Milestone,
+    Note, ProjectLabel, References, TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
 };
 
 // ── GraphQL response types (serde-driven) ──
@@ -187,6 +187,197 @@ impl From<GqlAllowedStatus> for WorkItemStatus {
             color: s.color,
             position: s.position,
             category: s.category,
+        }
+    }
+}
+
+// ── MR GraphQL types ──
+
+#[derive(Deserialize)]
+struct GqlProjectMrData {
+    project: Option<GqlProjectMrs>,
+}
+
+#[derive(Deserialize)]
+struct GqlProjectMrs {
+    #[serde(default, rename = "mergeRequests")]
+    merge_requests: GqlConnection<GqlMergeRequest>,
+}
+
+/// All fields here are explicitly requested in `MR_FIELDS`.
+/// No `#[serde(default)]` on queried fields — if deserialization fails
+/// the error surfaces instead of silently producing None/0.
+#[derive(Deserialize)]
+struct GqlMergeRequest {
+    id: String,
+    #[serde(deserialize_with = "deserialize_string_u64")]
+    iid: u64,
+    title: String,
+    state: String,
+    draft: bool,
+    author: Option<GqlUser>,
+    assignees: GqlConnection<GqlUser>,
+    reviewers: GqlConnection<GqlUser>,
+    labels: GqlConnection<GqlLabel>,
+    milestone: Option<GqlMilestone>,
+    #[serde(rename = "createdAt")]
+    created_at: DateTime<FixedOffset>,
+    #[serde(rename = "updatedAt")]
+    updated_at: DateTime<FixedOffset>,
+    #[serde(rename = "webUrl")]
+    web_url: String,
+    description: Option<String>,
+    #[serde(rename = "userNotesCount")]
+    user_notes_count: u64,
+    #[serde(rename = "sourceBranch")]
+    source_branch: String,
+    #[serde(rename = "targetBranch")]
+    target_branch: String,
+    #[serde(rename = "mergeStatusEnum")]
+    merge_status_enum: Option<String>,
+    reference: Option<String>,
+    #[serde(rename = "diffStatsSummary")]
+    diff_stats_summary: Option<GqlDiffStatsSummary>,
+    approved: Option<bool>,
+    #[serde(rename = "approvedBy")]
+    approved_by: GqlConnection<GqlUser>,
+    #[serde(rename = "headPipeline")]
+    head_pipeline: Option<GqlPipelineRef>,
+    #[serde(rename = "resolvableDiscussionsCount")]
+    resolvable_discussions_count: u64,
+    #[serde(rename = "resolvedDiscussionsCount")]
+    resolved_discussions_count: u64,
+}
+
+#[derive(Deserialize)]
+struct GqlDiffStatsSummary {
+    additions: u64,
+    deletions: u64,
+    #[serde(rename = "fileCount")]
+    file_count: u64,
+}
+
+#[derive(Deserialize)]
+struct GqlPipelineRef {
+    #[serde(default)]
+    status: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GqlUserAssignedData {
+    user: Option<GqlUserAssigned>,
+}
+
+#[derive(Deserialize)]
+struct GqlUserAssigned {
+    #[serde(rename = "assignedMergeRequests")]
+    assigned_merge_requests: GqlConnection<GqlMergeRequest>,
+}
+
+#[derive(Deserialize)]
+struct GqlUserReviewData {
+    user: Option<GqlUserReview>,
+}
+
+#[derive(Deserialize)]
+struct GqlUserReview {
+    #[serde(rename = "reviewRequestedMergeRequests")]
+    review_requested_merge_requests: GqlConnection<GqlMergeRequest>,
+}
+
+impl From<GqlMergeRequest> for MergeRequest {
+    fn from(gql: GqlMergeRequest) -> Self {
+        let unresolved = gql
+            .resolvable_discussions_count
+            .saturating_sub(gql.resolved_discussions_count);
+
+        let (diff_additions, diff_deletions, diff_file_count) = match gql.diff_stats_summary {
+            Some(ds) => (Some(ds.additions), Some(ds.deletions), Some(ds.file_count)),
+            None => (None, None, None),
+        };
+
+        let pipeline = gql.head_pipeline.and_then(|p| {
+            p.status.map(|status| crate::gitlab::types::Pipeline {
+                id: 0,
+                status: status.to_lowercase(),
+                ref_name: None,
+                web_url: String::new(),
+            })
+        });
+
+        MergeRequest {
+            id: gid_to_u64(&gql.id),
+            iid: gql.iid,
+            title: gql.title,
+            state: gql.state,
+            author: gql.author.map(|u| User {
+                id: gid_to_u64(&u.id),
+                username: u.username,
+                name: u.name,
+                avatar_url: None,
+                web_url: u.web_url,
+            }),
+            assignees: gql
+                .assignees
+                .nodes
+                .into_iter()
+                .map(|u| User {
+                    id: gid_to_u64(&u.id),
+                    username: u.username,
+                    name: u.name,
+                    avatar_url: None,
+                    web_url: u.web_url,
+                })
+                .collect(),
+            reviewers: gql
+                .reviewers
+                .nodes
+                .into_iter()
+                .map(|u| User {
+                    id: gid_to_u64(&u.id),
+                    username: u.username,
+                    name: u.name,
+                    avatar_url: None,
+                    web_url: u.web_url,
+                })
+                .collect(),
+            labels: gql.labels.nodes.into_iter().map(|l| l.title).collect(),
+            milestone: gql.milestone.map(|m| Milestone {
+                id: gid_to_u64(&m.id),
+                title: m.title,
+                state: m.state.unwrap_or_default(),
+            }),
+            created_at: gql.created_at.with_timezone(&Utc),
+            updated_at: gql.updated_at.with_timezone(&Utc),
+            web_url: gql.web_url,
+            description: gql.description,
+            draft: gql.draft,
+            work_in_progress: false,
+            merge_status: gql.merge_status_enum,
+            source_branch: gql.source_branch,
+            target_branch: gql.target_branch,
+            head_pipeline: pipeline,
+            user_notes_count: gql.user_notes_count,
+            references: gql.reference.map(|r| References { full_ref: r }),
+            approved_by: gql
+                .approved_by
+                .nodes
+                .into_iter()
+                .map(|u| ApprovalUser {
+                    user: User {
+                        id: gid_to_u64(&u.id),
+                        username: u.username,
+                        name: u.name,
+                        avatar_url: None,
+                        web_url: u.web_url,
+                    },
+                })
+                .collect(),
+            diff_additions,
+            diff_deletions,
+            diff_file_count,
+            approved: gql.approved,
+            unresolved_threads: Some(unresolved),
         }
     }
 }
@@ -640,83 +831,7 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
-    // ── Merge Requests ──
-
-    pub async fn list_project_mrs(
-        &self,
-        project: &str,
-        state: &str,
-        page: u32,
-        per_page: u32,
-        updated_after: Option<&str>,
-    ) -> Result<Vec<MergeRequest>> {
-        let url = self.api_url(&format!(
-            "/projects/{}/merge_requests",
-            Self::encode_project(project)
-        ));
-        let per_page_s = per_page.to_string();
-        let page_s = page.to_string();
-        let mut req = self.client.get(&url).query(&[
-            ("state", state),
-            ("per_page", per_page_s.as_str()),
-            ("page", page_s.as_str()),
-        ]);
-        if let Some(after) = updated_after {
-            req = req.query(&[("updated_after", after)]);
-        }
-        let resp = req.send().await.context("Failed to fetch project MRs")?;
-        Self::handle_response(resp).await
-    }
-
-    pub async fn list_assigned_mrs(
-        &self,
-        username: &str,
-        state: &str,
-        page: u32,
-        per_page: u32,
-        updated_after: Option<&str>,
-    ) -> Result<Vec<MergeRequest>> {
-        let url = self.api_url("/merge_requests");
-        let per_page_s = per_page.to_string();
-        let page_s = page.to_string();
-        let mut req = self.client.get(&url).query(&[
-            ("assignee_username", username),
-            ("state", state),
-            ("scope", "all"),
-            ("per_page", per_page_s.as_str()),
-            ("page", page_s.as_str()),
-        ]);
-        if let Some(after) = updated_after {
-            req = req.query(&[("updated_after", after)]);
-        }
-        let resp = req.send().await.context("Failed to fetch assigned MRs")?;
-        Self::handle_response(resp).await
-    }
-
-    pub async fn list_reviewer_mrs(
-        &self,
-        username: &str,
-        state: &str,
-        page: u32,
-        per_page: u32,
-        updated_after: Option<&str>,
-    ) -> Result<Vec<MergeRequest>> {
-        let url = self.api_url("/merge_requests");
-        let per_page_s = per_page.to_string();
-        let page_s = page.to_string();
-        let mut req = self.client.get(&url).query(&[
-            ("reviewer_username", username),
-            ("state", state),
-            ("scope", "all"),
-            ("per_page", per_page_s.as_str()),
-            ("page", page_s.as_str()),
-        ]);
-        if let Some(after) = updated_after {
-            req = req.query(&[("updated_after", after)]);
-        }
-        let resp = req.send().await.context("Failed to fetch reviewer MRs")?;
-        Self::handle_response(resp).await
-    }
+    // ── Merge Requests (REST, single-item) ──
 
     #[allow(dead_code)]
     pub async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
@@ -1222,32 +1337,116 @@ impl GitLabClient {
         Ok(all)
     }
 
+    // ── Merge Requests (GraphQL) ──
+
+    const MR_FIELDS: &str = r"
+        id iid title state draft
+        author { id username name webUrl }
+        assignees { nodes { id username name webUrl } }
+        reviewers { nodes { id username name webUrl } }
+        labels { nodes { title } }
+        milestone { id title state }
+        createdAt updatedAt webUrl description
+        userNotesCount
+        sourceBranch targetBranch mergeStatusEnum
+        reference(full: true)
+        diffStatsSummary { additions deletions fileCount }
+        approved
+        approvedBy { nodes { id username name webUrl } }
+        headPipeline { status }
+        resolvableDiscussionsCount
+        resolvedDiscussionsCount
+    ";
+
+    /// Page size for MR list queries. Kept small to stay within GitLab's
+    /// default query complexity limit of 250 (each MR node with nested
+    /// discussions contributes ~5 points).
+    const MR_PAGE_SIZE: u32 = 25;
+
+    async fn graphql_list_project_mrs(
+        &self,
+        project: &str,
+        state: Option<&str>,
+        updated_after: Option<&str>,
+    ) -> Result<Vec<MergeRequest>> {
+        let gql_state = match state {
+            Some("opened") => serde_json::json!("opened"),
+            Some("merged") => serde_json::json!("merged"),
+            Some("closed") => serde_json::json!("closed"),
+            _ => serde_json::Value::Null,
+        };
+
+        let query = format!(
+            r"
+            query($projectPath: ID!, $state: MergeRequestState, $updatedAfter: Time, $after: String) {{
+                project(fullPath: $projectPath) {{
+                    mergeRequests(
+                        state: $state
+                        updatedAfter: $updatedAfter
+                        after: $after
+                        first: {page_size}
+                        sort: UPDATED_DESC
+                    ) {{
+                        nodes {{ {fields} }}
+                        pageInfo {{ hasNextPage endCursor }}
+                    }}
+                }}
+            }}
+            ",
+            page_size = Self::MR_PAGE_SIZE,
+            fields = Self::MR_FIELDS
+        );
+
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let variables = serde_json::json!({
+                "projectPath": project,
+                "state": gql_state,
+                "updatedAfter": updated_after,
+                "after": cursor,
+            });
+            let body = serde_json::json!({ "query": query, "variables": variables });
+            let json = self.graphql_post(&body).await?;
+            let resp: GqlResponse<GqlProjectMrData> =
+                serde_json::from_value(json).context("failed to deserialize project MRs")?;
+
+            let Some(proj) = resp.data.project else {
+                break;
+            };
+
+            let connection = proj.merge_requests;
+            all.extend(connection.nodes.into_iter().map(MergeRequest::from));
+
+            match connection.page_info {
+                Some(pi) if pi.has_next_page => cursor = pi.end_cursor,
+                _ => break,
+            }
+        }
+        Ok(all)
+    }
+
     pub async fn fetch_tracking_mrs(
         &self,
         state: &str,
         updated_after: Option<&str>,
     ) -> Result<Vec<TrackedMergeRequest>> {
+        let gql_state = if state == "all" { None } else { Some(state) };
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
         for project in &self.config.tracking_projects {
-            let mut page = 1u32;
-            loop {
-                let mrs = self
-                    .list_project_mrs(project, state, page, 100, updated_after)
-                    .await?;
-                let done = mrs.len() < 100;
-                for mr in mrs {
-                    if seen_ids.insert(mr.id) {
-                        all.push(TrackedMergeRequest {
-                            project_path: project.clone(),
-                            mr,
-                        });
-                    }
+            let mrs = self
+                .graphql_list_project_mrs(project, gql_state, updated_after)
+                .await?;
+            for mr in mrs {
+                let project_path = mr.references.as_ref().map_or_else(
+                    || project.clone(),
+                    |r| extract_project_from_ref(&r.full_ref),
+                );
+                if seen_ids.insert(mr.id) {
+                    all.push(TrackedMergeRequest { mr, project_path });
                 }
-                if done {
-                    break;
-                }
-                page += 1;
             }
         }
         Ok(all)
@@ -1257,44 +1456,136 @@ impl GitLabClient {
         &self,
         members: &[String],
         state: &str,
-        updated_after: Option<&str>,
+        _updated_after: Option<&str>,
     ) -> Result<Vec<TrackedMergeRequest>> {
+        let gql_state = match state {
+            "opened" => serde_json::json!("opened"),
+            "merged" => serde_json::json!("merged"),
+            "closed" => serde_json::json!("closed"),
+            _ => serde_json::Value::Null,
+        };
+
+        let assigned_query = format!(
+            r"
+            query($username: String!, $state: MergeRequestState, $after: String) {{
+                user(username: $username) {{
+                    assignedMergeRequests(state: $state, after: $after, first: {page_size}, sort: UPDATED_DESC) {{
+                        nodes {{ {fields} }}
+                        pageInfo {{ hasNextPage endCursor }}
+                    }}
+                }}
+            }}
+            ",
+            page_size = Self::MR_PAGE_SIZE,
+            fields = Self::MR_FIELDS
+        );
+
+        let reviewer_query = format!(
+            r"
+            query($username: String!, $state: MergeRequestState, $after: String) {{
+                user(username: $username) {{
+                    reviewRequestedMergeRequests(state: $state, after: $after, first: {page_size}, sort: UPDATED_DESC) {{
+                        nodes {{ {fields} }}
+                        pageInfo {{ hasNextPage endCursor }}
+                    }}
+                }}
+            }}
+            ",
+            page_size = Self::MR_PAGE_SIZE,
+            fields = Self::MR_FIELDS
+        );
+
         let mut all = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+
         for member in members {
-            // Fetch both assigned and reviewer MRs
-            for is_reviewer in [false, true] {
-                let mut page = 1u32;
-                loop {
-                    let mrs = if is_reviewer {
-                        self.list_reviewer_mrs(member, state, page, 100, updated_after)
-                            .await?
-                    } else {
-                        self.list_assigned_mrs(member, state, page, 100, updated_after)
-                            .await?
-                    };
-                    let done = mrs.len() < 100;
-                    for mr in mrs {
-                        let project_path = mr
-                            .references
-                            .as_ref()
-                            .map(|r| extract_project_from_ref(&r.full_ref))
-                            .unwrap_or_default();
-                        if self.config.is_tracking_project(&project_path) {
-                            continue;
-                        }
-                        if all.iter().any(|t: &TrackedMergeRequest| t.mr.id == mr.id) {
-                            continue;
-                        }
-                        all.push(TrackedMergeRequest { mr, project_path });
-                    }
-                    if done {
-                        break;
-                    }
-                    page += 1;
-                }
-            }
+            // Assigned MRs
+            self.fetch_user_mrs_paginated(
+                &assigned_query,
+                member,
+                &gql_state,
+                &mut all,
+                &mut seen_ids,
+                false,
+            )
+            .await?;
+            // Review-requested MRs
+            self.fetch_user_mrs_paginated(
+                &reviewer_query,
+                member,
+                &gql_state,
+                &mut all,
+                &mut seen_ids,
+                true,
+            )
+            .await?;
         }
         Ok(all)
+    }
+
+    async fn fetch_user_mrs_paginated(
+        &self,
+        query: &str,
+        member: &str,
+        state: &serde_json::Value,
+        all: &mut Vec<TrackedMergeRequest>,
+        seen_ids: &mut std::collections::HashSet<u64>,
+        is_reviewer: bool,
+    ) -> Result<()> {
+        let mut cursor: Option<String> = None;
+        loop {
+            let variables = serde_json::json!({
+                "username": member,
+                "state": state,
+                "after": cursor,
+            });
+            let body = serde_json::json!({ "query": query, "variables": variables });
+            let json = self.graphql_post(&body).await?;
+
+            let connection = if is_reviewer {
+                let resp: GqlResponse<GqlUserReviewData> =
+                    serde_json::from_value(json).context("failed to deserialize reviewer MRs")?;
+                let Some(user) = resp.data.user else {
+                    break;
+                };
+                user.review_requested_merge_requests
+            } else {
+                let resp: GqlResponse<GqlUserAssignedData> =
+                    serde_json::from_value(json).context("failed to deserialize assigned MRs")?;
+                let Some(user) = resp.data.user else {
+                    break;
+                };
+                user.assigned_merge_requests
+            };
+
+            let has_next = connection
+                .page_info
+                .as_ref()
+                .is_some_and(|pi| pi.has_next_page);
+
+            for mr in connection.nodes.into_iter().map(MergeRequest::from) {
+                let project_path = mr
+                    .references
+                    .as_ref()
+                    .map(|r| extract_project_from_ref(&r.full_ref))
+                    .unwrap_or_default();
+
+                if self.config.is_tracking_project(&project_path) {
+                    continue;
+                }
+                if !seen_ids.insert(mr.id) {
+                    continue;
+                }
+                all.push(TrackedMergeRequest { mr, project_path });
+            }
+
+            if has_next {
+                cursor = connection.page_info.and_then(|pi| pi.end_cursor);
+            } else {
+                break;
+            }
+        }
+        Ok(())
     }
 
     async fn handle_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
