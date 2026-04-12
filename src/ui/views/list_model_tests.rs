@@ -197,18 +197,21 @@ fn test_start_search() {
 
 #[test]
 fn test_format_age_days() {
-    let dt = chrono::Utc::now() - chrono::Duration::days(3);
-    assert_eq!(format_age(&dt), "3d");
+    let now = chrono::Utc::now();
+    let dt = now - chrono::Duration::days(3);
+    assert_eq!(format_age(&dt, now), "3d");
 }
 
 #[test]
 fn test_format_age_hours() {
-    let dt = chrono::Utc::now() - chrono::Duration::hours(5);
-    assert_eq!(format_age(&dt), "5h");
+    let now = chrono::Utc::now();
+    let dt = now - chrono::Duration::hours(5);
+    assert_eq!(format_age(&dt, now), "5h");
 }
 
 #[test]
 fn test_format_age_minutes() {
-    let dt = chrono::Utc::now() - chrono::Duration::minutes(42);
-    assert_eq!(format_age(&dt), "42m");
+    let now = chrono::Utc::now();
+    let dt = now - chrono::Duration::minutes(42);
+    assert_eq!(format_age(&dt, now), "42m");
 }

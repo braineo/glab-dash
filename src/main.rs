@@ -179,7 +179,10 @@ async fn main() -> Result<()> {
     app.loading = true;
     app.fetch_all();
 
-    // Main loop — event-driven rendering: only draw when state changes
+    // Main loop — event-driven rendering with drain-before-paint.
+    // Block on select! for the first event, then drain all pending events
+    // before rendering once.  This gives immediate visual feedback while
+    // coalescing bursts (e.g. held-key scrolling) into a single paint.
     loop {
         if app.needs_redraw {
             terminal.draw(|frame| app.render(frame))?;
@@ -190,12 +193,10 @@ async fn main() -> Result<()> {
             Some(Ok(event)) = event_stream.next() => {
                 match event {
                     CEvent::Key(key)
-                        if key.kind == crossterm::event::KeyEventKind::Press =>
+                        if key.kind == crossterm::event::KeyEventKind::Press
+                            && app.handle_key(key) =>
                     {
-                        if app.handle_key(key) {
-                            break; // quit
-                        }
-                        app.needs_redraw = true;
+                        break; // quit
                     }
                     CEvent::Resize(_, _) => {
                         app.needs_redraw = true;
@@ -211,6 +212,25 @@ async fn main() -> Result<()> {
                 app.fetch_all();
                 app.needs_redraw = true;
             }
+        }
+
+        // Drain pending events — coalesce into a single render pass
+        let mut quit = false;
+        while crossterm::event::poll(Duration::ZERO)? {
+            if let CEvent::Key(key) = crossterm::event::read()?
+                && key.kind == crossterm::event::KeyEventKind::Press
+                && app.handle_key(key)
+            {
+                quit = true;
+                break;
+            }
+        }
+        while let Ok(msg) = async_rx.try_recv() {
+            app.handle_async_msg(msg);
+            app.needs_redraw = true;
+        }
+        if quit {
+            break;
         }
     }
 

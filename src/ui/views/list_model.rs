@@ -54,50 +54,71 @@ impl<T> ItemList<T> {
         }
     }
 
-    pub fn select_next(&mut self) {
+    /// Returns `true` if the selection actually changed.
+    pub fn select_next(&mut self) -> bool {
         let len = self.indices.len();
         if len == 0 {
-            return;
+            return false;
         }
         let current = self.table_state.selected().unwrap_or(0);
-        self.table_state.select(Some((current + 1).min(len - 1)));
+        let next = (current + 1).min(len - 1);
+        self.table_state.select(Some(next));
+        next != current
     }
 
-    pub fn select_prev(&mut self) {
+    /// Returns `true` if the selection actually changed.
+    pub fn select_prev(&mut self) -> bool {
         if self.indices.is_empty() {
-            return;
+            return false;
         }
         let current = self.table_state.selected().unwrap_or(0);
-        self.table_state.select(Some(current.saturating_sub(1)));
+        let next = current.saturating_sub(1);
+        self.table_state.select(Some(next));
+        next != current
     }
 
-    pub fn select_first(&mut self) {
-        if !self.indices.is_empty() {
-            self.table_state.select(Some(0));
+    /// Returns `true` if the selection actually changed.
+    pub fn select_first(&mut self) -> bool {
+        if self.indices.is_empty() {
+            return false;
         }
+        let changed = self.table_state.selected() != Some(0);
+        self.table_state.select(Some(0));
+        changed
     }
 
-    pub fn select_last(&mut self) {
-        if !self.indices.is_empty() {
-            self.table_state.select(Some(self.indices.len() - 1));
+    /// Returns `true` if the selection actually changed.
+    pub fn select_last(&mut self) -> bool {
+        if self.indices.is_empty() {
+            return false;
         }
+        let last = self.indices.len() - 1;
+        let changed = self.table_state.selected() != Some(last);
+        self.table_state.select(Some(last));
+        changed
     }
 
-    pub fn page_down(&mut self) {
+    /// Returns `true` if the selection actually changed.
+    pub fn page_down(&mut self) -> bool {
         let len = self.indices.len();
         if len == 0 {
-            return;
+            return false;
         }
         let current = self.table_state.selected().unwrap_or(0);
-        self.table_state.select(Some((current + 20).min(len - 1)));
+        let next = (current + 20).min(len - 1);
+        self.table_state.select(Some(next));
+        next != current
     }
 
-    pub fn page_up(&mut self) {
+    /// Returns `true` if the selection actually changed.
+    pub fn page_up(&mut self) -> bool {
         if self.indices.is_empty() {
-            return;
+            return false;
         }
         let current = self.table_state.selected().unwrap_or(0);
-        self.table_state.select(Some(current.saturating_sub(20)));
+        let next = current.saturating_sub(20);
+        self.table_state.select(Some(next));
+        next != current
     }
 }
 
@@ -239,8 +260,10 @@ pub fn search_block<'a>(label: &'a str, filter: &'a UserFilter) -> Block<'a> {
 }
 
 /// Format a timestamp as relative age (e.g. "3d", "5h", "12m").
-pub fn format_age(dt: &chrono::DateTime<chrono::Utc>) -> String {
-    let now = chrono::Utc::now();
+pub fn format_age(
+    dt: &chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
     let diff = now.signed_duration_since(*dt);
     if diff.num_days() > 0 {
         format!("{}d", diff.num_days())
