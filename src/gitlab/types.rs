@@ -65,6 +65,8 @@ pub struct Issue {
     #[serde(default)]
     pub custom_status: Option<String>,
     #[serde(default)]
+    pub custom_status_category: Option<String>,
+    #[serde(default)]
     pub iteration: Option<Iteration>,
     #[serde(default)]
     pub weight: Option<u32>,

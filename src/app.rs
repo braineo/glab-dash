@@ -1369,7 +1369,6 @@ impl App {
         self.iteration_health = Some(dashboard::compute_health(
             &self.issues,
             current_iter,
-            &self.work_item_statuses,
             &self.scope_creep_cache,
             self.scope_creep_state != FetchState::Done,
             &self.shadow_work_cache,

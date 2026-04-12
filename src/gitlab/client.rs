@@ -132,6 +132,7 @@ struct GqlMilestone {
 #[derive(Deserialize)]
 struct GqlStatusValue {
     name: String,
+    category: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -450,6 +451,7 @@ impl From<GqlRootIssue> for Issue {
             description: g.description,
             user_notes_count: 0,
             references: g.reference.map(|r| References { full_ref: r }),
+            custom_status_category: g.status.as_ref().and_then(|s| s.category.clone()),
             custom_status: g.status.map(|s| s.name),
             iteration: g.iteration.map(|i| Iteration {
                 id: i.id,
@@ -477,6 +479,7 @@ impl From<GqlWorkItem> for Issue {
         let mut labels = Vec::new();
         let mut milestone = None;
         let mut custom_status = None;
+        let mut custom_status_category = None;
         let mut description = None;
         let mut iteration = None;
         let mut weight = None;
@@ -497,6 +500,7 @@ impl From<GqlWorkItem> for Issue {
             }
             if let Some(s) = widget.status {
                 custom_status = Some(s.name);
+                custom_status_category = s.category;
             }
             if let Some(d) = widget.description {
                 description = Some(d);
@@ -536,6 +540,7 @@ impl From<GqlWorkItem> for Issue {
             user_notes_count: 0,
             references: w.reference.map(|r| References { full_ref: r }),
             custom_status,
+            custom_status_category,
             iteration,
             weight,
         }
@@ -612,7 +617,7 @@ impl GitLabClient {
                                 milestone { id title state }
                             }
                             ... on WorkItemWidgetStatus {
-                                status { name }
+                                status { name category }
                             }
                             ... on WorkItemWidgetDescription {
                                 description
@@ -705,7 +710,7 @@ impl GitLabClient {
                                 milestone { id title state }
                             }
                             ... on WorkItemWidgetStatus {
-                                status { name }
+                                status { name category }
                             }
                             ... on WorkItemWidgetDescription {
                                 description

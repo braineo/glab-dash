@@ -418,6 +418,7 @@ mod tests {
                 user_notes_count: 0,
                 references: None,
                 custom_status: None,
+                custom_status_category: None,
                 iteration: None,
                 weight: None,
             },

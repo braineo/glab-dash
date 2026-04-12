@@ -39,6 +39,7 @@ fn make_issue(iid: u64, title: &str, labels: &[&str], updated_days_ago: i64) -> 
             user_notes_count: 0,
             references: None,
             custom_status: None,
+            custom_status_category: None,
             iteration: None,
             weight: None,
         },

@@ -1138,11 +1138,9 @@ fn render_member_table(
 ///
 /// This is a pure function that derives all health metrics from the provided data.
 /// Called from `App::compute_iteration_health()`.
-#[allow(clippy::too_many_arguments)]
 pub fn compute_health(
     issues: &[TrackedIssue],
     current_iteration: &Iteration,
-    work_item_statuses: &HashMap<String, Vec<WorkItemStatus>>,
     scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
     scope_creep_loading: bool,
     shadow_work_cache: &[TrackedIssue],
@@ -1186,15 +1184,9 @@ pub fn compute_health(
 
     // Determine "done" via status category or state
     let is_done = |ti: &TrackedIssue| -> bool {
-        let status_name = ti.issue.custom_status.as_deref().unwrap_or("");
-        work_item_statuses
-            .get(&ti.project_path)
-            .and_then(|statuses| {
-                statuses
-                    .iter()
-                    .find(|s| s.name.eq_ignore_ascii_case(status_name))
-            })
-            .and_then(|s| s.category.as_deref())
+        ti.issue
+            .custom_status_category
+            .as_deref()
             .map_or(ti.issue.state == "closed", |cat| cat == "done")
     };
 
@@ -1246,15 +1238,9 @@ pub fn compute_health(
     // Shadow work: closed issues updated during iteration but not in it (indices into `shadow_work_cache`).
     // Exclude "canceled" category (duplicates, won't do, etc.) — only real completed work.
     let is_canceled = |ti: &TrackedIssue| -> bool {
-        let status_name = ti.issue.custom_status.as_deref().unwrap_or("");
-        work_item_statuses
-            .get(&ti.project_path)
-            .and_then(|statuses| {
-                statuses
-                    .iter()
-                    .find(|s| s.name.eq_ignore_ascii_case(status_name))
-            })
-            .and_then(|s| s.category.as_deref())
+        ti.issue
+            .custom_status_category
+            .as_deref()
             .is_some_and(|cat| cat == "canceled")
     };
 
@@ -1271,15 +1257,9 @@ pub fn compute_health(
     // At risk: iteration issues with "active" category status, not updated in 5+ days (indices into `issues`)
     let stale_threshold = Utc::now() - chrono::Duration::days(5);
     let is_active_status = |ti: &TrackedIssue| -> bool {
-        let status_name = ti.issue.custom_status.as_deref().unwrap_or("");
-        work_item_statuses
-            .get(&ti.project_path)
-            .and_then(|statuses| {
-                statuses
-                    .iter()
-                    .find(|s| s.name.eq_ignore_ascii_case(status_name))
-            })
-            .and_then(|s| s.category.as_deref())
+        ti.issue
+            .custom_status_category
+            .as_deref()
             .is_some_and(|cat| cat == "active")
     };
 
@@ -1343,6 +1323,7 @@ mod tests {
                 user_notes_count: 0,
                 references: None,
                 custom_status: None,
+                custom_status_category: None,
                 iteration: iteration_id.map(|id| crate::gitlab::types::Iteration {
                     id: id.to_string(),
                     title: "Sprint 1".to_string(),
