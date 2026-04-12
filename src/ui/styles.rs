@@ -14,7 +14,7 @@ pub const HIGHLIGHT: Color = Color::Rgb(41, 46, 66);
 
 // Foregrounds
 pub const TEXT: Color = Color::Rgb(169, 177, 214);
-pub const TEXT_DIM: Color = Color::Rgb(86, 95, 137);
+pub const TEXT_DIM: Color = Color::Rgb(115, 125, 165);
 pub const TEXT_BRIGHT: Color = Color::Rgb(200, 211, 245);
 
 // Overlay-specific foregrounds (WCAG AA 4.5:1 against OVERLAY bg #343b58)
@@ -380,13 +380,13 @@ pub fn status_style(status: &str) -> Style {
     } else if lower.contains("won't do") || lower.contains("wont do") {
         Style::default().fg(RED)
     } else if lower.contains("duplicate") {
-        Style::default().fg(TEXT_DIM)
+        Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC)
     } else if lower.contains("todo") || lower.contains("to do") {
         Style::default().fg(CYAN)
     } else if lower.contains("backlog") {
-        Style::default().fg(TEXT_DIM)
+        Style::default().fg(TEAL)
     } else if lower.contains("draft") {
-        Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC)
+        Style::default().fg(YELLOW).add_modifier(Modifier::ITALIC)
     } else if lower.contains("block") {
         Style::default().fg(ORANGE)
     } else if lower.contains("review") || lower.contains("await") {

@@ -59,7 +59,14 @@ pub fn render(frame: &mut Frame, area: Rect, current_view: View) {
 
         if is_active {
             spans.push(Span::styled(
-                format!(" {} {} ", tab.icon, tab.label),
+                format!(" {} ", tab.icon),
+                Style::default()
+                    .fg(styles::CYAN)
+                    .bg(styles::HIGHLIGHT)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                format!("{} ", tab.label),
                 Style::default()
                     .fg(styles::TEXT_BRIGHT)
                     .bg(styles::HIGHLIGHT)

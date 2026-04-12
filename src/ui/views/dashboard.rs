@@ -609,7 +609,7 @@ fn render_quick_stats(
         }),
         Line::from(""),
         Line::from(Span::styled(
-            "  \u{2482} Merge Requests",
+            "  ⑂ Merge Requests",
             styles::section_header_style(),
         )),
         Line::from(vec![
