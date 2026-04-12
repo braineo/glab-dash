@@ -562,8 +562,7 @@ impl App {
                     .with_kind(chord_popup::ChordKind::Status),
             );
         } else {
-            let options: Vec<(String, String)> =
-                all_codes.into_iter().zip(all_names).collect();
+            let options: Vec<(String, String)> = all_codes.into_iter().zip(all_names).collect();
             let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
 
             self.chord_state = Some(
