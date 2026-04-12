@@ -161,12 +161,12 @@ fn generate_codes(count: usize, code_len: usize) -> Vec<String> {
     }
 }
 
-/// Generate cascading name-derived chord codes.
+/// Generate cascading name-derived chord codes (for labels/assignees).
 ///
 /// Names with a unique first letter get a 1-char code.
-/// Names sharing a first letter get 2-char codes: shared letter + a
-/// distinguishing character derived from the name (second alpha char,
-/// falling back to later chars on conflict).
+/// Names sharing a first letter ALL get 2-char codes: shared letter +
+/// a distinguishing character derived from the name. This avoids the
+/// problem where a 1-char code blocks selection of longer prefixes.
 pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
     let n = labels.len();
     if n == 0 {
@@ -177,42 +177,7 @@ pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
         return generate_codes(n, 2);
     }
 
-    // Extract lowercase alpha-only chars for each label
-    let alpha_chars: Vec<Vec<char>> = labels
-        .iter()
-        .map(|l| {
-            l.chars()
-                .filter(char::is_ascii_alphabetic)
-                .map(|c| c.to_ascii_lowercase())
-                .collect()
-        })
-        .collect();
-
-    // Group indices by first letter
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    let mut first_letter_of: Vec<char> = vec!['a'; n];
-    {
-        // Collect (first_letter, index) pairs, then group
-        let mut pairs: Vec<(char, usize)> = alpha_chars
-            .iter()
-            .enumerate()
-            .filter_map(|(i, chars)| chars.first().map(|&c| (c, i)))
-            .collect();
-        pairs.sort_by_key(|&(c, _)| c);
-
-        let mut i = 0;
-        while i < pairs.len() {
-            let ch = pairs[i].0;
-            let mut group = Vec::new();
-            while i < pairs.len() && pairs[i].0 == ch {
-                let idx = pairs[i].1;
-                first_letter_of[idx] = ch;
-                group.push(idx);
-                i += 1;
-            }
-            groups.push(group);
-        }
-    }
+    let (alpha_chars, groups, first_letter_of) = group_by_first_letter(labels);
 
     let mut codes = vec![String::new(); n];
 
@@ -221,19 +186,13 @@ pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
             // Unique first letter → single-char code
             codes[group[0]] = first_letter_of[group[0]].to_string();
         } else {
-            // Shared first letter: first item (by original order) gets 1-char code,
-            // rest get 2-char codes with name-derived second char.
+            // Shared first letter: ALL items get 2-char codes so that
+            // typing the first letter narrows candidates instead of
+            // immediately selecting one.
             let first = first_letter_of[group[0]];
-
-            // Find which item appeared first in the original label order
-            let primary = *group.iter().min().unwrap_or(&group[0]);
-            codes[primary] = first.to_string();
 
             let mut used_second: Vec<char> = Vec::new();
             for &idx in group {
-                if idx == primary {
-                    continue;
-                }
                 let mut assigned = false;
                 for &c in alpha_chars[idx].iter().skip(1) {
                     if !used_second.contains(&c) {
@@ -259,6 +218,109 @@ pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
     codes
 }
 
+/// Generate priority-aware single-char chord codes (for statuses).
+///
+/// Every label gets a single-char code when possible (≤ 26 items).
+/// Labels with a unique first letter claim it directly. When multiple
+/// labels share a first letter, the first one (by input order / priority)
+/// keeps it and the rest are reassigned to a unique character derived
+/// from later letters in their name.
+pub fn generate_priority_codes(labels: &[String]) -> Vec<String> {
+    let n = labels.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n > 26 {
+        return generate_codes(n, 2);
+    }
+
+    let (alpha_chars, groups, first_letter_of) = group_by_first_letter(labels);
+
+    let mut codes = vec![String::new(); n];
+    let mut used: Vec<char> = Vec::new();
+
+    // Pass 1: assign first-letter codes to unique groups and primaries
+    for group in &groups {
+        let first = first_letter_of[group[0]];
+        let primary = *group.iter().min().unwrap_or(&group[0]);
+        codes[primary] = first.to_string();
+        used.push(first);
+    }
+
+    // Pass 2: displaced items get a single unique char from their name
+    for group in &groups {
+        if group.len() == 1 {
+            continue;
+        }
+        let primary = *group.iter().min().unwrap_or(&group[0]);
+        for &idx in group {
+            if idx == primary {
+                continue;
+            }
+            let mut assigned = false;
+            for &c in alpha_chars[idx].iter().skip(1) {
+                if !used.contains(&c) {
+                    codes[idx] = c.to_string();
+                    used.push(c);
+                    assigned = true;
+                    break;
+                }
+            }
+            if !assigned {
+                for c in 'a'..='z' {
+                    if !used.contains(&c) {
+                        codes[idx] = c.to_string();
+                        used.push(c);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    codes
+}
+
+/// Shared helper: extract alpha chars and group label indices by first letter.
+fn group_by_first_letter(labels: &[String]) -> (Vec<Vec<char>>, Vec<Vec<usize>>, Vec<char>) {
+    let n = labels.len();
+    let alpha_chars: Vec<Vec<char>> = labels
+        .iter()
+        .map(|l| {
+            l.chars()
+                .filter(char::is_ascii_alphabetic)
+                .map(|c| c.to_ascii_lowercase())
+                .collect()
+        })
+        .collect();
+
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut first_letter_of: Vec<char> = vec!['a'; n];
+    {
+        let mut pairs: Vec<(char, usize)> = alpha_chars
+            .iter()
+            .enumerate()
+            .filter_map(|(i, chars)| chars.first().map(|&c| (c, i)))
+            .collect();
+        pairs.sort_by_key(|&(c, _)| c);
+
+        let mut i = 0;
+        while i < pairs.len() {
+            let ch = pairs[i].0;
+            let mut group = Vec::new();
+            while i < pairs.len() && pairs[i].0 == ch {
+                let idx = pairs[i].1;
+                first_letter_of[idx] = ch;
+                group.push(idx);
+                i += 1;
+            }
+            groups.push(group);
+        }
+    }
+
+    (alpha_chars, groups, first_letter_of)
+}
+
 // ── Rendering ──
 
 pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
@@ -282,7 +344,9 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
         .map(|(_, l)| l.len())
         .max()
         .unwrap_or(6);
-    let item_width = state.max_code_len + 1 + max_label_len + 2;
+    // Status icons add "◌ " prefix (2 display chars) to each label
+    let icon_width = if state.kind == ChordKind::Status { 2 } else { 0 };
+    let item_width = state.max_code_len + 1 + icon_width + max_label_len + 2;
     let usable_width = usize::from(area.width).saturating_sub(6);
     let cols = (usable_width / item_width).clamp(1, 4);
     let rows = state.options.len().div_ceil(cols);
@@ -320,7 +384,7 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
                 if state.kind == ChordKind::Status && is_active {
                     let icon = styles::status_icon(label);
                     let sty = styles::status_style(label);
-                    let padded = format!("{icon} {label:<max_label_len$}");
+                    let padded = format!("{icon} {label:<w$}", w = max_label_len + 2);
                     spans.push(Span::styled(padded, sty));
                 } else {
                     let label_style = if is_active {
@@ -328,7 +392,8 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
                     } else {
                         Style::default().fg(CHORD_DIM)
                     };
-                    let padded = format!("{label:<w$}", w = max_label_len + 2);
+                    let prefix = if state.kind == ChordKind::Status { "  " } else { "" };
+                    let padded = format!("{prefix}{label:<w$}", w = max_label_len + 2);
                     spans.push(Span::styled(padded, label_style));
                 }
             }

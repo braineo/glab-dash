@@ -810,11 +810,16 @@ impl App {
             return;
         };
 
-        // Generate codes from the full status list so keys are consistent
-        // between `s` (set status) and `x` (close).
-        // Sort indices by category priority so "done" statuses get shorter codes
-        // (e.g., "Done" gets `d` instead of "Duplicated").
-        let mut sorted_indices: Vec<usize> = (0..statuses.len()).collect();
+        // Exclude "Duplicate" — requires linking to another issue,
+        // which can't be done from a simple status change.
+        let is_duplicate = |s: &crate::gitlab::types::WorkItemStatus| {
+            s.name.to_lowercase().contains("duplicate")
+        };
+
+        // Filter then sort by category priority so "done" statuses get shorter codes.
+        let mut sorted_indices: Vec<usize> = (0..statuses.len())
+            .filter(|&i| !is_duplicate(&statuses[i]))
+            .collect();
         sorted_indices.sort_by_key(|&i| match statuses[i].category.as_deref() {
             Some("done") => 0,
             Some("active" | "opened") => 1,
@@ -825,7 +830,7 @@ impl App {
             .iter()
             .map(|&i| statuses[i].name.clone())
             .collect();
-        let sorted_codes = chord_popup::generate_name_codes(&sorted_names);
+        let sorted_codes = chord_popup::generate_priority_codes(&sorted_names);
 
         // Map codes back to original indices
         let mut all_codes = vec![String::new(); statuses.len()];
@@ -883,7 +888,11 @@ impl App {
                     .with_kind(chord_popup::ChordKind::Status),
             );
         } else {
-            let options: Vec<(String, String)> = all_codes.into_iter().zip(all_names).collect();
+            let options: Vec<(String, String)> = all_codes
+                .into_iter()
+                .zip(all_names)
+                .filter(|(code, _)| !code.is_empty())
+                .collect();
             let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
 
             self.chord_state = Some(
