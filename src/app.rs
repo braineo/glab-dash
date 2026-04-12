@@ -488,18 +488,47 @@ impl App {
         let Some(statuses) = self.work_item_statuses.get(project) else {
             return;
         };
-        let (title, names): (&str, Vec<String>) = if close_only {
-            // Filter to close-category statuses; show all if category info unavailable
-            let close_names: Vec<String> = statuses
+
+        // Generate codes from the full status list so keys are consistent
+        // between `s` (set status) and `x` (close).
+        // Sort indices by category priority so "done" statuses get shorter codes
+        // (e.g., "Done" gets `d` instead of "Duplicated").
+        let mut sorted_indices: Vec<usize> = (0..statuses.len()).collect();
+        sorted_indices.sort_by_key(|&i| match statuses[i].category.as_deref() {
+            Some("done") => 0,
+            Some("active" | "opened") => 1,
+            Some("canceled") => 2,
+            _ => 3,
+        });
+        let sorted_names: Vec<String> = sorted_indices
+            .iter()
+            .map(|&i| statuses[i].name.clone())
+            .collect();
+        let sorted_codes = chord_popup::generate_name_codes(&sorted_names);
+
+        // Map codes back to original indices
+        let mut all_codes = vec![String::new(); statuses.len()];
+        for (sorted_pos, &orig_idx) in sorted_indices.iter().enumerate() {
+            all_codes[orig_idx].clone_from(&sorted_codes[sorted_pos]);
+        }
+        let all_names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
+
+        if close_only {
+            let is_close_category = |s: &crate::gitlab::types::WorkItemStatus| {
+                s.category
+                    .as_deref()
+                    .is_some_and(|c| matches!(c, "done" | "canceled" | "closed"))
+            };
+
+            // Collect close statuses with their pre-computed codes
+            let mut close_items: Vec<(usize, &str)> = statuses
                 .iter()
-                .filter(|s| {
-                    s.category
-                        .as_deref()
-                        .is_some_and(|c| matches!(c, "done" | "canceled" | "closed"))
-                })
-                .map(|s| s.name.clone())
+                .enumerate()
+                .filter(|(_, s)| is_close_category(s))
+                .map(|(i, s)| (i, s.category.as_deref().unwrap_or("")))
                 .collect();
-            if close_names.is_empty() {
+
+            if close_items.is_empty() {
                 // No close-category statuses — fall back to simple close/reopen
                 let item_state = self
                     .issue_list_state
@@ -514,17 +543,34 @@ impl App {
                 self.overlay = Overlay::Confirm(action);
                 return;
             }
-            ("Close As", close_names)
+
+            // Sort: "done" first so it gets priority in display
+            close_items.sort_by_key(|(_, cat)| match *cat {
+                "done" => 0,
+                "canceled" => 1,
+                _ => 2,
+            });
+
+            let options: Vec<(String, String)> = close_items
+                .iter()
+                .map(|&(i, _)| (all_codes[i].clone(), all_names[i].clone()))
+                .collect();
+            let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
+
+            self.chord_state = Some(
+                chord_popup::ChordState::from_options("Close As", options, max_code_len)
+                    .with_kind(chord_popup::ChordKind::Status),
+            );
         } else {
-            (
-                "Set Status",
-                statuses.iter().map(|s| s.name.clone()).collect(),
-            )
-        };
-        self.chord_state = Some(
-            chord_popup::ChordState::new_for_names(title, names)
-                .with_kind(chord_popup::ChordKind::Status),
-        );
+            let options: Vec<(String, String)> =
+                all_codes.into_iter().zip(all_names).collect();
+            let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
+
+            self.chord_state = Some(
+                chord_popup::ChordState::from_options("Set Status", options, max_code_len)
+                    .with_kind(chord_popup::ChordKind::Status),
+            );
+        }
         self.overlay = Overlay::Chord(ChordContext::Status(project.to_string(), issue_id, iid));
     }
 

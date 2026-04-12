@@ -96,6 +96,17 @@ impl ChordState {
         }
     }
 
+    /// Create a chord with pre-computed (code, label) pairs.
+    pub fn from_options(title: &str, options: Vec<(String, String)>, max_code_len: usize) -> Self {
+        Self {
+            title: title.to_string(),
+            options,
+            input: String::new(),
+            max_code_len,
+            kind: ChordKind::Generic,
+        }
+    }
+
     pub fn with_kind(mut self, kind: ChordKind) -> Self {
         self.kind = kind;
         self
@@ -210,12 +221,19 @@ pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
             // Unique first letter → single-char code
             codes[group[0]] = first_letter_of[group[0]].to_string();
         } else {
-            // Shared first letter → 2-char codes with name-derived second char
+            // Shared first letter: first item (by original order) gets 1-char code,
+            // rest get 2-char codes with name-derived second char.
             let first = first_letter_of[group[0]];
-            let mut used_second: Vec<char> = Vec::new();
 
-            // Try second alpha character of each name, then subsequent chars
+            // Find which item appeared first in the original label order
+            let primary = *group.iter().min().unwrap_or(&group[0]);
+            codes[primary] = first.to_string();
+
+            let mut used_second: Vec<char> = Vec::new();
             for &idx in group {
+                if idx == primary {
+                    continue;
+                }
                 let mut assigned = false;
                 for &c in alpha_chars[idx].iter().skip(1) {
                     if !used_second.contains(&c) {
@@ -226,7 +244,6 @@ pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
                     }
                 }
                 if !assigned {
-                    // Fallback: any available letter
                     for c in 'a'..='z' {
                         if !used_second.contains(&c) {
                             codes[idx] = format!("{first}{c}");
