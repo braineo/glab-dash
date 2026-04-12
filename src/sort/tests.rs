@@ -33,6 +33,7 @@ fn make_issue(iid: u64, title: &str, labels: &[&str], updated_days_ago: i64) -> 
             milestone: None,
             created_at: Utc::now() - Duration::days(updated_days_ago + 10),
             updated_at: Utc::now() - Duration::days(updated_days_ago),
+            closed_at: None,
             web_url: String::new(),
             description: None,
             user_notes_count: 0,

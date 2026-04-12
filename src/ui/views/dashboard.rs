@@ -66,7 +66,6 @@ pub struct IterationHealth {
     pub at_risk: ItemList<TrackedIssue>,
     // Loading states (derived from fetch state, not stored separately)
     pub scope_creep_loading: bool,
-    pub shadow_work_loading: bool,
     // Tab navigation
     pub active_tab: HealthTab,
 }
@@ -91,8 +90,7 @@ impl IterationHealth {
     pub fn active_tab_loading(&self) -> bool {
         match self.active_tab {
             HealthTab::ScopeCreep => self.scope_creep_loading,
-            HealthTab::ShadowWork => self.shadow_work_loading,
-            HealthTab::AtRisk => false,
+            HealthTab::ShadowWork | HealthTab::AtRisk => false,
         }
     }
 
@@ -800,7 +798,7 @@ fn render_health_tabs(frame: &mut Frame, area: Rect, health: &IterationHealth) {
             HealthTab::ShadowWork,
             "Shadow Work",
             health.shadow_work.indices.len(),
-            health.shadow_work_loading,
+            false,
         ),
         (
             HealthTab::AtRisk,
@@ -895,7 +893,8 @@ fn render_health_list(
                     .get(&item.issue.id)
                     .map_or_else(String::new, |dt| format!("added {}", dt.format("%b %d"))),
                 HealthTab::ShadowWork => {
-                    format!("closed {}", item.issue.updated_at.format("%b %d"))
+                    let closed = item.issue.closed_at.unwrap_or(item.issue.updated_at);
+                    format!("closed {}", closed.format("%b %d"))
                 }
                 HealthTab::AtRisk => {
                     let days = (Utc::now() - item.issue.updated_at).num_days();
@@ -1147,7 +1146,6 @@ pub fn compute_health(
     scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
     scope_creep_loading: bool,
     shadow_work_cache: &[TrackedIssue],
-    shadow_work_loading: bool,
     prev_health: Option<&IterationHealth>,
 ) -> IterationHealth {
     let current_id = &current_iteration.id;
@@ -1260,23 +1258,12 @@ pub fn compute_health(
             .is_some_and(|cat| cat == "canceled")
     };
 
+    // Shadow work: DB already filters by closed_at range and excludes current iteration.
+    // Here we just exclude canceled issues (status category check needs Rust).
     let mut shadow_work = ItemList::<TrackedIssue>::default();
-    if let (Some(start), Some(end)) = (start_date, due_date) {
-        let start_dt = start.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc();
-        let end_dt = end.and_hms_opt(23, 59, 59).unwrap_or_default().and_utc();
-        for (i, ti) in shadow_work_cache.iter().enumerate() {
-            let has_current_iter = ti
-                .issue
-                .iteration
-                .as_ref()
-                .is_some_and(|it| it.id == *current_id);
-            if !has_current_iter
-                && !is_canceled(ti)
-                && ti.issue.updated_at >= start_dt
-                && ti.issue.updated_at <= end_dt
-            {
-                shadow_work.indices.push(i);
-            }
+    for (i, ti) in shadow_work_cache.iter().enumerate() {
+        if !is_canceled(ti) {
+            shadow_work.indices.push(i);
         }
     }
     shadow_work.clamp_selection();
@@ -1327,7 +1314,6 @@ pub fn compute_health(
         shadow_work,
         at_risk,
         scope_creep_loading,
-        shadow_work_loading,
         active_tab,
     }
 }
@@ -1351,6 +1337,7 @@ mod tests {
                 milestone: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
+                closed_at: None,
                 web_url: String::new(),
                 description: None,
                 user_notes_count: 0,

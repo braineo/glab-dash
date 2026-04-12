@@ -11,7 +11,7 @@ use crate::gitlab::types::{
 };
 use crate::sort::SortSpec;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 /// Persisted filter/sort state for a single list view.
 #[derive(Default, Serialize, Deserialize)]
@@ -118,6 +118,13 @@ impl Db {
             )?;
         }
 
+        if version < 2 {
+            self.conn.execute_batch(
+                "ALTER TABLE issues ADD COLUMN closed_at TEXT;
+                 CREATE INDEX IF NOT EXISTS idx_issues_closed ON issues(closed_at);",
+            )?;
+        }
+
         self.conn
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -129,8 +136,8 @@ impl Db {
         let tx = self.conn.unchecked_transaction()?;
         {
             let mut stmt = tx.prepare_cached(
-                "INSERT OR REPLACE INTO issues (id, iid, project_path, state, updated_at, data)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT OR REPLACE INTO issues (id, iid, project_path, state, updated_at, closed_at, data)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
             for item in issues {
                 let data = serde_json::to_string(item).context("serialize TrackedIssue")?;
@@ -140,6 +147,7 @@ impl Db {
                     item.project_path,
                     item.issue.state,
                     item.issue.updated_at.to_rfc3339(),
+                    item.issue.closed_at.map(|dt| dt.to_rfc3339()),
                     data,
                 ])?;
             }
@@ -322,17 +330,20 @@ impl Db {
         }
     }
 
-    /// Query closed issues updated after a given date, excluding those in a
+    /// Query issues closed within a date range, excluding those in a
     /// specific iteration. Used for shadow work detection.
     pub fn query_shadow_work(
         &self,
-        updated_after: &str,
+        closed_after: &str,
+        closed_before: &str,
         exclude_iteration_id: Option<&str>,
     ) -> Result<Vec<TrackedIssue>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT data FROM issues WHERE state = 'closed' AND updated_at >= ?1",
+            "SELECT data FROM issues WHERE state = 'closed' AND closed_at >= ?1 AND closed_at <= ?2",
         )?;
-        let rows = stmt.query_map(params![updated_after], |row| row.get::<_, String>(0))?;
+        let rows = stmt.query_map(params![closed_after, closed_before], |row| {
+            row.get::<_, String>(0)
+        })?;
         let mut items = Vec::new();
         for row in rows {
             let json = row?;
@@ -397,6 +408,11 @@ mod tests {
                 milestone: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
+                closed_at: if state == "closed" {
+                    Some(Utc::now())
+                } else {
+                    None
+                },
                 web_url: String::new(),
                 description: None,
                 user_notes_count: 0,
@@ -558,19 +574,27 @@ mod tests {
     fn test_shadow_work_query() {
         let db = Db::open_in_memory().unwrap();
         let mut closed = make_issue(1, "closed");
-        closed.issue.updated_at = chrono::DateTime::parse_from_rfc3339("2026-04-10T12:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
+        closed.issue.closed_at = Some(
+            chrono::DateTime::parse_from_rfc3339("2026-04-10T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
 
         let mut old_closed = make_issue(2, "closed");
-        old_closed.issue.updated_at = chrono::DateTime::parse_from_rfc3339("2026-03-01T12:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
+        old_closed.issue.closed_at = Some(
+            chrono::DateTime::parse_from_rfc3339("2026-03-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
 
         db.upsert_issues(&[closed, old_closed]).unwrap();
 
         let shadow = db
-            .query_shadow_work("2026-04-01T00:00:00+00:00", None)
+            .query_shadow_work(
+                "2026-04-01T00:00:00+00:00",
+                "2026-04-30T23:59:59+00:00",
+                None,
+            )
             .unwrap();
         assert_eq!(shadow.len(), 1);
         assert_eq!(shadow[0].issue.id, 1);

@@ -28,6 +28,7 @@ pub enum Cmd {
 
     // ── API fetches ──────────────────────────────────────────────────
     FetchAll,
+    FetchAllFull,
     FetchHealthData,
 
     // ── API mutations (simple spawn-and-forget) ──────────────────────

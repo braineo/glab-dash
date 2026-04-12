@@ -52,6 +52,7 @@ pub struct Issue {
     pub milestone: Option<Milestone>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub closed_at: Option<DateTime<Utc>>,
     pub web_url: String,
     #[serde(default)]
     pub description: Option<String>,

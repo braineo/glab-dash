@@ -34,6 +34,7 @@ fn make_tracked_issue(
             milestone: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            closed_at: None,
             web_url: String::new(),
             description: None,
             user_notes_count: 0,

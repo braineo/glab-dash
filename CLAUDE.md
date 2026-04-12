@@ -30,6 +30,8 @@ All code must pass these checks before committing (enforced by CI):
 
 Pedantic lint exceptions are configured in `[lints.clippy]` in `Cargo.toml`. Do not add new `#[allow(...)]` attributes without good reason — prefer fixing the lint.
 
+**No defensive serde parsing**: Do not use `#[serde(default)]` on GraphQL response structs. The GraphQL schema defines a fixed shape — trust it. `Option<T>` already handles nullable fields correctly without `default`.
+
 ## Config
 
 Config file: `~/.config/glab-dash/config.toml` (or set `GLAB_DASH_CONFIG` env var)

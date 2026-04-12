@@ -132,8 +132,6 @@ pub enum AsyncMsg {
     IterationUpdated(Result<()>, u64, Option<Iteration>),
     /// Scope creep: issue_id → added_to_iteration_at timestamp
     ScopeCreepLoaded(Result<std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>>),
-    /// Shadow work: closed issues updated during iteration date range
-    ShadowWorkLoaded(Result<Vec<TrackedIssue>>),
 }
 
 /// Lifecycle of an async health data fetch.
@@ -215,7 +213,6 @@ pub struct App {
     pub scope_creep_cache: std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>,
     pub shadow_work_cache: Vec<TrackedIssue>,
     pub scope_creep_state: FetchState,
-    pub shadow_work_state: FetchState,
 
     // Redraw flag — only render when state has changed
     pub needs_redraw: bool,
@@ -279,7 +276,6 @@ impl App {
             scope_creep_cache: std::collections::HashMap::new(),
             shadow_work_cache: Vec::new(),
             scope_creep_state: FetchState::default(),
-            shadow_work_state: FetchState::default(),
             needs_redraw: true,
             dirty: Dirty::default(),
             pending_cmds: Vec::new(),
@@ -328,17 +324,7 @@ impl App {
             self.scope_creep_state = FetchState::Done;
         }
 
-        // Shadow work: query closed issues from DB instead of separate cache
-        if let Some(iter) = self.planning_state.current_iteration.as_ref()
-            && let Some(start) = iter.start_date.as_ref()
-        {
-            let updated_after = format!("{start}T00:00:00+00:00");
-            if let Ok(shadow) = self.db.query_shadow_work(&updated_after, Some(&iter.id)) {
-                self.shadow_work_cache = shadow;
-                self.shadow_work_state = FetchState::Done;
-            }
-        }
-
+        self.refresh_shadow_work();
         self.rebuild_label_color_map();
         self.refilter_issues();
         self.refilter_mrs();
@@ -510,6 +496,12 @@ impl App {
 
             // ── API fetches ──────────────────────────────────────────
             Cmd::FetchAll => {
+                self.fetch_started_at = Some(Self::now_millis());
+                self.fetch_all();
+            }
+            Cmd::FetchAllFull => {
+                self.last_fetched_at = None;
+                self.scope_creep_state = FetchState::Idle;
                 self.fetch_started_at = Some(Self::now_millis());
                 self.fetch_all();
             }
@@ -687,14 +679,10 @@ impl App {
         let incremental = updated_after.is_some();
         let members = self.config.all_members();
         tokio::spawn(async move {
-            let (state, ua) = if incremental {
-                (None, updated_after.as_deref())
-            } else {
-                (Some("opened"), None)
-            };
+            let ua = updated_after.as_deref();
             let (tracking, assigned) = tokio::join!(
-                client.fetch_tracking_issues(state, ua),
-                client.fetch_assigned_issues(&members, state, ua),
+                client.fetch_tracking_issues(None, ua),
+                client.fetch_assigned_issues(&members, None, ua),
             );
             let result = match (tracking, assigned) {
                 (Ok(mut t), Ok(a)) => {
@@ -716,13 +704,9 @@ impl App {
         let updated_after = self.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
         tokio::spawn(async move {
-            let (state, ua) = if incremental {
-                ("all", updated_after.as_deref())
-            } else {
-                ("opened", None)
-            };
-            let tracking = client.fetch_tracking_mrs(state, ua).await;
-            let external = client.fetch_external_mrs(&members, state, ua).await;
+            let ua = updated_after.as_deref();
+            let tracking = client.fetch_tracking_mrs("all", ua).await;
+            let external = client.fetch_external_mrs(&members, "all", ua).await;
             let result = match (tracking, external) {
                 (Ok(t), Ok(e)) => Ok((t, e)),
                 (Err(e), _) | (_, Err(e)) => Err(e),
@@ -812,9 +796,8 @@ impl App {
 
         // Exclude "Duplicate" — requires linking to another issue,
         // which can't be done from a simple status change.
-        let is_duplicate = |s: &crate::gitlab::types::WorkItemStatus| {
-            s.name.to_lowercase().contains("duplicate")
-        };
+        let is_duplicate =
+            |s: &crate::gitlab::types::WorkItemStatus| s.name.to_lowercase().contains("duplicate");
 
         // Filter then sort by category priority so "done" statuses get shorter codes.
         let mut sorted_indices: Vec<usize> = (0..statuses.len())
@@ -950,6 +933,7 @@ impl App {
                     // in-memory to open-only for display.
                     let _ = self.db.upsert_issues(&self.issues);
                     self.issues.retain(|i| i.issue.state == "opened");
+                    self.refresh_shadow_work();
                     let now = Self::now_secs();
                     self.last_fetched_at = Some(now);
                     let _ = self.db.set_kv("last_fetched_at", &now);
@@ -1143,16 +1127,6 @@ impl App {
                 self.dirty.issues = true;
                 self.pending_cmds.push(Cmd::PersistScopeCreep);
             }
-            AsyncMsg::ShadowWorkLoaded(result) => {
-                if let Ok(issues) = result {
-                    // Persist closed issues to DB for future shadow work queries
-                    let _ = self.db.upsert_issues(&issues);
-                    self.shadow_work_cache = issues;
-                }
-                self.shadow_work_state = FetchState::Done;
-                // Shadow work affects health computation
-                self.dirty.issues = true;
-            }
         }
     }
 
@@ -1265,7 +1239,6 @@ impl App {
             self.scope_creep_cache.clear();
             self.shadow_work_cache.clear();
             self.scope_creep_state = FetchState::Idle;
-            self.shadow_work_state = FetchState::Idle;
             self.iteration_health = None;
         }
 
@@ -1356,36 +1329,33 @@ impl App {
         });
     }
 
-    /// Fetch closed issues for shadow work detection.
-    fn fetch_shadow_work_data(&mut self) {
-        let Some(current_iter) = self.planning_state.current_iteration.as_ref() else {
+    /// Refresh shadow work cache from DB (closed issues in current iteration range).
+    fn refresh_shadow_work(&mut self) {
+        let Some(iter) = self.planning_state.current_iteration.as_ref() else {
+            self.shadow_work_cache.clear();
             return;
         };
-        let Some(start_date) = current_iter.start_date.as_ref() else {
-            self.shadow_work_state = FetchState::Done;
+        let (Some(start), Some(end)) = (iter.start_date.as_ref(), iter.due_date.as_ref()) else {
+            self.shadow_work_cache.clear();
             return;
         };
-
-        self.shadow_work_state = FetchState::InFlight;
-        let updated_after = format!("{start_date}T00:00:00Z");
-        let client = self.client.clone();
-        let tx = self.async_tx.clone();
-        tokio::spawn(async move {
-            let result = client.fetch_closed_issues_in_range(&updated_after).await;
-            let _ = tx.send(AsyncMsg::ShadowWorkLoaded(result));
-        });
+        let closed_after = format!("{start}T00:00:00+00:00");
+        let closed_before = format!("{end}T23:59:59+00:00");
+        if let Ok(shadow) = self
+            .db
+            .query_shadow_work(&closed_after, &closed_before, Some(&iter.id))
+        {
+            self.shadow_work_cache = shadow;
+        }
     }
 
-    /// Trigger scope creep and shadow work fetches if conditions are met.
+    /// Trigger scope creep fetch if conditions are met.
     fn maybe_fetch_health_data(&mut self) {
         if self.planning_state.current_iteration.is_none() {
             return;
         }
         if self.scope_creep_state == FetchState::Idle {
             self.fetch_scope_creep_data();
-        }
-        if self.shadow_work_state == FetchState::Idle {
-            self.fetch_shadow_work_data();
         }
     }
 
@@ -1403,7 +1373,6 @@ impl App {
             &self.scope_creep_cache,
             self.scope_creep_state != FetchState::Done,
             &self.shadow_work_cache,
-            self.shadow_work_state != FetchState::Done,
             self.iteration_health.as_ref(),
         ));
     }
@@ -1760,6 +1729,10 @@ impl App {
             KeyAction::Refresh => {
                 self.loading = true;
                 self.pending_cmds.push(Cmd::FetchAll);
+            }
+            KeyAction::FullRefresh => {
+                self.loading = true;
+                self.pending_cmds.push(Cmd::FetchAllFull);
             }
             KeyAction::OpenBrowser => self.action_open_browser(),
             KeyAction::SetStatus => self.do_set_status(),

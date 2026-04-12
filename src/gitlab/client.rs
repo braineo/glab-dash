@@ -84,6 +84,8 @@ struct GqlWorkItem {
     created_at: DateTime<FixedOffset>,
     #[serde(rename = "updatedAt")]
     updated_at: DateTime<FixedOffset>,
+    #[serde(rename = "closedAt")]
+    closed_at: Option<DateTime<FixedOffset>>,
     #[serde(rename = "webUrl")]
     web_url: String,
     #[serde(default)]
@@ -403,6 +405,8 @@ struct GqlRootIssue {
     created_at: DateTime<FixedOffset>,
     #[serde(rename = "updatedAt")]
     updated_at: DateTime<FixedOffset>,
+    #[serde(rename = "closedAt")]
+    closed_at: Option<DateTime<FixedOffset>>,
     #[serde(rename = "webUrl")]
     web_url: String,
     #[serde(default)]
@@ -441,6 +445,7 @@ impl From<GqlRootIssue> for Issue {
             }),
             created_at: g.created_at.with_timezone(&Utc),
             updated_at: g.updated_at.with_timezone(&Utc),
+            closed_at: g.closed_at.map(|dt| dt.with_timezone(&Utc)),
             web_url: g.web_url,
             description: g.description,
             user_notes_count: 0,
@@ -525,6 +530,7 @@ impl From<GqlWorkItem> for Issue {
             milestone,
             created_at: w.created_at.with_timezone(&Utc),
             updated_at: w.updated_at.with_timezone(&Utc),
+            closed_at: w.closed_at.map(|dt| dt.with_timezone(&Utc)),
             web_url: w.web_url,
             description,
             user_notes_count: 0,
@@ -592,7 +598,7 @@ impl GitLabClient {
                     nodes {
                         id iid title state
                         author { id username name webUrl }
-                        createdAt updatedAt webUrl
+                        createdAt updatedAt closedAt webUrl
                         reference(full: true)
                         namespace { fullPath }
                         widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION, ITERATION, WEIGHT]) {
@@ -685,7 +691,7 @@ impl GitLabClient {
                     workItem {
                         id iid title state
                         author { id username name webUrl }
-                        createdAt updatedAt webUrl
+                        createdAt updatedAt closedAt webUrl
                         reference(full: true)
                         namespace { fullPath }
                         widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION, ITERATION, WEIGHT]) {
@@ -1274,7 +1280,7 @@ impl GitLabClient {
                         assignees { nodes { id username name webUrl } }
                         labels { nodes { title } }
                         milestone { id title state }
-                        createdAt updatedAt webUrl description
+                        createdAt updatedAt closedAt webUrl description
                         reference(full: true)
                         status { name }
                         iteration { id title startDate dueDate state }
@@ -1342,7 +1348,7 @@ impl GitLabClient {
         reviewers { nodes { id username name webUrl } }
         labels { nodes { title } }
         milestone { id title state }
-        createdAt updatedAt webUrl description
+        createdAt updatedAt closedAt webUrl description
         userNotesCount
         sourceBranch targetBranch mergeStatusEnum
         reference(full: true)
@@ -1682,34 +1688,6 @@ impl GitLabClient {
             }
         }
         Ok(map)
-    }
-
-    /// Fetch closed issues in tracking namespaces updated after a given date.
-    /// Used for shadow work detection.
-    pub async fn fetch_closed_issues_in_range(
-        &self,
-        updated_after: &str,
-    ) -> Result<Vec<TrackedIssue>> {
-        let mut all = Vec::new();
-        let mut seen_ids = std::collections::HashSet::new();
-        for project in &self.config.tracking_projects {
-            let issues = self
-                .graphql_list_work_items(project, Some("closed"), None, Some(updated_after))
-                .await?;
-            for issue in issues {
-                let project_path = issue.references.as_ref().map_or_else(
-                    || project.clone(),
-                    |r| extract_project_from_ref(&r.full_ref),
-                );
-                if seen_ids.insert(issue.id) {
-                    all.push(TrackedIssue {
-                        issue,
-                        project_path,
-                    });
-                }
-            }
-        }
-        Ok(all)
     }
 
     async fn handle_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {

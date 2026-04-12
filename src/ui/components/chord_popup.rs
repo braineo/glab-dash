@@ -345,7 +345,11 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
         .max()
         .unwrap_or(6);
     // Status icons add "◌ " prefix (2 display chars) to each label
-    let icon_width = if state.kind == ChordKind::Status { 2 } else { 0 };
+    let icon_width = if state.kind == ChordKind::Status {
+        2
+    } else {
+        0
+    };
     let item_width = state.max_code_len + 1 + icon_width + max_label_len + 2;
     let usable_width = usize::from(area.width).saturating_sub(6);
     let cols = (usable_width / item_width).clamp(1, 4);
@@ -392,7 +396,11 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
                     } else {
                         Style::default().fg(CHORD_DIM)
                     };
-                    let prefix = if state.kind == ChordKind::Status { "  " } else { "" };
+                    let prefix = if state.kind == ChordKind::Status {
+                        "  "
+                    } else {
+                        ""
+                    };
                     let padded = format!("{prefix}{label:<w$}", w = max_label_len + 2);
                     spans.push(Span::styled(padded, label_style));
                 }

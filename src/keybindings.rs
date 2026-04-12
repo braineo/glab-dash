@@ -49,6 +49,7 @@ pub enum KeyAction {
 
     // --- Shared item actions (resolved via FocusedItem) ---
     Refresh,
+    FullRefresh,
     OpenBrowser,
     SetStatus,
     ToggleState,
@@ -288,6 +289,12 @@ pub static LIST_NAV_BINDINGS: &[Binding] = &[
         action: A::Refresh,
         label: "r",
         description: "Refresh data",
+    },
+    Binding {
+        matcher: Char('R'),
+        action: A::FullRefresh,
+        label: "R",
+        description: "Full refresh (re-fetch all)",
     },
     Binding {
         matcher: Char('o'),
