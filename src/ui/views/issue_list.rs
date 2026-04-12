@@ -98,6 +98,7 @@ pub fn render(
     );
 
     // Build table rows
+    let now = chrono::Utc::now();
     let selected_idx = state.list.table_state.selected();
     let rows: Vec<Row> = state
         .list
@@ -124,7 +125,7 @@ pub fn render(
                 .as_ref()
                 .map_or("-", |a| a.username.as_str());
             let labels = styles::labels_compact(&item.issue.labels, 30, label_colors);
-            let age = list_model::format_age(&item.issue.updated_at);
+            let age = list_model::format_age(&item.issue.updated_at, now);
 
             // Show custom status if available, otherwise fall back to state
             let (state_icon, state_text) = if let Some(ref status) = item.issue.custom_status {

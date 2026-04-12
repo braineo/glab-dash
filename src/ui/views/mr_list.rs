@@ -99,6 +99,8 @@ pub fn render(
         state.filter.bar_selected,
     );
 
+    // Build table rows
+    let now = chrono::Utc::now();
     let selected_idx = state.list.table_state.selected();
     let rows: Vec<Row> = state
         .list
@@ -184,7 +186,7 @@ pub fn render(
                 _ => Cell::default(),
             };
 
-            let age = list_model::format_age(&item.mr.updated_at);
+            let age = list_model::format_age(&item.mr.updated_at, now);
 
             let row = Row::new([
                 Cell::from(Span::styled(

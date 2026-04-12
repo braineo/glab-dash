@@ -1150,6 +1150,10 @@ impl App {
     // ── Key dispatch ─────────────────────────────────────────────────
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        // Assume any key press changes visible state.  Navigation methods
+        // that hit a boundary (e.g. up at top of list) clear this flag so
+        // the event loop can skip the redundant render.
+        self.needs_redraw = true;
         match self.input_mode() {
             InputMode::TextInput => self.handle_text_input(key),
             InputMode::Chord => self.handle_chord_input(key),
@@ -1378,26 +1382,38 @@ impl App {
             View::IssueDetail => self.issue_detail_state.scroll_down(),
             View::MrDetail => self.mr_detail_state.scroll_down(),
             View::IssueList => {
-                self.issue_list_state.list.select_next();
-                self.refresh_focused();
+                if !self.issue_list_state.list.select_next() {
+                    self.needs_redraw = false;
+                    return;
+                }
             }
             View::MrList => {
-                self.mr_list_state.list.select_next();
-                self.refresh_focused();
+                if !self.mr_list_state.list.select_next() {
+                    self.needs_redraw = false;
+                    return;
+                }
             }
             View::Planning => {
                 let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.select_next();
-                self.refresh_focused();
+                if !self.planning_state.columns[col].list.select_next() {
+                    self.needs_redraw = false;
+                    return;
+                }
             }
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
-                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
-                    c.list.select_next();
+                let moved = self
+                    .iteration_board_state
+                    .columns
+                    .get_mut(col)
+                    .is_some_and(|c| c.list.select_next());
+                if !moved {
+                    self.needs_redraw = false;
+                    return;
                 }
-                self.refresh_focused();
             }
         }
+        self.refresh_focused();
     }
 
     fn nav_up(&mut self) {
@@ -1405,129 +1421,133 @@ impl App {
             View::IssueDetail => self.issue_detail_state.scroll_up(),
             View::MrDetail => self.mr_detail_state.scroll_up(),
             View::IssueList => {
-                self.issue_list_state.list.select_prev();
-                self.refresh_focused();
+                if !self.issue_list_state.list.select_prev() {
+                    self.needs_redraw = false;
+                    return;
+                }
             }
             View::MrList => {
-                self.mr_list_state.list.select_prev();
-                self.refresh_focused();
+                if !self.mr_list_state.list.select_prev() {
+                    self.needs_redraw = false;
+                    return;
+                }
             }
             View::Planning => {
                 let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.select_prev();
-                self.refresh_focused();
+                if !self.planning_state.columns[col].list.select_prev() {
+                    self.needs_redraw = false;
+                    return;
+                }
             }
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
-                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
-                    c.list.select_prev();
+                let moved = self
+                    .iteration_board_state
+                    .columns
+                    .get_mut(col)
+                    .is_some_and(|c| c.list.select_prev());
+                if !moved {
+                    self.needs_redraw = false;
+                    return;
                 }
-                self.refresh_focused();
             }
         }
+        self.refresh_focused();
     }
 
     fn nav_top(&mut self) {
-        match self.view {
-            View::IssueList => {
-                self.issue_list_state.list.select_first();
-                self.refresh_focused();
-            }
-            View::MrList => {
-                self.mr_list_state.list.select_first();
-                self.refresh_focused();
-            }
+        let moved = match self.view {
+            View::IssueList => self.issue_list_state.list.select_first(),
+            View::MrList => self.mr_list_state.list.select_first(),
             View::Planning => {
                 let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.select_first();
-                self.refresh_focused();
+                self.planning_state.columns[col].list.select_first()
             }
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
-                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
-                    c.list.select_first();
-                }
-                self.refresh_focused();
+                self.iteration_board_state
+                    .columns
+                    .get_mut(col)
+                    .is_some_and(|c| c.list.select_first())
             }
-            _ => {}
+            _ => return,
+        };
+        if moved {
+            self.refresh_focused();
+        } else {
+            self.needs_redraw = false;
         }
     }
 
     fn nav_bottom(&mut self) {
-        match self.view {
-            View::IssueList => {
-                self.issue_list_state.list.select_last();
-                self.refresh_focused();
-            }
-            View::MrList => {
-                self.mr_list_state.list.select_last();
-                self.refresh_focused();
-            }
+        let moved = match self.view {
+            View::IssueList => self.issue_list_state.list.select_last(),
+            View::MrList => self.mr_list_state.list.select_last(),
             View::Planning => {
                 let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.select_last();
-                self.refresh_focused();
+                self.planning_state.columns[col].list.select_last()
             }
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
-                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
-                    c.list.select_last();
-                }
-                self.refresh_focused();
+                self.iteration_board_state
+                    .columns
+                    .get_mut(col)
+                    .is_some_and(|c| c.list.select_last())
             }
-            _ => {}
+            _ => return,
+        };
+        if moved {
+            self.refresh_focused();
+        } else {
+            self.needs_redraw = false;
         }
     }
 
     fn nav_page_down(&mut self) {
-        match self.view {
-            View::IssueList => {
-                self.issue_list_state.list.page_down();
-                self.refresh_focused();
-            }
-            View::MrList => {
-                self.mr_list_state.list.page_down();
-                self.refresh_focused();
-            }
+        let moved = match self.view {
+            View::IssueList => self.issue_list_state.list.page_down(),
+            View::MrList => self.mr_list_state.list.page_down(),
             View::Planning => {
                 let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.page_down();
-                self.refresh_focused();
+                self.planning_state.columns[col].list.page_down()
             }
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
-                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
-                    c.list.page_down();
-                }
-                self.refresh_focused();
+                self.iteration_board_state
+                    .columns
+                    .get_mut(col)
+                    .is_some_and(|c| c.list.page_down())
             }
-            _ => {}
+            _ => return,
+        };
+        if moved {
+            self.refresh_focused();
+        } else {
+            self.needs_redraw = false;
         }
     }
 
     fn nav_page_up(&mut self) {
-        match self.view {
-            View::IssueList => {
-                self.issue_list_state.list.page_up();
-                self.refresh_focused();
-            }
-            View::MrList => {
-                self.mr_list_state.list.page_up();
-                self.refresh_focused();
-            }
+        let moved = match self.view {
+            View::IssueList => self.issue_list_state.list.page_up(),
+            View::MrList => self.mr_list_state.list.page_up(),
             View::Planning => {
                 let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.page_up();
-                self.refresh_focused();
+                self.planning_state.columns[col].list.page_up()
             }
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
-                if let Some(c) = self.iteration_board_state.columns.get_mut(col) {
-                    c.list.page_up();
-                }
-                self.refresh_focused();
+                self.iteration_board_state
+                    .columns
+                    .get_mut(col)
+                    .is_some_and(|c| c.list.page_up())
             }
-            _ => {}
+            _ => return,
+        };
+        if moved {
+            self.refresh_focused();
+        } else {
+            self.needs_redraw = false;
         }
     }
 
