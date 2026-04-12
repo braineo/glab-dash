@@ -369,7 +369,11 @@ fn render_column(
         .iter()
         .filter_map(|&i| issues.get(i))
         .map(|item| {
-            let status_icon = status_icon_for(item.issue.custom_status.as_ref());
+            let status_icon = item
+                .issue
+                .custom_status
+                .as_deref()
+                .map_or(styles::ICON_UNCHECK, styles::status_icon);
             let iid = format!("#{}", item.issue.iid);
             let assignee = item
                 .issue
@@ -479,18 +483,6 @@ fn column_title(state: &PlanningViewState, col_idx: usize) -> String {
             ),
             _ => String::new(),
         },
-    }
-}
-
-fn status_icon_for(custom_status: Option<&String>) -> &'static str {
-    match custom_status.map(String::as_str) {
-        Some(s) if s.to_lowercase().contains("done") => "\u{2713}",
-        Some(s) if s.to_lowercase().contains("progress") => "\u{25b6}",
-        Some(s) if s.to_lowercase().contains("review") => "\u{25c9}",
-        Some(s) if s.to_lowercase().contains("block") => "\u{2298}",
-        Some(s) if s.to_lowercase().contains("cancel") => "\u{2717}",
-        Some(_) => "\u{25cf}",
-        None => "\u{25cb}",
     }
 }
 

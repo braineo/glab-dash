@@ -40,20 +40,37 @@ pub type LabelColors = HashMap<String, String>;
 
 // ── Icons ──
 
+// State
 pub const ICON_OPEN: &str = "●";
 pub const ICON_CLOSED: &str = "✗";
 pub const ICON_MERGED: &str = "◆";
 pub const ICON_DRAFT: &str = "◌";
+
+// Pipeline
 pub const ICON_PIPELINE_OK: &str = "✓";
 pub const ICON_PIPELINE_FAIL: &str = "✗";
 pub const ICON_PIPELINE_RUN: &str = "⟳";
 pub const ICON_PIPELINE_WAIT: &str = "◷";
+
+// Status (work items)
+pub const ICON_REVIEW: &str = "◉";
+pub const ICON_BLOCKED: &str = "⊘";
+pub const ICON_PROGRESS: &str = "▶";
+
+// Tab / view
+pub const ICON_DASHBOARD: &str = "◈";
+pub const ICON_ISSUES: &str = "◉";
+pub const ICON_MRS: &str = "⑂";
+pub const ICON_PLANNING: &str = "▦";
+
+// General
 pub const ICON_SELECTOR: &str = " ▸ ";
 pub const ICON_SEPARATOR: &str = " │ ";
 pub const ICON_SECTION: &str = "◆";
 pub const ICON_ARROW: &str = "→";
 pub const ICON_CHECK: &str = "✓";
 pub const ICON_UNCHECK: &str = "○";
+pub const ICON_LOADING: &str = "⟳";
 
 // ── Block Helpers ──
 
@@ -399,14 +416,14 @@ pub fn status_icon(status: &str) -> &'static str {
     if lower.contains("done") {
         ICON_CHECK
     } else if lower.contains("progress") {
-        ICON_PIPELINE_RUN
+        ICON_PROGRESS
     } else if lower.contains("won't do") || lower.contains("wont do") || lower.contains("duplicate")
     {
         ICON_CLOSED
     } else if lower.contains("block") {
-        "⊘"
+        ICON_BLOCKED
     } else if lower.contains("review") || lower.contains("await") {
-        ICON_PIPELINE_WAIT
+        ICON_REVIEW
     } else if lower.contains("draft") {
         ICON_DRAFT
     } else {

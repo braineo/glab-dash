@@ -186,7 +186,10 @@ pub fn render(
         .map_or("all", |t| t.name.as_str());
     let tracking_display = config.tracking_projects.join(", ");
     let header_text = Line::from(vec![
-        Span::styled(" \u{25c8} glab-dash", styles::title_style()),
+        Span::styled(
+            format!(" {} glab-dash", styles::ICON_DASHBOARD),
+            styles::title_style(),
+        ),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
         Span::styled(
             format!("Team: {team_name}"),
@@ -251,7 +254,7 @@ fn render_iteration_board(
     let title_line = if board.filter.is_searching() {
         Line::from(vec![
             Span::styled(
-                format!(" \u{25cf} {iter_label} /"),
+                format!(" {} {iter_label} /", styles::ICON_OPEN),
                 Style::default()
                     .fg(styles::CYAN)
                     .add_modifier(Modifier::BOLD),
@@ -267,7 +270,7 @@ fn render_iteration_board(
     } else if board.filter.has_query() {
         Line::from(vec![
             Span::styled(
-                format!(" \u{25cf} {iter_label} /"),
+                format!(" {} {iter_label} /", styles::ICON_OPEN),
                 Style::default()
                     .fg(styles::CYAN)
                     .add_modifier(Modifier::BOLD),
@@ -281,7 +284,7 @@ fn render_iteration_board(
         ])
     } else {
         Line::from(Span::styled(
-            format!(" \u{25cf} {iter_label}"),
+            format!(" {} {iter_label}", styles::ICON_OPEN),
             Style::default()
                 .fg(styles::TEXT_BRIGHT)
                 .add_modifier(Modifier::BOLD),
@@ -570,12 +573,16 @@ fn render_quick_stats(
         })
         .count();
 
-    let loading_indicator = if loading { " \u{27f3}" } else { "" };
+    let loading_indicator = if loading {
+        format!(" {}", styles::ICON_LOADING)
+    } else {
+        String::new()
+    };
 
     let lines = vec![
         Line::from(""),
         Line::from(vec![Span::styled(
-            format!("  \u{25cf} Issues{loading_indicator}"),
+            format!("  {} Issues{loading_indicator}", styles::ICON_ISSUES),
             styles::section_header_style(),
         )]),
         Line::from(vec![
@@ -609,7 +616,7 @@ fn render_quick_stats(
         }),
         Line::from(""),
         Line::from(Span::styled(
-            "  ⑂ Merge Requests",
+            format!("  {} Merge Requests", styles::ICON_MRS),
             styles::section_header_style(),
         )),
         Line::from(vec![
