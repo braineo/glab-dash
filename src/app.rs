@@ -252,6 +252,19 @@ impl App {
             self.labels = cached.labels;
             self.work_item_statuses = cached.work_item_statuses;
             self.label_usage = cached.label_usage;
+
+            // Restore persisted view state (filters, sorts, fuzzy queries)
+            if let Some(vs) = cached.issue_view_state {
+                self.issue_list_state.filter.conditions = vs.conditions;
+                self.issue_list_state.filter.sort_specs = vs.sort_specs;
+                self.issue_list_state.filter.fuzzy_query = vs.fuzzy_query;
+            }
+            if let Some(vs) = cached.mr_view_state {
+                self.mr_list_state.filter.conditions = vs.conditions;
+                self.mr_list_state.filter.sort_specs = vs.sort_specs;
+                self.mr_list_state.filter.fuzzy_query = vs.fuzzy_query;
+            }
+
             self.rebuild_label_color_map();
             self.refilter_issues();
             self.refilter_mrs();
@@ -333,6 +346,16 @@ impl App {
             &self.labels,
             &self.work_item_statuses,
             &self.label_usage,
+            Some(cache::ViewState {
+                conditions: self.issue_list_state.filter.conditions.clone(),
+                sort_specs: self.issue_list_state.filter.sort_specs.clone(),
+                fuzzy_query: self.issue_list_state.filter.fuzzy_query.clone(),
+            }),
+            Some(cache::ViewState {
+                conditions: self.mr_list_state.filter.conditions.clone(),
+                sort_specs: self.mr_list_state.filter.sort_specs.clone(),
+                fuzzy_query: self.mr_list_state.filter.fuzzy_query.clone(),
+            }),
         );
     }
 
@@ -1080,6 +1103,7 @@ impl App {
             }
             _ => {}
         }
+        self.save_cache();
     }
 
     fn apply_sort_preset(&mut self, name: &str) {
@@ -1215,6 +1239,10 @@ impl App {
 
     /// Centralized fuzzy search handler.
     fn handle_fuzzy_text(&mut self, key: KeyEvent) {
+        let is_issue_or_mr =
+            matches!(self.view, View::IssueList | View::MrList);
+        let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
+
         let needs_refilter = match self.view {
             View::IssueList => self.issue_list_state.filter.handle_fuzzy_input(&key),
             View::MrList => self.mr_list_state.filter.handle_fuzzy_input(&key),
@@ -1229,6 +1257,10 @@ impl App {
         };
         if needs_refilter == Some(true) {
             self.refilter_current_view();
+        }
+        // Persist fuzzy query when search is confirmed/cancelled in issue/MR views
+        if is_issue_or_mr && is_exit {
+            self.save_cache();
         }
         self.refresh_focused();
     }
@@ -1689,6 +1721,7 @@ impl App {
             }
             _ => {}
         }
+        self.save_cache();
     }
 
     fn action_show_filter_menu(&mut self) {
@@ -1763,6 +1796,7 @@ impl App {
                 View::MrList => self.refilter_mrs(),
                 _ => {}
             }
+            self.save_cache();
             // Reopen the filter menu
             self.action_show_filter_menu();
         }
@@ -2087,6 +2121,7 @@ impl App {
                             }
                             _ => {}
                         }
+                        self.save_cache();
                         // Reopen filter menu for adding more conditions
                         self.overlay = Overlay::None;
                         self.action_show_filter_menu();
@@ -2238,6 +2273,7 @@ impl App {
                         f.bar_focused = false;
                     }
                     self.refilter_issues();
+                    self.save_cache();
                 }
             }
             View::MrList => {
@@ -2273,6 +2309,7 @@ impl App {
                         self.mr_list_state.filter.bar_focused = false;
                     }
                     self.refilter_mrs();
+                    self.save_cache();
                 }
             }
             _ => {}
@@ -2716,6 +2753,7 @@ impl App {
                 }
                 _ => {}
             }
+            self.save_cache();
         }
     }
 

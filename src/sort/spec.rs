@@ -5,7 +5,7 @@ use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
 
 use super::label_order::compare_by_label_scope;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SortField {
     Iid,
     Title,
@@ -104,7 +104,7 @@ impl SortField {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SortDirection {
     Asc,
     Desc,
@@ -127,7 +127,7 @@ impl SortDirection {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SortSpec {
     pub field: SortField,
     pub direction: SortDirection,
