@@ -214,6 +214,9 @@ impl IterationBoardState {
             }
 
             // Match to status column by checking status_matches
+            if self.columns.is_empty() {
+                continue;
+            }
             let status_lower = item
                 .issue
                 .custom_status
@@ -1296,5 +1299,100 @@ pub fn compute_health(
         scope_creep_loading,
         shadow_work_loading,
         active_tab,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gitlab::types::Issue;
+
+    fn make_issue(id: u64, iteration_id: Option<&str>) -> TrackedIssue {
+        TrackedIssue {
+            project_path: "test/project".to_string(),
+            issue: Issue {
+                id,
+                iid: id,
+                title: format!("Issue {id}"),
+                state: "opened".to_string(),
+                author: None,
+                assignees: vec![],
+                labels: vec![],
+                milestone: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                web_url: String::new(),
+                description: None,
+                user_notes_count: 0,
+                references: None,
+                custom_status: None,
+                iteration: iteration_id.map(|id| crate::gitlab::types::Iteration {
+                    id: id.to_string(),
+                    title: "Sprint 1".to_string(),
+                    start_date: None,
+                    due_date: None,
+                    state: "current".to_string(),
+                }),
+                weight: None,
+            },
+        }
+    }
+
+    #[test]
+    fn partition_issues_with_empty_columns_does_not_panic() {
+        let mut board = IterationBoardState::default();
+        assert!(board.columns.is_empty());
+
+        let iter = crate::gitlab::types::Iteration {
+            id: "gid://gitlab/Iteration/1".to_string(),
+            title: "Sprint 1".to_string(),
+            start_date: Some("2026-04-01".to_string()),
+            due_date: Some("2026-04-14".to_string()),
+            state: "current".to_string(),
+        };
+        let issues = vec![
+            make_issue(1, Some("gid://gitlab/Iteration/1")),
+            make_issue(2, Some("gid://gitlab/Iteration/1")),
+        ];
+
+        // Must not panic even though columns is empty
+        board.partition_issues(&issues, Some(&iter), &std::collections::HashMap::new());
+        assert!(board.columns.is_empty());
+    }
+
+    #[test]
+    fn partition_issues_with_columns_assigns_correctly() {
+        let mut board = IterationBoardState::default();
+        board.columns = vec![
+            StatusColumn {
+                list: ItemList::default(),
+                status_name: "No Status".to_string(),
+                status_matches: vec![String::new()],
+            },
+            StatusColumn {
+                list: ItemList::default(),
+                status_name: "In Progress".to_string(),
+                status_matches: vec!["in progress".to_string()],
+            },
+        ];
+
+        let iter = crate::gitlab::types::Iteration {
+            id: "gid://gitlab/Iteration/1".to_string(),
+            title: "Sprint 1".to_string(),
+            start_date: None,
+            due_date: None,
+            state: "current".to_string(),
+        };
+
+        let mut issue1 = make_issue(1, Some("gid://gitlab/Iteration/1"));
+        issue1.issue.custom_status = Some("In Progress".to_string());
+        let issue2 = make_issue(2, Some("gid://gitlab/Iteration/1"));
+        // issue2 has no custom_status → should go to "No Status" column
+
+        let issues = vec![issue1, issue2];
+        board.partition_issues(&issues, Some(&iter), &std::collections::HashMap::new());
+
+        assert_eq!(board.columns[0].list.indices.len(), 1); // "No Status"
+        assert_eq!(board.columns[1].list.indices.len(), 1); // "In Progress"
     }
 }
