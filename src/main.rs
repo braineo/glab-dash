@@ -134,7 +134,7 @@ async fn debug_fetch() -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     if std::env::args().any(|a| a == "--debug") {
         return debug_fetch().await;
