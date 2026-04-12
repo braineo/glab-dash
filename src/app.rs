@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cache;
+use crate::cmd::{Cmd, Dirty};
 use crate::config::Config;
 use crate::filter::{Field, FilterCondition, Op};
 use crate::gitlab::client::GitLabClient;
@@ -212,6 +213,10 @@ pub struct App {
 
     // Redraw flag — only render when state has changed
     pub needs_redraw: bool,
+
+    // TEA accumulators — filled during update, drained by event loop
+    dirty: Dirty,
+    pending_cmds: Vec<Cmd>,
 }
 
 impl App {
@@ -266,6 +271,8 @@ impl App {
             scope_creep_state: FetchState::default(),
             shadow_work_state: FetchState::default(),
             needs_redraw: true,
+            dirty: Dirty::default(),
+            pending_cmds: Vec::new(),
         }
     }
 
@@ -418,6 +425,161 @@ impl App {
             &self.shadow_work_cache,
             &self.iterations,
         );
+    }
+
+    // ── TEA: reconcile + execute ────────────────────────────────────
+
+    /// Run all downstream updates implied by the dirty flags, then clear
+    /// the flags.  This is the **single place** where refilter / refresh /
+    /// health calls live — individual handlers never call them directly.
+    fn reconcile(&mut self) {
+        // Copy flags to avoid borrowing self while calling &mut self methods.
+        let d = std::mem::take(&mut self.dirty);
+        if !d.any() {
+            return;
+        }
+
+        if d.issues || d.view_state {
+            self.refilter_issues();
+            self.refilter_planning();
+            self.refilter_iteration_board();
+        }
+        if d.mrs || d.view_state {
+            self.refilter_mrs();
+        }
+        if d.statuses {
+            self.rebuild_iteration_board_columns();
+            self.refilter_iteration_board();
+        }
+        if d.issues || d.mrs || d.selection || d.view_state || d.statuses {
+            self.refresh_focused();
+        }
+        if d.issues || d.iterations || d.statuses {
+            self.compute_iteration_health();
+        }
+    }
+
+    /// Drain `pending_cmds` and execute each side-effect.
+    fn execute_pending_cmds(&mut self) {
+        let cmds = std::mem::take(&mut self.pending_cmds);
+        for cmd in cmds {
+            self.execute_cmd(cmd);
+        }
+    }
+
+    /// Execute a single side-effect command.
+    fn execute_cmd(&mut self, cmd: Cmd) {
+        match cmd {
+            // ── Persistence ──────────────────────────────────────────
+            Cmd::Persist | Cmd::PersistViewState => self.save_cache(),
+
+            // ── API fetches ──────────────────────────────────────────
+            Cmd::FetchAll => self.fetch_all(),
+            Cmd::FetchHealthData => self.maybe_fetch_health_data(),
+
+            // ── API mutations ────────────────────────────────────────
+            Cmd::SpawnCloseIssue { issue_id } => {
+                let client = self.client.clone();
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .update_issue(issue_id, serde_json::json!({"stateEvent": "CLOSE"}))
+                        .await;
+                    let _ = tx.send(AsyncMsg::IssueUpdated(result));
+                });
+            }
+            Cmd::SpawnReopenIssue { issue_id } => {
+                let client = self.client.clone();
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .update_issue(issue_id, serde_json::json!({"stateEvent": "REOPEN"}))
+                        .await;
+                    let _ = tx.send(AsyncMsg::IssueUpdated(result));
+                });
+            }
+            Cmd::SpawnCloseMr { project, iid } => {
+                let client = self.client.clone();
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .update_mr(&project, iid, serde_json::json!({"state_event": "close"}))
+                        .await;
+                    let _ = tx.send(AsyncMsg::MrUpdated(result, project));
+                });
+            }
+            Cmd::SpawnApproveMr { project, iid } => {
+                let client = self.client.clone();
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .approve_mr(&project, iid)
+                        .await
+                        .map(|()| format!("Approved !{iid}"));
+                    let _ = tx.send(AsyncMsg::ActionDone(result));
+                });
+            }
+            Cmd::SpawnMergeMr { project, iid } => {
+                let client = self.client.clone();
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let result = client.merge_mr(&project, iid).await;
+                    let _ = tx.send(AsyncMsg::MrUpdated(result, project));
+                });
+            }
+            Cmd::SpawnMoveIteration {
+                issue_id,
+                target_gid,
+                old_iteration,
+            } => {
+                let client = self.client.clone();
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .update_issue_iteration(issue_id, target_gid.as_deref())
+                        .await;
+                    let _ = tx.send(AsyncMsg::IterationUpdated(result, issue_id, old_iteration));
+                });
+            }
+            Cmd::SpawnSetStatus {
+                project,
+                issue_id,
+                iid,
+                status_id,
+                status_display,
+            } => {
+                let client = self.client.clone();
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .update_issue_status(issue_id, &status_id)
+                        .await
+                        .map(|()| (project, iid, status_display));
+                    let _ = tx.send(AsyncMsg::IssueStatusUpdated(result));
+                });
+            }
+        }
+    }
+
+    /// Process an async message: update state, reconcile, execute side-effects.
+    pub fn process_async_msg(&mut self, msg: AsyncMsg) {
+        self.dirty = Dirty::default();
+        self.pending_cmds.clear();
+        self.handle_async_msg(msg);
+        self.reconcile();
+        self.execute_pending_cmds();
+    }
+
+    /// Process a key event: update state, reconcile, execute side-effects.
+    /// Returns `true` if the app should quit.
+    pub fn process_key(&mut self, key: KeyEvent) -> bool {
+        self.dirty = Dirty::default();
+        self.pending_cmds.clear();
+        self.needs_redraw = true;
+        let quit = self.handle_key(key);
+        self.reconcile();
+        self.execute_pending_cmds();
+        quit
     }
 
     pub fn fetch_all(&self) {
@@ -699,45 +861,14 @@ impl App {
         match msg {
             AsyncMsg::IssuesLoaded(result, incremental) => match result {
                 Ok(issues) => {
-                    if incremental {
-                        for item in issues {
-                            if let Some(pos) =
-                                self.issues.iter().position(|i| i.issue.id == item.issue.id)
-                            {
-                                if self.issues[pos].issue.updated_at <= item.issue.updated_at {
-                                    self.issues[pos] = item;
-                                }
-                            } else {
-                                self.issues.push(item);
-                            }
-                        }
-                    } else {
-                        let mut new_issues = issues;
-                        for new_iss in &mut new_issues {
-                            if let Some(pos) = self
-                                .issues
-                                .iter()
-                                .position(|i| i.issue.id == new_iss.issue.id)
-                            {
-                                let old_iss = &self.issues[pos];
-                                if old_iss.issue.updated_at > new_iss.issue.updated_at {
-                                    *new_iss = old_iss.clone();
-                                }
-                            }
-                        }
-                        self.issues = new_issues;
-                    }
+                    self.merge_issues(issues, incremental);
                     self.issues.retain(|i| i.issue.state == "opened");
                     self.last_fetched_at = Some(Self::now_secs());
                     self.error = None;
                     self.loading = false;
-                    self.refilter_issues();
-                    self.refilter_planning();
-                    self.refilter_iteration_board();
-                    self.refresh_focused();
-                    self.compute_iteration_health();
-                    self.maybe_fetch_health_data();
-                    self.save_cache();
+                    self.dirty.issues = true;
+                    self.pending_cmds.push(Cmd::Persist);
+                    self.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
                     self.loading = false;
@@ -747,43 +878,13 @@ impl App {
             AsyncMsg::MrsLoaded(result, incremental) => match result {
                 Ok((tracking, external)) => {
                     let mrs: Vec<_> = tracking.into_iter().chain(external).collect();
-                    if incremental {
-                        for item in mrs {
-                            if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == item.mr.id) {
-                                let old_secs = self.mrs[pos].mr.updated_at.timestamp();
-                                let new_secs = item.mr.updated_at.timestamp();
-                                if old_secs <= new_secs {
-                                    self.mrs[pos] = item;
-                                }
-                            } else {
-                                self.mrs.push(item);
-                            }
-                        }
-                    } else {
-                        let mut new_mrs = mrs;
-                        for new_mr in &mut new_mrs {
-                            if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == new_mr.mr.id)
-                            {
-                                let old_mr = &self.mrs[pos];
-                                // Compare at second precision: GraphQL truncates
-                                // sub-second timestamps, so a cached MR from REST
-                                // with e.g. .975s would falsely appear "newer".
-                                let old_secs = old_mr.mr.updated_at.timestamp();
-                                let new_secs = new_mr.mr.updated_at.timestamp();
-                                if old_secs > new_secs {
-                                    *new_mr = old_mr.clone();
-                                }
-                            }
-                        }
-                        self.mrs = new_mrs;
-                    }
+                    self.merge_mrs(mrs, incremental);
                     self.mrs.retain(|m| m.mr.state == "opened");
                     self.last_fetched_at = Some(Self::now_secs());
                     self.loading = false;
                     self.error = None;
-                    self.refilter_mrs();
-                    self.refresh_focused();
-                    self.save_cache();
+                    self.dirty.mrs = true;
+                    self.pending_cmds.push(Cmd::Persist);
                 }
                 Err(e) => {
                     self.loading = false;
@@ -812,8 +913,7 @@ impl App {
                 match result {
                     Ok(_msg) => {
                         self.error = None;
-                        // Refresh data after action
-                        self.fetch_all();
+                        self.pending_cmds.push(Cmd::FetchAll);
                     }
                     Err(e) => {
                         self.show_error(format!("{e:#}"));
@@ -828,8 +928,8 @@ impl App {
                             self.issues[pos].issue = issue;
                         }
                         self.error = None;
-                        self.refilter_issues();
-                        self.save_cache();
+                        self.dirty.issues = true;
+                        self.pending_cmds.push(Cmd::Persist);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
@@ -846,8 +946,8 @@ impl App {
                             self.mrs[pos].mr = mr;
                         }
                         self.error = None;
-                        self.refilter_mrs();
-                        self.save_cache();
+                        self.dirty.mrs = true;
+                        self.pending_cmds.push(Cmd::Persist);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
@@ -864,8 +964,8 @@ impl App {
                             self.issues[pos].issue.custom_status = Some(status_name);
                         }
                         self.error = None;
-                        self.refilter_issues();
-                        self.save_cache();
+                        self.dirty.issues = true;
+                        self.pending_cmds.push(Cmd::Persist);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
@@ -874,7 +974,8 @@ impl App {
                 if let Ok(labels) = result {
                     self.labels = labels;
                     self.rebuild_label_color_map();
-                    self.save_cache();
+                    self.dirty.labels = true;
+                    self.pending_cmds.push(Cmd::Persist);
                 }
             }
             AsyncMsg::StatusesLoaded(result, project, issue_id, iid, close_only) => {
@@ -882,7 +983,6 @@ impl App {
                 match result {
                     Ok(statuses) => {
                         if statuses.is_empty() {
-                            // No custom statuses available — fall back to open/close toggle
                             let item_state = self
                                 .issue_list_state
                                 .selected_issue(&self.issues)
@@ -896,10 +996,8 @@ impl App {
                             self.overlay = Overlay::Confirm(action);
                         } else {
                             self.work_item_statuses.insert(project.clone(), statuses);
-                            self.save_cache();
-                            self.rebuild_iteration_board_columns();
-                            self.refilter_iteration_board();
-                            self.refresh_focused();
+                            self.dirty.statuses = true;
+                            self.pending_cmds.push(Cmd::Persist);
                             self.show_status_chord(&project, issue_id, iid, close_only);
                         }
                     }
@@ -912,31 +1010,26 @@ impl App {
                 Ok(iters) => {
                     self.iterations = iters;
                     self.classify_iterations();
-                    self.refilter_planning();
-                    self.refilter_iteration_board();
-                    self.refresh_focused();
-                    self.compute_iteration_health();
-                    self.maybe_fetch_health_data();
+                    self.dirty.iterations = true;
+                    self.pending_cmds.push(Cmd::Persist);
+                    self.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
                     self.show_error(format!("Iterations: {e:#}"));
                 }
             },
-            AsyncMsg::IterationUpdated(result, issue_id, new_iteration) => {
+            AsyncMsg::IterationUpdated(result, issue_id, old_iteration) => {
                 self.loading = false;
                 match result {
                     Ok(()) => {
-                        // Optimistic update was already applied
                         self.error = None;
-                        self.save_cache();
+                        self.pending_cmds.push(Cmd::Persist);
                     }
                     Err(e) => {
                         // Revert the optimistic update
                         if let Some(pos) = self.issues.iter().position(|i| i.issue.id == issue_id) {
-                            // We stored the previous iteration in new_iteration for revert
-                            self.issues[pos].issue.iteration = new_iteration;
-                            self.refilter_planning();
-                            self.refilter_iteration_board();
+                            self.issues[pos].issue.iteration = old_iteration;
+                            self.dirty.issues = true;
                         }
                         self.show_error(format!("Move iteration: {e:#}"));
                     }
@@ -947,17 +1040,80 @@ impl App {
                     self.scope_creep_cache.extend(dates);
                 }
                 self.scope_creep_state = FetchState::Done;
-                self.compute_iteration_health();
-                self.save_cache();
+                // Scope creep affects health computation, use issues dirty flag
+                self.dirty.issues = true;
+                self.pending_cmds.push(Cmd::Persist);
             }
             AsyncMsg::ShadowWorkLoaded(result) => {
                 if let Ok(issues) = result {
                     self.shadow_work_cache = issues;
                 }
                 self.shadow_work_state = FetchState::Done;
-                self.compute_iteration_health();
-                self.save_cache();
+                // Shadow work affects health computation, use issues dirty flag
+                self.dirty.issues = true;
+                self.pending_cmds.push(Cmd::Persist);
             }
+        }
+    }
+
+    /// Merge incoming issues into `self.issues`, preserving newer cached entries.
+    fn merge_issues(&mut self, issues: Vec<TrackedIssue>, incremental: bool) {
+        if incremental {
+            for item in issues {
+                if let Some(pos) = self.issues.iter().position(|i| i.issue.id == item.issue.id) {
+                    if self.issues[pos].issue.updated_at <= item.issue.updated_at {
+                        self.issues[pos] = item;
+                    }
+                } else {
+                    self.issues.push(item);
+                }
+            }
+        } else {
+            let mut new_issues = issues;
+            for new_iss in &mut new_issues {
+                if let Some(pos) = self
+                    .issues
+                    .iter()
+                    .position(|i| i.issue.id == new_iss.issue.id)
+                {
+                    let old_iss = &self.issues[pos];
+                    if old_iss.issue.updated_at > new_iss.issue.updated_at {
+                        *new_iss = old_iss.clone();
+                    }
+                }
+            }
+            self.issues = new_issues;
+        }
+    }
+
+    /// Merge incoming MRs into `self.mrs`, preserving newer cached entries.
+    /// Uses second precision: GraphQL truncates sub-second timestamps.
+    fn merge_mrs(&mut self, mrs: Vec<TrackedMergeRequest>, incremental: bool) {
+        if incremental {
+            for item in mrs {
+                if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == item.mr.id) {
+                    let old_secs = self.mrs[pos].mr.updated_at.timestamp();
+                    let new_secs = item.mr.updated_at.timestamp();
+                    if old_secs <= new_secs {
+                        self.mrs[pos] = item;
+                    }
+                } else {
+                    self.mrs.push(item);
+                }
+            }
+        } else {
+            let mut new_mrs = mrs;
+            for new_mr in &mut new_mrs {
+                if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == new_mr.mr.id) {
+                    let old_mr = &self.mrs[pos];
+                    let old_secs = old_mr.mr.updated_at.timestamp();
+                    let new_secs = new_mr.mr.updated_at.timestamp();
+                    if old_secs > new_secs {
+                        *new_mr = old_mr.clone();
+                    }
+                }
+            }
+            self.mrs = new_mrs;
         }
     }
 
@@ -1290,15 +1446,14 @@ impl App {
         match self.view {
             View::IssueList => {
                 self.issue_list_state.filter.sort_specs = specs;
-                self.refilter_issues();
             }
             View::MrList => {
                 self.mr_list_state.filter.sort_specs = specs;
-                self.refilter_mrs();
             }
             _ => {}
         }
-        self.save_cache();
+        self.dirty.view_state = true;
+        self.pending_cmds.push(Cmd::Persist);
     }
 
     fn apply_sort_preset(&mut self, name: &str) {
@@ -1450,26 +1605,12 @@ impl App {
             _ => None,
         };
         if needs_refilter == Some(true) {
-            self.refilter_current_view();
+            self.dirty.view_state = true;
         }
-        // Persist fuzzy query when search is confirmed/cancelled in issue/MR views
         if is_issue_or_mr && is_exit {
-            self.save_cache();
+            self.pending_cmds.push(Cmd::PersistViewState);
         }
-        self.refresh_focused();
-    }
-
-    fn refilter_current_view(&mut self) {
-        match self.view {
-            View::IssueList => self.refilter_issues(),
-            View::MrList => self.refilter_mrs(),
-            View::Dashboard => self.refilter_iteration_board(),
-            View::Planning => {
-                self.refilter_planning();
-                self.refilter_iteration_board();
-            }
-            _ => {}
-        }
+        self.dirty.selection = true;
     }
 
     // ── Action execution ─────────────────────────────────────────────
@@ -1481,7 +1622,7 @@ impl App {
             KeyAction::Back => {
                 if let Some(prev) = self.view_stack.pop() {
                     self.view = prev;
-                    self.refresh_focused();
+                    self.dirty.selection = true;
                 } else {
                     self.overlay = Overlay::Confirm(ConfirmAction::QuitApp);
                 }
@@ -1527,7 +1668,7 @@ impl App {
             // === Item actions (resolved via view/FocusedItem) ===
             KeyAction::Refresh => {
                 self.loading = true;
-                self.fetch_all();
+                self.pending_cmds.push(Cmd::FetchAll);
             }
             KeyAction::OpenBrowser => self.action_open_browser(),
             KeyAction::SetStatus => self.do_set_status(),
@@ -1562,7 +1703,7 @@ impl App {
                 if self.view == View::Dashboard {
                     self.iteration_board_state.health_focused =
                         !self.iteration_board_state.health_focused;
-                    self.refresh_focused();
+                    self.dirty.selection = true;
                 }
             }
             KeyAction::ColumnLeft => self.action_column_left(),
@@ -1579,9 +1720,8 @@ impl App {
             }
             KeyAction::ToggleLayout => {
                 self.planning_state.toggle_layout();
-                self.refilter_planning();
-                self.refilter_iteration_board();
-                self.refresh_focused();
+                self.dirty.issues = true;
+                self.dirty.selection = true;
             }
             KeyAction::MoveIteration => {
                 self.show_iteration_chord();
@@ -1598,16 +1738,9 @@ impl App {
             self.view_stack.push(View::Dashboard);
         }
         self.view = target;
-        match target {
-            View::IssueList => self.refilter_issues(),
-            View::MrList => self.refilter_mrs(),
-            View::Planning => {
-                self.refilter_planning();
-                self.refilter_iteration_board();
-            }
-            _ => {}
-        }
-        self.refresh_focused();
+        // Ensure the target view has up-to-date indices
+        self.dirty.view_state = true;
+        self.dirty.selection = true;
     }
 
     fn nav_down(&mut self) {
@@ -1654,7 +1787,7 @@ impl App {
                 }
             }
         }
-        self.refresh_focused();
+        self.dirty.selection = true;
     }
 
     fn nav_up(&mut self) {
@@ -1701,7 +1834,7 @@ impl App {
                 }
             }
         }
-        self.refresh_focused();
+        self.dirty.selection = true;
     }
 
     fn nav_top(&mut self) {
@@ -1726,7 +1859,7 @@ impl App {
             _ => return,
         };
         if moved {
-            self.refresh_focused();
+            self.dirty.selection = true;
         } else {
             self.needs_redraw = false;
         }
@@ -1754,7 +1887,7 @@ impl App {
             _ => return,
         };
         if moved {
-            self.refresh_focused();
+            self.dirty.selection = true;
         } else {
             self.needs_redraw = false;
         }
@@ -1782,7 +1915,7 @@ impl App {
             _ => return,
         };
         if moved {
-            self.refresh_focused();
+            self.dirty.selection = true;
         } else {
             self.needs_redraw = false;
         }
@@ -1810,7 +1943,7 @@ impl App {
             _ => return,
         };
         if moved {
-            self.refresh_focused();
+            self.dirty.selection = true;
         } else {
             self.needs_redraw = false;
         }
@@ -1964,7 +2097,7 @@ impl App {
             }
             _ => {}
         }
-        self.refresh_focused();
+        self.dirty.selection = true;
     }
 
     fn action_start_search(&mut self) {
@@ -1998,15 +2131,14 @@ impl App {
         match self.view {
             View::IssueList => {
                 self.issue_list_state.filter.conditions.clear();
-                self.refilter_issues();
             }
             View::MrList => {
                 self.mr_list_state.filter.conditions.clear();
-                self.refilter_mrs();
             }
             _ => {}
         }
-        self.save_cache();
+        self.dirty.view_state = true;
+        self.pending_cmds.push(Cmd::Persist);
     }
 
     fn action_show_filter_menu(&mut self) {
@@ -2076,12 +2208,8 @@ impl App {
             if let Some(idx) = conditions.iter().position(|c| c.display() == display) {
                 conditions.remove(idx);
             }
-            match self.view {
-                View::IssueList => self.refilter_issues(),
-                View::MrList => self.refilter_mrs(),
-                _ => {}
-            }
-            self.save_cache();
+            self.dirty.view_state = true;
+            self.pending_cmds.push(Cmd::Persist);
             // Reopen the filter menu
             self.action_show_filter_menu();
         }
@@ -2285,7 +2413,7 @@ impl App {
             }
             _ => {}
         }
-        self.refresh_focused();
+        self.dirty.selection = true;
     }
 
     fn action_column_right(&mut self) {
@@ -2308,7 +2436,7 @@ impl App {
             }
             _ => {}
         }
-        self.refresh_focused();
+        self.dirty.selection = true;
     }
 
     fn handle_chord_result(&mut self, value: &str) {
@@ -2385,17 +2513,13 @@ impl App {
         // Optimistic update
         self.issues[issue_idx].issue.iteration.clone_from(&target);
         self.issues[issue_idx].issue.updated_at = chrono::Utc::now();
-        self.refilter_planning();
-        self.refilter_iteration_board();
+        self.dirty.issues = true;
 
-        let client = self.client.clone();
-        let tx = self.async_tx.clone();
         let target_gid = target.as_ref().map(|i| i.id.clone());
-        tokio::spawn(async move {
-            let result = client
-                .update_issue_iteration(issue_id, target_gid.as_deref())
-                .await;
-            let _ = tx.send(AsyncMsg::IterationUpdated(result, issue_id, old_iteration));
+        self.pending_cmds.push(Cmd::SpawnMoveIteration {
+            issue_id,
+            target_gid,
+            old_iteration,
         });
     }
 
@@ -2424,15 +2548,14 @@ impl App {
                         match self.view {
                             View::IssueList | View::IssueDetail => {
                                 self.issue_list_state.filter.conditions.push(cond);
-                                self.refilter_issues();
                             }
                             View::MrList | View::MrDetail => {
                                 self.mr_list_state.filter.conditions.push(cond);
-                                self.refilter_mrs();
                             }
                             _ => {}
                         }
-                        self.save_cache();
+                        self.dirty.view_state = true;
+                        self.pending_cmds.push(Cmd::Persist);
                         // Reopen filter menu for adding more conditions
                         self.overlay = Overlay::None;
                         self.action_show_filter_menu();
@@ -2583,8 +2706,8 @@ impl App {
                     if f.conditions.is_empty() {
                         f.bar_focused = false;
                     }
-                    self.refilter_issues();
-                    self.save_cache();
+                    self.dirty.view_state = true;
+                    self.pending_cmds.push(Cmd::Persist);
                 }
             }
             View::MrList => {
@@ -2619,8 +2742,8 @@ impl App {
                     if self.mr_list_state.filter.conditions.is_empty() {
                         self.mr_list_state.filter.bar_focused = false;
                     }
-                    self.refilter_mrs();
-                    self.save_cache();
+                    self.dirty.view_state = true;
+                    self.pending_cmds.push(Cmd::Persist);
                 }
             }
             _ => {}
@@ -2628,22 +2751,20 @@ impl App {
     }
 
     fn execute_confirm(&mut self, action: ConfirmAction) {
-        // Optimistic updates
+        // Optimistic updates — set dirty flags, reconcile will refilter
         match &action {
             ConfirmAction::CloseIssue(issue_id, _) => {
                 if let Some(pos) = self.issues.iter().position(|i| i.issue.id == *issue_id) {
                     self.issues[pos].issue.state = "closed".to_string();
                     self.issues[pos].issue.updated_at = chrono::Utc::now();
-                    self.refilter_issues();
-                    self.save_cache();
+                    self.dirty.issues = true;
                 }
             }
             ConfirmAction::ReopenIssue(issue_id, _) => {
                 if let Some(pos) = self.issues.iter().position(|i| i.issue.id == *issue_id) {
                     self.issues[pos].issue.state = "opened".to_string();
                     self.issues[pos].issue.updated_at = chrono::Utc::now();
-                    self.refilter_issues();
-                    self.save_cache();
+                    self.dirty.issues = true;
                 }
             }
             ConfirmAction::CloseMr(project, iid) => {
@@ -2654,8 +2775,7 @@ impl App {
                 {
                     self.mrs[pos].mr.state = "closed".to_string();
                     self.mrs[pos].mr.updated_at = chrono::Utc::now();
-                    self.refilter_mrs();
-                    self.save_cache();
+                    self.dirty.mrs = true;
                 }
             }
             ConfirmAction::MergeMr(project, iid) => {
@@ -2666,49 +2786,23 @@ impl App {
                 {
                     self.mrs[pos].mr.state = "merged".to_string();
                     self.mrs[pos].mr.updated_at = chrono::Utc::now();
-                    self.refilter_mrs();
-                    self.save_cache();
+                    self.dirty.mrs = true;
                 }
             }
             _ => {}
         }
+        self.pending_cmds.push(Cmd::Persist);
 
-        let client = self.client.clone();
-        let tx = self.async_tx.clone();
-        tokio::spawn(async move {
-            match action {
-                ConfirmAction::CloseIssue(issue_id, _) => {
-                    let result = client
-                        .update_issue(issue_id, serde_json::json!({"stateEvent": "CLOSE"}))
-                        .await;
-                    let _ = tx.send(AsyncMsg::IssueUpdated(result));
-                }
-                ConfirmAction::ReopenIssue(issue_id, _) => {
-                    let result = client
-                        .update_issue(issue_id, serde_json::json!({"stateEvent": "REOPEN"}))
-                        .await;
-                    let _ = tx.send(AsyncMsg::IssueUpdated(result));
-                }
-                ConfirmAction::CloseMr(project, iid) => {
-                    let result = client
-                        .update_mr(&project, iid, serde_json::json!({"state_event": "close"}))
-                        .await;
-                    let _ = tx.send(AsyncMsg::MrUpdated(result, project));
-                }
-                ConfirmAction::ApproveMr(project, iid) => {
-                    let result = client
-                        .approve_mr(&project, iid)
-                        .await
-                        .map(|()| format!("Approved !{iid}"));
-                    let _ = tx.send(AsyncMsg::ActionDone(result));
-                }
-                ConfirmAction::MergeMr(project, iid) => {
-                    let result = client.merge_mr(&project, iid).await;
-                    let _ = tx.send(AsyncMsg::MrUpdated(result, project));
-                }
-                ConfirmAction::QuitApp => unreachable!(),
-            }
-        });
+        // Spawn API call via Cmd
+        let spawn_cmd = match action {
+            ConfirmAction::CloseIssue(issue_id, _) => Cmd::SpawnCloseIssue { issue_id },
+            ConfirmAction::ReopenIssue(issue_id, _) => Cmd::SpawnReopenIssue { issue_id },
+            ConfirmAction::CloseMr(project, iid) => Cmd::SpawnCloseMr { project, iid },
+            ConfirmAction::ApproveMr(project, iid) => Cmd::SpawnApproveMr { project, iid },
+            ConfirmAction::MergeMr(project, iid) => Cmd::SpawnMergeMr { project, iid },
+            ConfirmAction::QuitApp => unreachable!(),
+        };
+        self.pending_cmds.push(spawn_cmd);
     }
 
     fn set_issue_status(&mut self, project: &str, issue_id: u64, iid: u64, status_name: &str) {
@@ -2731,21 +2825,15 @@ impl App {
             .position(|e| e.issue.iid == iid && e.project_path == project)
         {
             self.issues[pos].issue.custom_status = Some(status_name.to_string());
-            self.refilter_issues();
-            self.refilter_iteration_board();
-            self.save_cache();
+            self.dirty.issues = true;
         }
-
-        let client = self.client.clone();
-        let tx = self.async_tx.clone();
-        let project = project.to_string();
-        let status_display = status_name.to_string();
-        tokio::spawn(async move {
-            let result = client
-                .update_issue_status(issue_id, &status_id)
-                .await
-                .map(|()| (project, iid, status_display));
-            let _ = tx.send(AsyncMsg::IssueStatusUpdated(result));
+        self.pending_cmds.push(Cmd::Persist);
+        self.pending_cmds.push(Cmd::SpawnSetStatus {
+            project: project.to_string(),
+            issue_id,
+            iid,
+            status_id,
+            status_display: status_name.to_string(),
         });
     }
 
@@ -2765,9 +2853,9 @@ impl App {
                     } else {
                         self.active_team = self.config.teams.iter().position(|t| t.name == *name);
                     }
-                    self.refilter_issues();
-                    self.refilter_mrs();
-                    self.refresh_focused();
+                    self.dirty.issues = true;
+                    self.dirty.mrs = true;
+                    self.dirty.selection = true;
                 }
             }
             Overlay::Picker(PickerContext::ReplyThread(infos)) => {
@@ -2822,7 +2910,7 @@ impl App {
             *self.label_usage.entry(label.clone()).or_insert(0) += 1;
         }
         self.update_labels(labels);
-        self.save_cache();
+        self.pending_cmds.push(Cmd::Persist);
     }
 
     fn update_labels(&mut self, labels: &[String]) {
@@ -3056,15 +3144,14 @@ impl App {
             match self.view {
                 View::IssueList => {
                     self.issue_list_state.filter.conditions = conditions;
-                    self.refilter_issues();
                 }
                 View::MrList => {
                     self.mr_list_state.filter.conditions = conditions;
-                    self.refilter_mrs();
                 }
                 _ => {}
             }
-            self.save_cache();
+            self.dirty.view_state = true;
+            self.pending_cmds.push(Cmd::Persist);
         }
     }
 
