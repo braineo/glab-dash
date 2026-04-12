@@ -1527,6 +1527,7 @@ impl GitLabClient {
         Ok(all)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn fetch_user_mrs_paginated(
         &self,
         query: &str,
