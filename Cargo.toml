@@ -21,6 +21,7 @@ unicode-width = "0.2"
 tui-textarea = "0.7"
 rpassword = "7"
 comrak = "0.52.0"
+rusqlite = { version = "0.33", features = ["bundled"] }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::cache;
 use crate::cmd::{Cmd, Dirty};
 use crate::config::Config;
+use crate::db::Db;
 use crate::filter::{Field, FilterCondition, Op};
 use crate::gitlab::client::GitLabClient;
 use crate::gitlab::types::{
@@ -151,6 +152,7 @@ pub struct App {
     pub config: Config,
     pub client: GitLabClient,
     pub async_tx: mpsc::UnboundedSender<AsyncMsg>,
+    pub db: Db,
 
     // View state
     pub view: View,
@@ -224,6 +226,7 @@ impl App {
         config: Config,
         client: GitLabClient,
         async_tx: mpsc::UnboundedSender<AsyncMsg>,
+        db: Db,
     ) -> Self {
         let label_sort_orders = config
             .label_sort_orders
@@ -235,6 +238,7 @@ impl App {
             config,
             client,
             async_tx,
+            db,
             view: View::Dashboard,
             view_stack: Vec::new(),
             overlay: Overlay::None,
@@ -277,56 +281,60 @@ impl App {
     }
 
     /// Load cached data for instant startup display.
-    pub fn load_cache(&mut self) {
-        if let Some(cached) = cache::load() {
-            // Don't set last_fetched_at here: cache provides instant display,
-            // but the first fetch must be full (not incremental) to ensure
-            // all fields (e.g. iteration) are populated.
-            self.issues = cached.issues;
-            self.mrs = cached.mrs;
-            self.labels = cached.labels;
-            self.work_item_statuses = cached.work_item_statuses;
-            self.label_usage = cached.label_usage;
+    /// Load persisted data from SQLite for instant startup display.
+    pub fn load_from_db(&mut self) {
+        // Load open issues and MRs for display
+        self.issues = self.db.load_issues(Some("opened")).unwrap_or_default();
+        self.mrs = self.db.load_mrs(Some("opened")).unwrap_or_default();
+        self.labels = self.db.load_labels().unwrap_or_default();
+        self.work_item_statuses = self.db.load_work_item_statuses().unwrap_or_default();
 
-            // Restore persisted view state (filters, sorts, fuzzy queries)
-            if let Some(vs) = cached.issue_view_state {
-                self.issue_list_state.filter.conditions = vs.conditions;
-                self.issue_list_state.filter.sort_specs = vs.sort_specs;
-                self.issue_list_state.filter.fuzzy_query = vs.fuzzy_query;
-            }
-            if let Some(vs) = cached.mr_view_state {
-                self.mr_list_state.filter.conditions = vs.conditions;
-                self.mr_list_state.filter.sort_specs = vs.sort_specs;
-                self.mr_list_state.filter.fuzzy_query = vs.fuzzy_query;
-            }
-
-            // Restore iterations first so classify_iterations() can set
-            // current_iteration before health caches are loaded — this prevents
-            // classify_iterations() from wiping cached health data when it
-            // detects the None→Some transition.
-            if !cached.iterations.is_empty() {
-                self.iterations = cached.iterations;
-                self.classify_iterations();
-            }
-
-            // Restore health data (show cached immediately, re-fetch in background)
-            if !cached.scope_creep_dates.is_empty() {
-                self.scope_creep_cache = cached.scope_creep_dates;
-                self.scope_creep_state = FetchState::Done;
-            }
-            if !cached.shadow_work_issues.is_empty() {
-                self.shadow_work_cache = cached.shadow_work_issues;
-                self.shadow_work_state = FetchState::Done;
-            }
-
-            self.rebuild_label_color_map();
-            self.refilter_issues();
-            self.refilter_mrs();
-            self.rebuild_iteration_board_columns();
-            self.refilter_iteration_board();
-            self.refilter_planning();
-            self.compute_iteration_health();
+        // Load key-value metadata
+        if let Ok(Some(usage)) = self.db.get_kv("label_usage") {
+            self.label_usage = usage;
         }
+
+        // Restore persisted view state (filters, sorts, fuzzy queries)
+        if let Ok(Some(vs)) = self.db.get_kv::<cache::ViewState>("issue_view_state") {
+            self.issue_list_state.filter.conditions = vs.conditions;
+            self.issue_list_state.filter.sort_specs = vs.sort_specs;
+            self.issue_list_state.filter.fuzzy_query = vs.fuzzy_query;
+        }
+        if let Ok(Some(vs)) = self.db.get_kv::<cache::ViewState>("mr_view_state") {
+            self.mr_list_state.filter.conditions = vs.conditions;
+            self.mr_list_state.filter.sort_specs = vs.sort_specs;
+            self.mr_list_state.filter.fuzzy_query = vs.fuzzy_query;
+        }
+
+        // Restore iterations (before health data so classify_iterations sees them)
+        self.iterations = self.db.load_iterations().unwrap_or_default();
+        if !self.iterations.is_empty() {
+            self.classify_iterations();
+        }
+
+        // Restore scope creep dates
+        if let Ok(Some(dates)) = self.db.get_kv("scope_creep_dates") {
+            self.scope_creep_cache = dates;
+            self.scope_creep_state = FetchState::Done;
+        }
+
+        // Shadow work: query closed issues from DB instead of separate cache
+        if let Some(iter) = self.planning_state.current_iteration.as_ref()
+            && let Some(start) = iter.start_date.as_ref() {
+                let updated_after = format!("{start}T00:00:00+00:00");
+                if let Ok(shadow) = self.db.query_shadow_work(&updated_after, Some(&iter.id)) {
+                    self.shadow_work_cache = shadow;
+                    self.shadow_work_state = FetchState::Done;
+                }
+            }
+
+        self.rebuild_label_color_map();
+        self.refilter_issues();
+        self.refilter_mrs();
+        self.rebuild_iteration_board_columns();
+        self.refilter_iteration_board();
+        self.refilter_planning();
+        self.compute_iteration_health();
     }
 
     /// Rebuild `self.focused` from the current view + selection.
@@ -404,29 +412,6 @@ impl App {
             .collect();
     }
 
-    fn save_cache(&self) {
-        cache::save(
-            &self.issues,
-            &self.mrs,
-            &self.labels,
-            &self.work_item_statuses,
-            &self.label_usage,
-            Some(cache::ViewState {
-                conditions: self.issue_list_state.filter.conditions.clone(),
-                sort_specs: self.issue_list_state.filter.sort_specs.clone(),
-                fuzzy_query: self.issue_list_state.filter.fuzzy_query.clone(),
-            }),
-            Some(cache::ViewState {
-                conditions: self.mr_list_state.filter.conditions.clone(),
-                sort_specs: self.mr_list_state.filter.sort_specs.clone(),
-                fuzzy_query: self.mr_list_state.filter.fuzzy_query.clone(),
-            }),
-            &self.scope_creep_cache,
-            &self.shadow_work_cache,
-            &self.iterations,
-        );
-    }
-
     // ── TEA: reconcile + execute ────────────────────────────────────
 
     /// Run all downstream updates implied by the dirty flags, then clear
@@ -470,8 +455,44 @@ impl App {
     /// Execute a single side-effect command.
     fn execute_cmd(&mut self, cmd: Cmd) {
         match cmd {
-            // ── Persistence ──────────────────────────────────────────
-            Cmd::Persist | Cmd::PersistViewState => self.save_cache(),
+            // ── Persistence (targeted SQLite writes) ─────────────────
+            Cmd::PersistIssues => {
+                let _ = self.db.upsert_issues(&self.issues);
+            }
+            Cmd::PersistMrs => {
+                let _ = self.db.upsert_mrs(&self.mrs);
+            }
+            Cmd::PersistLabels => {
+                let _ = self.db.upsert_labels(&self.labels);
+            }
+            Cmd::PersistIterations => {
+                let _ = self.db.upsert_iterations(&self.iterations);
+            }
+            Cmd::PersistStatuses { ref project } => {
+                if let Some(statuses) = self.work_item_statuses.get(project) {
+                    let _ = self.db.set_work_item_statuses(project, statuses);
+                }
+            }
+            Cmd::PersistViewState => {
+                let ivs = cache::ViewState {
+                    conditions: self.issue_list_state.filter.conditions.clone(),
+                    sort_specs: self.issue_list_state.filter.sort_specs.clone(),
+                    fuzzy_query: self.issue_list_state.filter.fuzzy_query.clone(),
+                };
+                let mvs = cache::ViewState {
+                    conditions: self.mr_list_state.filter.conditions.clone(),
+                    sort_specs: self.mr_list_state.filter.sort_specs.clone(),
+                    fuzzy_query: self.mr_list_state.filter.fuzzy_query.clone(),
+                };
+                let _ = self.db.set_kv("issue_view_state", &ivs);
+                let _ = self.db.set_kv("mr_view_state", &mvs);
+            }
+            Cmd::PersistScopeCreep => {
+                let _ = self.db.set_kv("scope_creep_dates", &self.scope_creep_cache);
+            }
+            Cmd::PersistLabelUsage => {
+                let _ = self.db.set_kv("label_usage", &self.label_usage);
+            }
 
             // ── API fetches ──────────────────────────────────────────
             Cmd::FetchAll => self.fetch_all(),
@@ -862,12 +883,14 @@ impl App {
             AsyncMsg::IssuesLoaded(result, incremental) => match result {
                 Ok(issues) => {
                     self.merge_issues(issues, incremental);
+                    // Persist ALL issues (open + closed) to DB, then filter
+                    // in-memory to open-only for display.
+                    let _ = self.db.upsert_issues(&self.issues);
                     self.issues.retain(|i| i.issue.state == "opened");
                     self.last_fetched_at = Some(Self::now_secs());
                     self.error = None;
                     self.loading = false;
                     self.dirty.issues = true;
-                    self.pending_cmds.push(Cmd::Persist);
                     self.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
@@ -879,12 +902,13 @@ impl App {
                 Ok((tracking, external)) => {
                     let mrs: Vec<_> = tracking.into_iter().chain(external).collect();
                     self.merge_mrs(mrs, incremental);
+                    // Persist ALL MRs to DB, then filter in-memory to open-only
+                    let _ = self.db.upsert_mrs(&self.mrs);
                     self.mrs.retain(|m| m.mr.state == "opened");
                     self.last_fetched_at = Some(Self::now_secs());
                     self.loading = false;
                     self.error = None;
                     self.dirty.mrs = true;
-                    self.pending_cmds.push(Cmd::Persist);
                 }
                 Err(e) => {
                     self.loading = false;
@@ -929,7 +953,7 @@ impl App {
                         }
                         self.error = None;
                         self.dirty.issues = true;
-                        self.pending_cmds.push(Cmd::Persist);
+                        self.pending_cmds.push(Cmd::PersistIssues);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
@@ -947,7 +971,7 @@ impl App {
                         }
                         self.error = None;
                         self.dirty.mrs = true;
-                        self.pending_cmds.push(Cmd::Persist);
+                        self.pending_cmds.push(Cmd::PersistMrs);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
@@ -965,7 +989,7 @@ impl App {
                         }
                         self.error = None;
                         self.dirty.issues = true;
-                        self.pending_cmds.push(Cmd::Persist);
+                        self.pending_cmds.push(Cmd::PersistIssues);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
@@ -975,7 +999,7 @@ impl App {
                     self.labels = labels;
                     self.rebuild_label_color_map();
                     self.dirty.labels = true;
-                    self.pending_cmds.push(Cmd::Persist);
+                    self.pending_cmds.push(Cmd::PersistLabels);
                 }
             }
             AsyncMsg::StatusesLoaded(result, project, issue_id, iid, close_only) => {
@@ -997,7 +1021,9 @@ impl App {
                         } else {
                             self.work_item_statuses.insert(project.clone(), statuses);
                             self.dirty.statuses = true;
-                            self.pending_cmds.push(Cmd::Persist);
+                            self.pending_cmds.push(Cmd::PersistStatuses {
+                                project: project.clone(),
+                            });
                             self.show_status_chord(&project, issue_id, iid, close_only);
                         }
                     }
@@ -1011,7 +1037,7 @@ impl App {
                     self.iterations = iters;
                     self.classify_iterations();
                     self.dirty.iterations = true;
-                    self.pending_cmds.push(Cmd::Persist);
+                    self.pending_cmds.push(Cmd::PersistIterations);
                     self.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
@@ -1023,7 +1049,7 @@ impl App {
                 match result {
                     Ok(()) => {
                         self.error = None;
-                        self.pending_cmds.push(Cmd::Persist);
+                        self.pending_cmds.push(Cmd::PersistIssues);
                     }
                     Err(e) => {
                         // Revert the optimistic update
@@ -1042,16 +1068,17 @@ impl App {
                 self.scope_creep_state = FetchState::Done;
                 // Scope creep affects health computation, use issues dirty flag
                 self.dirty.issues = true;
-                self.pending_cmds.push(Cmd::Persist);
+                self.pending_cmds.push(Cmd::PersistScopeCreep);
             }
             AsyncMsg::ShadowWorkLoaded(result) => {
                 if let Ok(issues) = result {
+                    // Persist closed issues to DB for future shadow work queries
+                    let _ = self.db.upsert_issues(&issues);
                     self.shadow_work_cache = issues;
                 }
                 self.shadow_work_state = FetchState::Done;
-                // Shadow work affects health computation, use issues dirty flag
+                // Shadow work affects health computation
                 self.dirty.issues = true;
-                self.pending_cmds.push(Cmd::Persist);
             }
         }
     }
@@ -1453,7 +1480,7 @@ impl App {
             _ => {}
         }
         self.dirty.view_state = true;
-        self.pending_cmds.push(Cmd::Persist);
+        self.pending_cmds.push(Cmd::PersistViewState);
     }
 
     fn apply_sort_preset(&mut self, name: &str) {
@@ -2138,7 +2165,7 @@ impl App {
             _ => {}
         }
         self.dirty.view_state = true;
-        self.pending_cmds.push(Cmd::Persist);
+        self.pending_cmds.push(Cmd::PersistViewState);
     }
 
     fn action_show_filter_menu(&mut self) {
@@ -2209,7 +2236,7 @@ impl App {
                 conditions.remove(idx);
             }
             self.dirty.view_state = true;
-            self.pending_cmds.push(Cmd::Persist);
+            self.pending_cmds.push(Cmd::PersistViewState);
             // Reopen the filter menu
             self.action_show_filter_menu();
         }
@@ -2555,7 +2582,7 @@ impl App {
                             _ => {}
                         }
                         self.dirty.view_state = true;
-                        self.pending_cmds.push(Cmd::Persist);
+                        self.pending_cmds.push(Cmd::PersistViewState);
                         // Reopen filter menu for adding more conditions
                         self.overlay = Overlay::None;
                         self.action_show_filter_menu();
@@ -2707,7 +2734,7 @@ impl App {
                         f.bar_focused = false;
                     }
                     self.dirty.view_state = true;
-                    self.pending_cmds.push(Cmd::Persist);
+                    self.pending_cmds.push(Cmd::PersistViewState);
                 }
             }
             View::MrList => {
@@ -2743,7 +2770,7 @@ impl App {
                         self.mr_list_state.filter.bar_focused = false;
                     }
                     self.dirty.view_state = true;
-                    self.pending_cmds.push(Cmd::Persist);
+                    self.pending_cmds.push(Cmd::PersistViewState);
                 }
             }
             _ => {}
@@ -2758,6 +2785,7 @@ impl App {
                     self.issues[pos].issue.state = "closed".to_string();
                     self.issues[pos].issue.updated_at = chrono::Utc::now();
                     self.dirty.issues = true;
+                    self.pending_cmds.push(Cmd::PersistIssues);
                 }
             }
             ConfirmAction::ReopenIssue(issue_id, _) => {
@@ -2765,6 +2793,7 @@ impl App {
                     self.issues[pos].issue.state = "opened".to_string();
                     self.issues[pos].issue.updated_at = chrono::Utc::now();
                     self.dirty.issues = true;
+                    self.pending_cmds.push(Cmd::PersistIssues);
                 }
             }
             ConfirmAction::CloseMr(project, iid) => {
@@ -2776,6 +2805,7 @@ impl App {
                     self.mrs[pos].mr.state = "closed".to_string();
                     self.mrs[pos].mr.updated_at = chrono::Utc::now();
                     self.dirty.mrs = true;
+                    self.pending_cmds.push(Cmd::PersistMrs);
                 }
             }
             ConfirmAction::MergeMr(project, iid) => {
@@ -2787,11 +2817,11 @@ impl App {
                     self.mrs[pos].mr.state = "merged".to_string();
                     self.mrs[pos].mr.updated_at = chrono::Utc::now();
                     self.dirty.mrs = true;
+                    self.pending_cmds.push(Cmd::PersistMrs);
                 }
             }
             _ => {}
         }
-        self.pending_cmds.push(Cmd::Persist);
 
         // Spawn API call via Cmd
         let spawn_cmd = match action {
@@ -2827,7 +2857,7 @@ impl App {
             self.issues[pos].issue.custom_status = Some(status_name.to_string());
             self.dirty.issues = true;
         }
-        self.pending_cmds.push(Cmd::Persist);
+        self.pending_cmds.push(Cmd::PersistIssues);
         self.pending_cmds.push(Cmd::SpawnSetStatus {
             project: project.to_string(),
             issue_id,
@@ -2910,7 +2940,7 @@ impl App {
             *self.label_usage.entry(label.clone()).or_insert(0) += 1;
         }
         self.update_labels(labels);
-        self.pending_cmds.push(Cmd::Persist);
+        self.pending_cmds.push(Cmd::PersistLabelUsage);
     }
 
     fn update_labels(&mut self, labels: &[String]) {
@@ -3151,7 +3181,7 @@ impl App {
                 _ => {}
             }
             self.dirty.view_state = true;
-            self.pending_cmds.push(Cmd::Persist);
+            self.pending_cmds.push(Cmd::PersistViewState);
         }
     }
 
