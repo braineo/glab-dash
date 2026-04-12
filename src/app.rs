@@ -7,10 +7,9 @@ use tokio::sync::mpsc;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::cache;
 use crate::cmd::{Cmd, Dirty};
 use crate::config::Config;
-use crate::db::Db;
+use crate::db::{Db, ViewState};
 use crate::filter::{Field, FilterCondition, Op};
 use crate::gitlab::client::GitLabClient;
 use crate::gitlab::types::{
@@ -295,12 +294,12 @@ impl App {
         }
 
         // Restore persisted view state (filters, sorts, fuzzy queries)
-        if let Ok(Some(vs)) = self.db.get_kv::<cache::ViewState>("issue_view_state") {
+        if let Ok(Some(vs)) = self.db.get_kv::<ViewState>("issue_view_state") {
             self.issue_list_state.filter.conditions = vs.conditions;
             self.issue_list_state.filter.sort_specs = vs.sort_specs;
             self.issue_list_state.filter.fuzzy_query = vs.fuzzy_query;
         }
-        if let Ok(Some(vs)) = self.db.get_kv::<cache::ViewState>("mr_view_state") {
+        if let Ok(Some(vs)) = self.db.get_kv::<ViewState>("mr_view_state") {
             self.mr_list_state.filter.conditions = vs.conditions;
             self.mr_list_state.filter.sort_specs = vs.sort_specs;
             self.mr_list_state.filter.fuzzy_query = vs.fuzzy_query;
@@ -320,13 +319,14 @@ impl App {
 
         // Shadow work: query closed issues from DB instead of separate cache
         if let Some(iter) = self.planning_state.current_iteration.as_ref()
-            && let Some(start) = iter.start_date.as_ref() {
-                let updated_after = format!("{start}T00:00:00+00:00");
-                if let Ok(shadow) = self.db.query_shadow_work(&updated_after, Some(&iter.id)) {
-                    self.shadow_work_cache = shadow;
-                    self.shadow_work_state = FetchState::Done;
-                }
+            && let Some(start) = iter.start_date.as_ref()
+        {
+            let updated_after = format!("{start}T00:00:00+00:00");
+            if let Ok(shadow) = self.db.query_shadow_work(&updated_after, Some(&iter.id)) {
+                self.shadow_work_cache = shadow;
+                self.shadow_work_state = FetchState::Done;
             }
+        }
 
         self.rebuild_label_color_map();
         self.refilter_issues();
@@ -474,12 +474,12 @@ impl App {
                 }
             }
             Cmd::PersistViewState => {
-                let ivs = cache::ViewState {
+                let ivs = ViewState {
                     conditions: self.issue_list_state.filter.conditions.clone(),
                     sort_specs: self.issue_list_state.filter.sort_specs.clone(),
                     fuzzy_query: self.issue_list_state.filter.fuzzy_query.clone(),
                 };
-                let mvs = cache::ViewState {
+                let mvs = ViewState {
                     conditions: self.mr_list_state.filter.conditions.clone(),
                     sort_specs: self.mr_list_state.filter.sort_specs.clone(),
                     fuzzy_query: self.mr_list_state.filter.fuzzy_query.clone(),

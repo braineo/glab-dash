@@ -1,5 +1,4 @@
 mod app;
-mod cache;
 mod cmd;
 mod config;
 #[cfg(test)]
