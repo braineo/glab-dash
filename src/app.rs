@@ -178,6 +178,9 @@ pub struct App {
 
     // Iteration board on dashboard
     pub iteration_board_state: dashboard::IterationBoardState,
+
+    // Redraw flag — only render when state has changed
+    pub needs_redraw: bool,
 }
 
 impl App {
@@ -226,6 +229,7 @@ impl App {
             planning_state: planning::PlanningViewState::default(),
             iterations: Vec::new(),
             iteration_board_state: dashboard::IterationBoardState::default(),
+            needs_redraw: true,
         }
     }
 

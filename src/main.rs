@@ -3,7 +3,6 @@ mod cache;
 mod config;
 #[cfg(test)]
 mod config_tests;
-mod event;
 mod filter;
 mod gitlab;
 mod keybindings;
@@ -19,8 +18,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use crossterm::{
     event::{
-        DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        DisableMouseCapture, EnableMouseCapture, Event as CEvent, EventStream,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{
@@ -28,13 +27,13 @@ use crossterm::{
         supports_keyboard_enhancement,
     },
 };
+use futures::StreamExt;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 
 use crate::app::App;
 use crate::config::Config;
-use crate::event::{Event, EventHandler};
 use crate::gitlab::client::GitLabClient;
 
 /// Non-interactive debug mode: fetch issues via GraphQL and print them.
@@ -167,37 +166,50 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Start event handler
-    let mut events = EventHandler::new(Duration::from_millis(100));
+    // Crossterm event stream — native tokio integration, no polling thread
+    let mut event_stream = EventStream::new();
+
+    // Auto-refresh timer using configured interval (default 60s)
+    let refresh_interval = Duration::from_secs(app.config.refresh_interval_secs);
+    let mut refresh_timer = tokio::time::interval(refresh_interval);
+    refresh_timer.tick().await; // consume the immediate first tick
 
     // Load cache for instant startup, then fetch fresh data in background
     app.load_cache();
     app.loading = true;
     app.fetch_all();
 
-    // Main loop
+    // Main loop — event-driven rendering: only draw when state changes
     loop {
-        // Render
-        terminal.draw(|frame| app.render(frame))?;
+        if app.needs_redraw {
+            terminal.draw(|frame| app.render(frame))?;
+            app.needs_redraw = false;
+        }
 
-        // Handle events
         tokio::select! {
-            Some(event) = events.next() => {
+            Some(Ok(event)) = event_stream.next() => {
                 match event {
-                    Event::Key(key) => {
-                        // Only handle key press events (ignore release/repeat)
-                        if key.kind == crossterm::event::KeyEventKind::Press
-                            && app.handle_key(key) {
-                                break; // quit
-                            }
+                    CEvent::Key(key)
+                        if key.kind == crossterm::event::KeyEventKind::Press =>
+                    {
+                        if app.handle_key(key) {
+                            break; // quit
+                        }
+                        app.needs_redraw = true;
                     }
-                    Event::Resize(_, _) | Event::Tick => {
-                        // Terminal auto-handles resize on next draw; tick is a no-op
+                    CEvent::Resize(_, _) => {
+                        app.needs_redraw = true;
                     }
+                    _ => {}
                 }
             }
             Some(msg) = async_rx.recv() => {
                 app.handle_async_msg(msg);
+                app.needs_redraw = true;
+            }
+            _ = refresh_timer.tick() => {
+                app.fetch_all();
+                app.needs_redraw = true;
             }
         }
     }
