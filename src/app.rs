@@ -608,6 +608,25 @@ impl App {
         self.fetch_mrs();
         self.fetch_labels();
         self.fetch_iterations();
+        self.fetch_statuses_for_board();
+    }
+
+    /// Fetch work item statuses for each tracking project (for the iteration board).
+    fn fetch_statuses_for_board(&self) {
+        for project in &self.config.tracking_projects {
+            if self.work_item_statuses.contains_key(project) {
+                continue; // already cached
+            }
+            let client = self.client.clone();
+            let tx = self.async_tx.clone();
+            let project = project.clone();
+            tokio::spawn(async move {
+                let result = client.fetch_work_item_statuses(&project).await;
+                // Reuse StatusesLoaded with sentinel values (issue_id=0, iid=0)
+                // to indicate this is a background fetch, not a chord popup trigger.
+                let _ = tx.send(AsyncMsg::StatusesLoaded(result, project, 0, 0, false));
+            });
+        }
     }
 
     /// Convert a unix timestamp to ISO 8601 for the GitLab API, with 60s safety buffer.
@@ -1004,9 +1023,11 @@ impl App {
             }
             AsyncMsg::StatusesLoaded(result, project, issue_id, iid, close_only) => {
                 self.loading = false;
+                let is_background = issue_id == 0 && iid == 0;
                 match result {
                     Ok(statuses) => {
-                        if statuses.is_empty() {
+                        if statuses.is_empty() && !is_background {
+                            // No custom statuses — fall back to open/close toggle
                             let item_state = self
                                 .issue_list_state
                                 .selected_issue(&self.issues)
@@ -1018,17 +1039,21 @@ impl App {
                                 ConfirmAction::ReopenIssue(issue_id, iid)
                             };
                             self.overlay = Overlay::Confirm(action);
-                        } else {
+                        } else if !statuses.is_empty() {
                             self.work_item_statuses.insert(project.clone(), statuses);
                             self.dirty.statuses = true;
                             self.pending_cmds.push(Cmd::PersistStatuses {
                                 project: project.clone(),
                             });
-                            self.show_status_chord(&project, issue_id, iid, close_only);
+                            if !is_background {
+                                self.show_status_chord(&project, issue_id, iid, close_only);
+                            }
                         }
                     }
                     Err(e) => {
-                        self.show_error(format!("Statuses: {e:#}"));
+                        if !is_background {
+                            self.show_error(format!("Statuses: {e:#}"));
+                        }
                     }
                 }
             }

@@ -375,7 +375,6 @@ impl Db {
             Ok(None)
         }
     }
-
 }
 
 #[cfg(test)]
