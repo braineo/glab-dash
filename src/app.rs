@@ -1362,26 +1362,11 @@ impl App {
     }
 
     /// Recompute iteration health metrics from current data.
-    /// If there are current-iteration issues missing from the unplanned work
-    /// cache, pushes `Cmd::FetchHealthData` so the TEA cycle fetches them.
     fn compute_iteration_health(&mut self) {
         let Some(current_iter) = self.planning_state.current_iteration.as_ref() else {
             self.iteration_health = None;
             return;
         };
-
-        // Detect uncached issues — request a fetch if any are missing.
-        let current_id = &current_iter.id;
-        let has_uncached = self.issues.iter().any(|i| {
-            i.issue
-                .iteration
-                .as_ref()
-                .is_some_and(|it| &it.id == current_id)
-                && !self.unplanned_work_cache.contains_key(&i.issue.id)
-        });
-        if has_uncached {
-            self.pending_cmds.push(Cmd::FetchHealthData);
-        }
 
         self.iteration_health = Some(dashboard::compute_health(
             &self.issues,
@@ -2569,6 +2554,7 @@ impl App {
             target_gid,
             old_iteration,
         });
+        self.pending_cmds.push(Cmd::FetchHealthData);
     }
 
     fn handle_overlay_key(&mut self, key: KeyEvent) -> bool {
