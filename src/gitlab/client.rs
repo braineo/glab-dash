@@ -1573,7 +1573,7 @@ impl GitLabClient {
         Ok(results)
     }
 
-    // ── Iteration health: scope creep & shadow work ──
+    // ── Iteration health: unplanned work & shadow work ──
 
     /// GraphQL query to fetch system notes for a work item (for iteration change detection).
     const WORK_ITEM_NOTES_QUERY: &str = r"

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HealthTab {
     #[default]
-    ScopeCreep,
+    UnplannedWork,
     ShadowWork,
     AtRisk,
 }
@@ -26,16 +26,16 @@ pub enum HealthTab {
 impl HealthTab {
     pub fn next(self) -> Self {
         match self {
-            Self::ScopeCreep => Self::ShadowWork,
+            Self::UnplannedWork => Self::ShadowWork,
             Self::ShadowWork => Self::AtRisk,
-            Self::AtRisk => Self::ScopeCreep,
+            Self::AtRisk => Self::UnplannedWork,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            Self::ScopeCreep => Self::AtRisk,
-            Self::ShadowWork => Self::ScopeCreep,
+            Self::UnplannedWork => Self::AtRisk,
+            Self::ShadowWork => Self::UnplannedWork,
             Self::AtRisk => Self::ShadowWork,
         }
     }
@@ -59,13 +59,13 @@ pub struct IterationHealth {
     pub days_remaining: i64,
     pub days_total: i64,
     pub burn_rate: BurnRate,
-    // Focusable lists (indices into App::issues for scope_creep/at_risk,
+    // Focusable lists (indices into App::issues for unplanned_work/at_risk,
     // into App::shadow_work_cache for shadow_work)
-    pub scope_creep: ItemList<TrackedIssue>,
+    pub unplanned_work: ItemList<TrackedIssue>,
     pub shadow_work: ItemList<TrackedIssue>,
     pub at_risk: ItemList<TrackedIssue>,
     // Loading states (derived from fetch state, not stored separately)
-    pub scope_creep_loading: bool,
+    pub unplanned_work_loading: bool,
     // Tab navigation
     pub active_tab: HealthTab,
 }
@@ -73,7 +73,7 @@ pub struct IterationHealth {
 impl IterationHealth {
     pub fn active_list(&self) -> &ItemList<TrackedIssue> {
         match self.active_tab {
-            HealthTab::ScopeCreep => &self.scope_creep,
+            HealthTab::UnplannedWork => &self.unplanned_work,
             HealthTab::ShadowWork => &self.shadow_work,
             HealthTab::AtRisk => &self.at_risk,
         }
@@ -81,7 +81,7 @@ impl IterationHealth {
 
     pub fn active_list_mut(&mut self) -> &mut ItemList<TrackedIssue> {
         match self.active_tab {
-            HealthTab::ScopeCreep => &mut self.scope_creep,
+            HealthTab::UnplannedWork => &mut self.unplanned_work,
             HealthTab::ShadowWork => &mut self.shadow_work,
             HealthTab::AtRisk => &mut self.at_risk,
         }
@@ -89,13 +89,13 @@ impl IterationHealth {
 
     pub fn active_tab_loading(&self) -> bool {
         match self.active_tab {
-            HealthTab::ScopeCreep => self.scope_creep_loading,
+            HealthTab::UnplannedWork => self.unplanned_work_loading,
             HealthTab::ShadowWork | HealthTab::AtRisk => false,
         }
     }
 
     /// Resolve the selected issue from the active health tab.
-    /// `issues` is the main issue list (for scope_creep/at_risk),
+    /// `issues` is the main issue list (for unplanned_work/at_risk),
     /// `shadow_work_cache` is the separate shadow work source.
     pub fn selected_issue<'a>(
         &self,
@@ -103,7 +103,7 @@ impl IterationHealth {
         shadow_work_cache: &'a [TrackedIssue],
     ) -> Option<&'a TrackedIssue> {
         match self.active_tab {
-            HealthTab::ScopeCreep => self.scope_creep.selected_item(issues),
+            HealthTab::UnplannedWork => self.unplanned_work.selected_item(issues),
             HealthTab::ShadowWork => self.shadow_work.selected_item(shadow_work_cache),
             HealthTab::AtRisk => self.at_risk.selected_item(issues),
         }
@@ -287,7 +287,7 @@ pub fn render(
     current_iteration: Option<&Iteration>,
     health: Option<&mut IterationHealth>,
     shadow_work_cache: &[TrackedIssue],
-    scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
+    unplanned_work_cache: &HashMap<u64, DateTime<Utc>>,
 ) {
     let chunks = Layout::vertical([
         Constraint::Length(3),      // Header
@@ -346,7 +346,7 @@ pub fn render(
         board.health_focused,
         issues,
         shadow_work_cache,
-        scope_creep_cache,
+        unplanned_work_cache,
     );
 
     // Iteration board (bottom half)
@@ -642,7 +642,7 @@ fn render_iteration_health(
     is_focused: bool,
     issues: &[TrackedIssue],
     shadow_work_cache: &[TrackedIssue],
-    scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
+    unplanned_work_cache: &HashMap<u64, DateTime<Utc>>,
 ) {
     let border_color = if is_focused {
         styles::CYAN
@@ -698,7 +698,7 @@ fn render_iteration_health(
         is_focused,
         issues,
         shadow_work_cache,
-        scope_creep_cache,
+        unplanned_work_cache,
     );
 }
 
@@ -789,10 +789,10 @@ fn render_progress_line(
 fn render_health_tabs(frame: &mut Frame, area: Rect, health: &IterationHealth) {
     let tabs = [
         (
-            HealthTab::ScopeCreep,
-            "Scope Creep",
-            health.scope_creep.indices.len(),
-            health.scope_creep_loading,
+            HealthTab::UnplannedWork,
+            "Unplanned",
+            health.unplanned_work.indices.len(),
+            health.unplanned_work_loading,
         ),
         (
             HealthTab::ShadowWork,
@@ -850,7 +850,7 @@ fn render_health_list(
     is_focused: bool,
     issues: &[TrackedIssue],
     shadow_work_cache: &[TrackedIssue],
-    scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
+    unplanned_work_cache: &HashMap<u64, DateTime<Utc>>,
 ) {
     let list = health.active_list();
     let tab = health.active_tab;
@@ -860,7 +860,7 @@ fn render_health_list(
             "  Loading\u{2026}"
         } else {
             match tab {
-                HealthTab::ScopeCreep => "  No scope creep detected",
+                HealthTab::UnplannedWork => "  No unplanned work detected",
                 HealthTab::ShadowWork => "  No shadow work detected",
                 HealthTab::AtRisk => "  No at-risk issues",
             }
@@ -872,7 +872,7 @@ fn render_health_list(
 
     // Pick the right source slice for this tab
     let source: &[TrackedIssue] = match tab {
-        HealthTab::ScopeCreep | HealthTab::AtRisk => issues,
+        HealthTab::UnplannedWork | HealthTab::AtRisk => issues,
         HealthTab::ShadowWork => shadow_work_cache,
     };
 
@@ -889,7 +889,7 @@ fn render_health_list(
                 .first()
                 .map_or(String::new(), |a| format!("@{}", a.username));
             let detail = match tab {
-                HealthTab::ScopeCreep => scope_creep_cache
+                HealthTab::UnplannedWork => unplanned_work_cache
                     .get(&item.issue.id)
                     .map_or_else(String::new, |dt| format!("added {}", dt.format("%b %d"))),
                 HealthTab::ShadowWork => {
@@ -1141,8 +1141,8 @@ fn render_member_table(
 pub fn compute_health(
     issues: &[TrackedIssue],
     current_iteration: &Iteration,
-    scope_creep_cache: &HashMap<u64, DateTime<Utc>>,
-    scope_creep_loading: bool,
+    unplanned_work_cache: &HashMap<u64, DateTime<Utc>>,
+    unplanned_work_loading: bool,
     shadow_work_cache: &[TrackedIssue],
     prev_health: Option<&IterationHealth>,
 ) -> IterationHealth {
@@ -1214,11 +1214,11 @@ pub fn compute_health(
         BurnRate::Unknown
     };
 
-    // Scope creep: issues added 3+ days after iteration start (indices into `issues`)
-    let scope_creep_threshold = start_date
+    // Unplanned work: issues added 3+ days after iteration start (indices into `issues`)
+    let unplanned_threshold = start_date
         .map(|s| s.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc() + chrono::Duration::days(3));
-    let mut scope_creep = ItemList::<TrackedIssue>::default();
-    if let Some(threshold) = scope_creep_threshold {
+    let mut unplanned_work = ItemList::<TrackedIssue>::default();
+    if let Some(threshold) = unplanned_threshold {
         for (i, item) in issues.iter().enumerate() {
             let in_iter = item
                 .issue
@@ -1226,14 +1226,14 @@ pub fn compute_health(
                 .as_ref()
                 .is_some_and(|it| it.id == *current_id);
             if in_iter
-                && let Some(added_at) = scope_creep_cache.get(&item.issue.id)
+                && let Some(added_at) = unplanned_work_cache.get(&item.issue.id)
                 && *added_at > threshold
             {
-                scope_creep.indices.push(i);
+                unplanned_work.indices.push(i);
             }
         }
     }
-    scope_creep.clamp_selection();
+    unplanned_work.clamp_selection();
 
     // Shadow work: closed issues updated during iteration but not in it (indices into `shadow_work_cache`).
     // Exclude "canceled" category (duplicates, won't do, etc.) — only real completed work.
@@ -1290,10 +1290,10 @@ pub fn compute_health(
         days_remaining,
         days_total,
         burn_rate,
-        scope_creep,
+        unplanned_work,
         shadow_work,
         at_risk,
-        scope_creep_loading,
+        unplanned_work_loading,
         active_tab,
     }
 }

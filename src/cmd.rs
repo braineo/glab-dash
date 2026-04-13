@@ -23,7 +23,7 @@ pub enum Cmd {
         project: String,
     },
     PersistViewState,
-    PersistScopeCreep,
+    PersistUnplannedWork,
     PersistLabelUsage,
 
     // ── API fetches ──────────────────────────────────────────────────

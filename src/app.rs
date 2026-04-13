@@ -130,8 +130,8 @@ pub enum AsyncMsg {
     IterationsLoaded(Result<Vec<Iteration>>),
     /// Iteration update result: (result, `issue_id`, `new_iteration`)
     IterationUpdated(Result<()>, u64, Option<Iteration>),
-    /// Scope creep: issue_id → added_to_iteration_at timestamp
-    ScopeCreepLoaded(Result<std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>>),
+    /// Unplanned work: issue_id → added_to_iteration_at timestamp
+    UnplannedWorkLoaded(Result<std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>>),
 }
 
 /// Lifecycle of an async health data fetch.
@@ -210,9 +210,9 @@ pub struct App {
 
     // Iteration health
     pub iteration_health: Option<dashboard::IterationHealth>,
-    pub scope_creep_cache: std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>,
+    pub unplanned_work_cache: std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>,
     pub shadow_work_cache: Vec<TrackedIssue>,
-    pub scope_creep_state: FetchState,
+    pub unplanned_work_state: FetchState,
 
     // Redraw flag — only render when state has changed
     pub needs_redraw: bool,
@@ -273,9 +273,9 @@ impl App {
             iterations: Vec::new(),
             iteration_board_state: dashboard::IterationBoardState::default(),
             iteration_health: None,
-            scope_creep_cache: std::collections::HashMap::new(),
+            unplanned_work_cache: std::collections::HashMap::new(),
             shadow_work_cache: Vec::new(),
-            scope_creep_state: FetchState::default(),
+            unplanned_work_state: FetchState::default(),
             needs_redraw: true,
             dirty: Dirty::default(),
             pending_cmds: Vec::new(),
@@ -318,10 +318,10 @@ impl App {
             self.classify_iterations();
         }
 
-        // Restore scope creep dates
-        if let Ok(Some(dates)) = self.db.get_kv("scope_creep_dates") {
-            self.scope_creep_cache = dates;
-            self.scope_creep_state = FetchState::Done;
+        // Restore unplanned work dates
+        if let Ok(Some(dates)) = self.db.get_kv("unplanned_work_dates") {
+            self.unplanned_work_cache = dates;
+            self.unplanned_work_state = FetchState::Done;
         }
 
         self.refresh_shadow_work();
@@ -487,8 +487,10 @@ impl App {
                 let _ = self.db.set_kv("issue_view_state", &ivs);
                 let _ = self.db.set_kv("mr_view_state", &mvs);
             }
-            Cmd::PersistScopeCreep => {
-                let _ = self.db.set_kv("scope_creep_dates", &self.scope_creep_cache);
+            Cmd::PersistUnplannedWork => {
+                let _ = self
+                    .db
+                    .set_kv("unplanned_work_dates", &self.unplanned_work_cache);
             }
             Cmd::PersistLabelUsage => {
                 let _ = self.db.set_kv("label_usage", &self.label_usage);
@@ -501,7 +503,7 @@ impl App {
             }
             Cmd::FetchAllFull => {
                 self.last_fetched_at = None;
-                self.scope_creep_state = FetchState::Idle;
+                self.unplanned_work_state = FetchState::Idle;
                 self.fetch_started_at = Some(Self::now_millis());
                 self.fetch_all();
             }
@@ -1118,14 +1120,14 @@ impl App {
                     }
                 }
             }
-            AsyncMsg::ScopeCreepLoaded(result) => {
+            AsyncMsg::UnplannedWorkLoaded(result) => {
                 if let Ok(dates) = result {
-                    self.scope_creep_cache.extend(dates);
+                    self.unplanned_work_cache.extend(dates);
                 }
-                self.scope_creep_state = FetchState::Done;
-                // Scope creep affects health computation, use issues dirty flag
+                self.unplanned_work_state = FetchState::Done;
+                // Unplanned work affects health computation, use issues dirty flag
                 self.dirty.issues = true;
-                self.pending_cmds.push(Cmd::PersistScopeCreep);
+                self.pending_cmds.push(Cmd::PersistUnplannedWork);
             }
         }
     }
@@ -1236,9 +1238,9 @@ impl App {
             (None, None) => false,
         };
         if iter_changed {
-            self.scope_creep_cache.clear();
+            self.unplanned_work_cache.clear();
             self.shadow_work_cache.clear();
-            self.scope_creep_state = FetchState::Idle;
+            self.unplanned_work_state = FetchState::Idle;
             self.iteration_health = None;
         }
 
@@ -1283,8 +1285,8 @@ impl App {
         });
     }
 
-    /// Fetch "added to iteration" dates for scope creep detection.
-    fn fetch_scope_creep_data(&mut self) {
+    /// Fetch "added to iteration" dates for unplanned work detection.
+    fn fetch_unplanned_work_data(&mut self) {
         let Some(current_iter) = self.planning_state.current_iteration.as_ref() else {
             return;
         };
@@ -1299,7 +1301,7 @@ impl App {
                     .iteration
                     .as_ref()
                     .is_some_and(|it| it.id == current_id)
-                    && !self.scope_creep_cache.contains_key(&i.issue.id)
+                    && !self.unplanned_work_cache.contains_key(&i.issue.id)
             })
             .map(|i| {
                 // Derive namespace from project_path (same as the tracking project ancestor)
@@ -1314,18 +1316,18 @@ impl App {
             .collect();
 
         if items.is_empty() {
-            self.scope_creep_state = FetchState::Done;
+            self.unplanned_work_state = FetchState::Done;
             self.compute_iteration_health();
             return;
         }
 
-        self.scope_creep_state = FetchState::InFlight;
+        self.unplanned_work_state = FetchState::InFlight;
 
         let client = self.client.clone();
         let tx = self.async_tx.clone();
         tokio::spawn(async move {
             let result = client.fetch_iteration_added_dates_batch(items).await;
-            let _ = tx.send(AsyncMsg::ScopeCreepLoaded(result));
+            let _ = tx.send(AsyncMsg::UnplannedWorkLoaded(result));
         });
     }
 
@@ -1349,28 +1351,43 @@ impl App {
         }
     }
 
-    /// Trigger scope creep fetch if conditions are met.
+    /// Trigger unplanned work fetch if conditions are met.
     fn maybe_fetch_health_data(&mut self) {
         if self.planning_state.current_iteration.is_none() {
             return;
         }
-        if self.scope_creep_state == FetchState::Idle {
-            self.fetch_scope_creep_data();
+        if self.unplanned_work_state != FetchState::InFlight {
+            self.fetch_unplanned_work_data();
         }
     }
 
     /// Recompute iteration health metrics from current data.
+    /// If there are current-iteration issues missing from the unplanned work
+    /// cache, pushes `Cmd::FetchHealthData` so the TEA cycle fetches them.
     fn compute_iteration_health(&mut self) {
         let Some(current_iter) = self.planning_state.current_iteration.as_ref() else {
             self.iteration_health = None;
             return;
         };
 
+        // Detect uncached issues — request a fetch if any are missing.
+        let current_id = &current_iter.id;
+        let has_uncached = self.issues.iter().any(|i| {
+            i.issue
+                .iteration
+                .as_ref()
+                .is_some_and(|it| &it.id == current_id)
+                && !self.unplanned_work_cache.contains_key(&i.issue.id)
+        });
+        if has_uncached {
+            self.pending_cmds.push(Cmd::FetchHealthData);
+        }
+
         self.iteration_health = Some(dashboard::compute_health(
             &self.issues,
             current_iter,
-            &self.scope_creep_cache,
-            self.scope_creep_state != FetchState::Done,
+            &self.unplanned_work_cache,
+            self.unplanned_work_state != FetchState::Done,
             &self.shadow_work_cache,
             self.iteration_health.as_ref(),
         ));
@@ -3175,7 +3192,7 @@ impl App {
                     current_iter,
                     self.iteration_health.as_mut(),
                     &self.shadow_work_cache,
-                    &self.scope_creep_cache,
+                    &self.unplanned_work_cache,
                 );
             }
             View::IssueList => {
