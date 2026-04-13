@@ -20,7 +20,7 @@ pub enum LabelEditorAction {
     Cancel,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LabelEditorMode {
     Chord,
     Search,
@@ -153,14 +153,14 @@ impl LabelEditorState {
                 self.chord_input.clear();
                 LabelEditorAction::Continue
             }
-            KeyCode::Char(' ') | KeyCode::Enter => {
-                if let Some(&idx) = self.search_filtered.get(self.search_cursor) {
+            KeyCode::Enter => {
+                let maybe_idx = self.search_filtered.get(self.search_cursor).copied();
+                if let Some(idx) = maybe_idx {
                     self.toggle_label(idx);
+                    self.rebuild_pinned();
                 }
-                if key.code == KeyCode::Enter {
-                    self.mode = LabelEditorMode::Chord;
-                    self.chord_input.clear();
-                }
+                self.mode = LabelEditorMode::Chord;
+                self.chord_input.clear();
                 LabelEditorAction::Continue
             }
             KeyCode::Backspace => {
@@ -178,6 +178,26 @@ impl LabelEditorState {
     }
 
     // ── Helpers ──
+
+    /// Rebuild pinned list to include all currently selected labels,
+    /// so labels toggled via search become visible in chord mode.
+    fn rebuild_pinned(&mut self) {
+        for (i, &sel) in self.selected.iter().enumerate() {
+            if sel && !self.pinned.contains(&i) {
+                self.pinned.push(i);
+            }
+        }
+        self.pinned.sort_by(|&a, &b| {
+            label_scope(&self.all_labels[a]).cmp(label_scope(&self.all_labels[b]))
+        });
+        let pinned_names: Vec<String> = self
+            .pinned
+            .iter()
+            .map(|&i| self.all_labels[i].clone())
+            .collect();
+        self.chord_codes = chord_popup::generate_name_codes(&pinned_names);
+        self.max_code_len = self.chord_codes.iter().map(String::len).max().unwrap_or(1);
+    }
 
     /// Toggle a label, enforcing scoped-label mutual exclusivity.
     fn toggle_label(&mut self, idx: usize) {
@@ -502,12 +522,11 @@ fn render_search_mode(
             break;
         }
         let is_focused = vi == state.search_cursor;
-        let is_selected = state.selected[idx];
         let label = &state.all_labels[idx];
 
         let mut spans = Vec::new();
 
-        // Cursor indicator (no bg override!)
+        // Cursor indicator
         if is_focused {
             spans.push(Span::styled(
                 "\u{25B8} ",
@@ -519,15 +538,7 @@ fn render_search_mode(
             spans.push(Span::raw("  "));
         }
 
-        // Checkbox
-        let (icon, icon_style) = if is_selected {
-            (styles::ICON_CHECK, styles::source_tracking_style())
-        } else {
-            (styles::ICON_UNCHECK, styles::overlay_desc_style())
-        };
-        spans.push(Span::styled(format!("{icon} "), icon_style));
-
-        // Label with powerline chip (preserved — no highlight_style override)
+        // Label with powerline chip
         let color = label_colors.get(label).map(String::as_str);
         spans.extend(styles::label_spans(label, color));
 
@@ -537,10 +548,8 @@ fn render_search_mode(
     // Hint line
     lines.push(Line::from(vec![])); // spacer
     lines.push(Line::from(vec![
-        Span::styled("Space", styles::overlay_key_style()),
-        Span::styled(" toggle  ", styles::overlay_desc_style()),
         Span::styled("Enter", styles::overlay_key_style()),
-        Span::styled(" toggle+back  ", styles::overlay_desc_style()),
+        Span::styled(" select  ", styles::overlay_desc_style()),
         Span::styled("Esc", styles::overlay_key_style()),
         Span::styled(" back", styles::overlay_desc_style()),
     ]));
@@ -578,4 +587,131 @@ fn centered_rect_abs(width: u16, height: u16, r: Rect) -> Rect {
     let x = r.x + r.width.saturating_sub(width) / 2;
     let y = r.y + r.height.saturating_sub(height) / 2;
     Rect::new(x, y, width.min(r.width), height.min(r.height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::collections::HashMap;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn make_state(all: &[&str], current: &[&str]) -> LabelEditorState {
+        let all_labels: Vec<String> = all.iter().map(std::string::ToString::to_string).collect();
+        let current_labels: Vec<String> = current
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        LabelEditorState::new(all_labels, &current_labels, &HashMap::new(), &[], 20)
+    }
+
+    #[test]
+    fn chord_toggle_and_confirm() {
+        // "A" and "B" are current labels → both pinned and pre-selected
+        let mut state = make_state(&["A", "B", "C"], &["A", "B"]);
+        assert_eq!(state.mode, LabelEditorMode::Chord);
+        assert!(state.selected[0], "A starts selected");
+        assert!(state.selected[1], "B starts selected");
+
+        // Toggle first pinned label OFF (deselect "A")
+        let a_pin_idx = state
+            .pinned
+            .iter()
+            .position(|&i| state.all_labels[i] == "A")
+            .unwrap();
+        let code = state.chord_codes[a_pin_idx].clone();
+        for c in code.chars() {
+            state.handle_key(&key(KeyCode::Char(c)));
+        }
+        assert!(
+            !state.selected[0],
+            "A should be deselected after chord toggle"
+        );
+
+        // Confirm
+        let action = state.handle_key(&key(KeyCode::Enter));
+        match action {
+            LabelEditorAction::Confirmed(labels) => {
+                assert!(
+                    labels.contains(&"B".to_string()),
+                    "B should still be confirmed"
+                );
+                assert!(!labels.contains(&"A".to_string()), "A should be deselected");
+            }
+            _ => panic!("Expected Confirmed"),
+        }
+    }
+
+    #[test]
+    fn search_space_types_into_query() {
+        let mut state = make_state(&["Alpha", "Beta", "Gamma"], &[]);
+
+        state.handle_key(&key(KeyCode::Char('/')));
+        assert_eq!(state.mode, LabelEditorMode::Search);
+
+        // Space should type into the search query, not toggle
+        state.handle_key(&key(KeyCode::Char(' ')));
+        assert_eq!(state.mode, LabelEditorMode::Search);
+        assert_eq!(state.search_query, " ");
+    }
+
+    #[test]
+    fn search_enter_selects_and_returns_to_chord() {
+        let mut state = make_state(&["Alpha", "Beta", "Gamma"], &[]);
+
+        // Enter search mode
+        state.handle_key(&key(KeyCode::Char('/')));
+        assert_eq!(state.mode, LabelEditorMode::Search);
+        assert_eq!(state.search_filtered.len(), 3);
+
+        // Enter on first item → toggle + back to chord (not confirm)
+        let first_idx = state.search_filtered[0];
+        let action = state.handle_key(&key(KeyCode::Enter));
+        assert!(matches!(action, LabelEditorAction::Continue));
+        assert_eq!(state.mode, LabelEditorMode::Chord);
+        assert!(state.selected[first_idx], "Label should be selected");
+        assert!(state.pinned.contains(&first_idx), "Label should be pinned");
+
+        // Enter in chord mode confirms
+        let action = state.handle_key(&key(KeyCode::Enter));
+        match action {
+            LabelEditorAction::Confirmed(labels) => {
+                assert_eq!(labels.len(), 1);
+                assert_eq!(labels[0], "Alpha");
+            }
+            _ => panic!("Expected Confirmed"),
+        }
+    }
+
+    #[test]
+    fn search_enter_then_search_again_for_multi_label() {
+        let mut state = make_state(&["Alpha", "Beta", "Gamma"], &[]);
+
+        // Search and select Alpha
+        state.handle_key(&key(KeyCode::Char('/')));
+        state.handle_key(&key(KeyCode::Enter)); // selects Alpha, back to chord
+        assert_eq!(state.mode, LabelEditorMode::Chord);
+
+        // Search again and select Beta
+        state.handle_key(&key(KeyCode::Char('/')));
+        assert_eq!(state.mode, LabelEditorMode::Search);
+        // Navigate down to Beta
+        state.handle_key(&key(KeyCode::Down));
+        state.handle_key(&key(KeyCode::Enter)); // selects Beta, back to chord
+        assert_eq!(state.mode, LabelEditorMode::Chord);
+
+        // Confirm
+        let action = state.handle_key(&key(KeyCode::Enter));
+        match action {
+            LabelEditorAction::Confirmed(labels) => {
+                assert!(labels.contains(&"Alpha".to_string()));
+                assert!(labels.contains(&"Beta".to_string()));
+                assert!(!labels.contains(&"Gamma".to_string()));
+            }
+            _ => panic!("Expected Confirmed"),
+        }
+    }
 }
