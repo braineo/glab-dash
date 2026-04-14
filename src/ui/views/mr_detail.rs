@@ -11,6 +11,8 @@ use crate::ui::{markdown, styles};
 
 #[derive(Default)]
 pub struct MrDetailState {
+    pub project: String,
+    pub iid: u64,
     pub scroll: u16,
     pub discussions: Vec<Discussion>,
     pub loading_notes: bool,
@@ -38,9 +40,18 @@ impl MrDetailState {
     }
 
     pub fn reset(&mut self) {
+        self.project.clear();
+        self.iid = 0;
         self.scroll = 0;
         self.discussions.clear();
         self.loading_notes = false;
+    }
+
+    pub fn open(&mut self, project: &str, iid: u64) {
+        self.reset();
+        self.project = project.to_string();
+        self.iid = iid;
+        self.loading_notes = true;
     }
 
     /// Build picker items for thread selection: (discussion_id, display label).

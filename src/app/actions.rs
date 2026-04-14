@@ -146,165 +146,55 @@ impl App {
         }
     }
 
+    /// Look up the issue shown in the detail view by its stored (project, iid).
     pub(super) fn current_detail_issue(&self) -> Option<&TrackedIssue> {
-        // The detail view shows the issue that was selected when we opened it
-        self.ui.views.issue_list.selected_issue(&self.data.issues)
+        let d = &self.ui.views.issue_detail;
+        if d.project.is_empty() {
+            return None;
+        }
+        self.data
+            .issues
+            .iter()
+            .find(|i| i.issue.iid == d.iid && i.project_path == d.project)
+            .or_else(|| {
+                self.data
+                    .shadow_work_cache
+                    .iter()
+                    .find(|i| i.issue.iid == d.iid && i.project_path == d.project)
+            })
     }
 
+    /// Look up the MR shown in the detail view by its stored (project, iid).
     pub(super) fn current_detail_mr(&self) -> Option<&TrackedMergeRequest> {
-        self.ui.views.mr_list.selected_mr(&self.data.mrs)
+        let d = &self.ui.views.mr_detail;
+        if d.project.is_empty() {
+            return None;
+        }
+        self.data
+            .mrs
+            .iter()
+            .find(|m| m.mr.iid == d.iid && m.project_path == d.project)
     }
 
     pub(super) fn action_open_detail(&mut self) {
-        match self.ui.view {
-            View::IssueList => {
-                if let Some(item) = self.ui.views.issue_list.selected_issue(&self.data.issues) {
-                    let project = item.project_path.clone();
-                    let iid = item.issue.iid;
-                    self.ui.views.issue_detail.reset();
-                    self.ui.views.issue_detail.loading_notes = true;
-                    self.fetch_notes_for_issue(&project, iid);
-                    self.ui.view_stack.push(View::IssueList);
-                    self.ui.view = View::IssueDetail;
-                }
+        match self.ui.focused.clone() {
+            Some(FocusedItem::Issue { project, iid, .. }) => {
+                self.ui.views.issue_detail.open(&project, iid);
+                self.fetch_notes_for_issue(&project, iid);
+                self.ui.view_stack.push(self.ui.view);
+                self.ui.view = View::IssueDetail;
             }
-            View::MrList => {
-                if let Some(item) = self.ui.views.mr_list.selected_mr(&self.data.mrs) {
-                    let project = item.project_path.clone();
-                    let iid = item.mr.iid;
-                    self.ui.views.mr_detail.reset();
-                    self.ui.views.mr_detail.loading_notes = true;
-                    self.fetch_notes_for_mr(&project, iid);
-                    self.ui.view_stack.push(View::MrList);
-                    self.ui.view = View::MrDetail;
-                }
+            Some(FocusedItem::Mr { project, iid }) => {
+                self.ui.views.mr_detail.open(&project, iid);
+                self.fetch_notes_for_mr(&project, iid);
+                self.ui.view_stack.push(self.ui.view);
+                self.ui.view = View::MrDetail;
             }
-            View::Dashboard if self.ui.views.board.health_focused => {
-                if let Some(FocusedItem::Issue { project, iid, .. }) = self.ui.focused.clone() {
-                    self.sync_issue_list_for_detail(&project, iid);
-                    self.ui.views.issue_detail.reset();
-                    self.ui.views.issue_detail.loading_notes = true;
-                    self.fetch_notes_for_issue(&project, iid);
-                    self.ui.view_stack.push(View::Dashboard);
-                    self.ui.view = View::IssueDetail;
-                }
-            }
-            View::Dashboard => {
-                if let Some(item) = self
-                    .ui.views.board
-                    .selected_issue(&self.data.issues)
-                    .cloned()
-                {
-                    let project = item.project_path.clone();
-                    let iid = item.issue.iid;
-                    // Sync issue_list_state for detail view
-                    let col = self.ui.views.board.focused_column;
-                    if let Some(idx) = self
-                        .ui.views.board
-                        .columns
-                        .get(col)
-                        .and_then(|c| c.list.selected_index())
-                    {
-                        if let Some(pos) = self
-                            .ui.views.issue_list
-                            .list
-                            .indices
-                            .iter()
-                            .position(|&i| i == idx)
-                        {
-                            self.ui.views.issue_list.list.table_state.select(Some(pos));
-                        } else {
-                            self.ui.views.issue_list.list.indices.push(idx);
-                            self.ui.views.issue_list
-                                .list
-                                .table_state
-                                .select(Some(self.ui.views.issue_list.list.indices.len() - 1));
-                        }
-                    }
-                    self.ui.views.issue_detail.reset();
-                    self.ui.views.issue_detail.loading_notes = true;
-                    self.fetch_notes_for_issue(&project, iid);
-                    self.ui.view_stack.push(View::Dashboard);
-                    self.ui.view = View::IssueDetail;
-                }
-            }
-            View::Planning => {
-                if let Some(item) = self.ui.views.planning.selected_issue(&self.data.issues).cloned() {
-                    let project = item.project_path.clone();
-                    let iid = item.issue.iid;
-                    let col = self.ui.views.planning.focused_column;
-                    if let Some(sel) = self.ui.views.planning.columns[col].list.table_state.selected()
-                        && let Some(&idx) = self.ui.views.planning.columns[col].list.indices.get(sel)
-                    {
-                        if let Some(pos) = self
-                            .ui.views.issue_list
-                            .list
-                            .indices
-                            .iter()
-                            .position(|&i| i == idx)
-                        {
-                            self.ui.views.issue_list.list.table_state.select(Some(pos));
-                        } else {
-                            self.ui.views.issue_list.list.indices.push(idx);
-                            self.ui.views.issue_list
-                                .list
-                                .table_state
-                                .select(Some(self.ui.views.issue_list.list.indices.len() - 1));
-                        }
-                    }
-                    self.ui.views.issue_detail.reset();
-                    self.ui.views.issue_detail.loading_notes = true;
-                    self.fetch_notes_for_issue(&project, iid);
-                    self.ui.view_stack.push(View::Planning);
-                    self.ui.view = View::IssueDetail;
-                }
-            }
-            _ => {}
+            None => {}
         }
         self.ui.dirty.selection = true;
     }
 
-    /// Ensure `issue_list_state` points at the issue identified by (project, iid)
-    /// so the detail view can display it via `current_detail_issue()`.
-    /// If the issue isn't in `self.data.issues` (e.g. shadow work from a separate cache),
-    /// it is appended so the detail view can render it.
-    fn sync_issue_list_for_detail(&mut self, project: &str, iid: u64) {
-        let pos = self
-            .data.issues
-            .iter()
-            .position(|i| i.issue.iid == iid && i.project_path == project)
-            .or_else(|| {
-                // Shadow work issues live in a separate cache — copy into issues
-                let sw = self
-                    .data.shadow_work_cache
-                    .iter()
-                    .find(|i| i.issue.iid == iid && i.project_path == project)?
-                    .clone();
-                self.data.issues.push(sw);
-                Some(self.data.issues.len() - 1)
-            });
-
-        if let Some(pos) = pos {
-            if let Some(list_pos) = self
-                .ui.views.issue_list
-                .list
-                .indices
-                .iter()
-                .position(|&i| i == pos)
-            {
-                self.ui.views.issue_list
-                    .list
-                    .table_state
-                    .select(Some(list_pos));
-            } else {
-                self.ui.views.issue_list.list.indices.push(pos);
-                self.ui.views.issue_list
-                    .list
-                    .table_state
-                    .select(Some(self.ui.views.issue_list.list.indices.len() - 1));
-            }
-        }
-    }
 
     pub(super) fn execute_confirm(&mut self, action: ConfirmAction) {
         // Optimistic updates — set dirty flags, reconcile will refilter
