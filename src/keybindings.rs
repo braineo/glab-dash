@@ -623,6 +623,11 @@ pub fn binding_groups_for_view(view: View) -> Vec<&'static BindingGroup> {
     }
 }
 
+/// Find the first matching action in a single binding group.
+pub fn match_group(bindings: &[Binding], key: &KeyEvent) -> Option<KeyAction> {
+    bindings.iter().find(|b| b.matches(key)).map(|b| b.action)
+}
+
 /// Find the first matching binding across all groups for a view.
 pub fn match_binding(view: View, key: &KeyEvent) -> Option<KeyAction> {
     let groups = binding_groups_for_view(view);

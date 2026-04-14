@@ -1581,21 +1581,44 @@ impl App {
             return matches!(overlay_result, EventResult::Quit);
         }
 
-        // 2. Inline text modes (fuzzy search, filter bar)
-        if self.active_filter().is_searching() {
-            self.handle_fuzzy_text(key);
-            return false;
-        }
-        if self.active_filter().bar_focused {
-            self.handle_filter_bar_key(key);
-            return false;
+        // 2. View-level dispatch (view handles its own nav, inline modes, etc.)
+        let view_result = self.dispatch_view(&key);
+        if view_result.handled() {
+            return matches!(view_result, EventResult::Quit);
         }
 
-        // 3. Binding registry dispatch (view + global)
+        // 3. Bubbled — fall back to binding registry (global + remaining view bindings)
         if let Some(action) = keybindings::match_binding(self.view, &key) {
             return self.execute_action(action);
         }
         false
+    }
+
+    /// Dispatch to the active view's key handler.  Views handle their own
+    /// navigation, fuzzy search, and filter bar.  Unhandled keys bubble.
+    fn dispatch_view(&mut self, key: &KeyEvent) -> EventResult {
+        // Suppress: will have more arms as views are migrated.
+        #[allow(clippy::single_match_else)]
+        match self.view {
+            View::IssueList => self.views.issue_list.handle_key(
+                key,
+                &mut self.dirty,
+                &mut self.pending_cmds,
+                &mut self.needs_redraw,
+            ),
+            // Other views still use the old path (inline modes + match_binding)
+            _ => {
+                if self.active_filter().is_searching() {
+                    self.handle_fuzzy_text(*key);
+                    return EventResult::Consumed;
+                }
+                if self.active_filter().bar_focused {
+                    self.handle_filter_bar_key(*key);
+                    return EventResult::Consumed;
+                }
+                EventResult::Bubble
+            }
+        }
     }
 
     /// Overlay focus: if an overlay is active, it handles the key and
