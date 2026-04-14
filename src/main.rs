@@ -105,25 +105,25 @@ async fn debug_fetch() -> Result<()> {
     let db = crate::db::Db::open().context("Failed to open database")?;
     let mut app = App::new(config, client, async_tx, db);
     let tracking = app
-        .client
+        .ctx.client
         .fetch_tracking_issues(Some("opened"), None)
         .await?;
     let assigned = app
-        .client
+        .ctx.client
         .fetch_assigned_issues(&members, Some("opened"), None)
         .await?;
     println!("  tracking={} assigned={}", tracking.len(), assigned.len());
-    app.issues = tracking;
-    app.issues.extend(assigned);
+    app.data.issues = tracking;
+    app.data.issues.extend(assigned);
     app.refilter_issues();
     println!(
         "  total issues={} filtered={}",
-        app.issues.len(),
-        app.views.issue_list.list.len()
+        app.data.issues.len(),
+        app.ui.views.issue_list.list.len()
     );
     // Check a few filtered issues
-    for i in app.views.issue_list.list.indices.iter().take(3) {
-        let item = &app.issues[*i];
+    for i in app.ui.views.issue_list.list.indices.iter().take(3) {
+        let item = &app.data.issues[*i];
         println!(
             "  #{} [{}] {:?} {}",
             item.issue.iid,
@@ -173,14 +173,14 @@ async fn main() -> Result<()> {
     let mut event_stream = EventStream::new();
 
     // Auto-refresh timer using configured interval (default 60s)
-    let refresh_interval = Duration::from_secs(app.config.refresh_interval_secs);
+    let refresh_interval = Duration::from_secs(app.ctx.config.refresh_interval_secs);
     let mut refresh_timer = tokio::time::interval(refresh_interval);
     refresh_timer.tick().await; // consume the immediate first tick
 
     // Load cache for instant startup, then fetch fresh data in background
     app.load_from_db();
-    app.loading = true;
-    app.fetch_started_at = Some(app::App::now_millis());
+    app.ui.loading = true;
+    app.ui.fetch_started_at = Some(app::App::now_millis());
     app.fetch_all();
 
     // Main loop — event-driven rendering with drain-before-paint.
@@ -188,9 +188,9 @@ async fn main() -> Result<()> {
     // before rendering once.  This gives immediate visual feedback while
     // coalescing bursts (e.g. held-key scrolling) into a single paint.
     loop {
-        if app.needs_redraw {
+        if app.ui.needs_redraw {
             terminal.draw(|frame| app.render(frame))?;
-            app.needs_redraw = false;
+            app.ui.needs_redraw = false;
         }
 
         tokio::select! {
@@ -203,19 +203,19 @@ async fn main() -> Result<()> {
                         break; // quit
                     }
                     CEvent::Resize(_, _) => {
-                        app.needs_redraw = true;
+                        app.ui.needs_redraw = true;
                     }
                     _ => {}
                 }
             }
             Some(msg) = async_rx.recv() => {
                 app.process_async_msg(msg);
-                app.needs_redraw = true;
+                app.ui.needs_redraw = true;
             }
             _ = refresh_timer.tick() => {
-                app.fetch_started_at = Some(app::App::now_millis());
+                app.ui.fetch_started_at = Some(app::App::now_millis());
                 app.fetch_all();
-                app.needs_redraw = true;
+                app.ui.needs_redraw = true;
             }
         }
 
@@ -232,7 +232,7 @@ async fn main() -> Result<()> {
         }
         while let Ok(msg) = async_rx.try_recv() {
             app.process_async_msg(msg);
-            app.needs_redraw = true;
+            app.ui.needs_redraw = true;
         }
         if quit {
             break;

@@ -9,7 +9,7 @@ use super::{App, FocusedItem, Overlay, View};
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
-        self.needs_redraw = true;
+        self.ui.needs_redraw = true;
 
         // 1. Overlay (innermost)
         let overlay_result = self.dispatch_overlay(&key);
@@ -36,7 +36,7 @@ impl App {
     /// Focused item handles item-specific actions (s/l/a/c/x/i/o for issues,
     /// plus A/M for MRs).  No focused item → everything bubbles.
     fn dispatch_focused_item(&mut self, key: &KeyEvent) -> EventResult {
-        let bindings: &[keybindings::Binding] = match &self.focused {
+        let bindings: &[keybindings::Binding] = match &self.ui.focused {
             Some(FocusedItem::Issue { .. }) => keybindings::ISSUE_ACTION_BINDINGS,
             Some(FocusedItem::Mr { .. }) => keybindings::MR_ACTION_BINDINGS,
             None => return EventResult::Bubble,
@@ -61,8 +61,8 @@ impl App {
         // Global bindings (q, ?, Esc, E, t)
         if let Some(action) = keybindings::match_group(keybindings::GLOBAL_BINDINGS, key) {
             self.execute_global_action(action);
-            return matches!(action, KeyAction::Back) && self.view_stack.is_empty()
-                && matches!(self.overlay, Overlay::Confirm(_));
+            return matches!(action, KeyAction::Back) && self.ui.view_stack.is_empty()
+                && matches!(self.ui.overlay, Overlay::Confirm(_));
         }
         // Global navigation (1-4)
         if let Some(action) = keybindings::match_group(keybindings::GLOBAL_NAV_BINDINGS, key) {
@@ -95,33 +95,33 @@ impl App {
     /// Dispatch to the active view's key handler.  Views handle their own
     /// navigation, fuzzy search, and filter bar.  Unhandled keys bubble.
     fn dispatch_view(&mut self, key: &KeyEvent) -> EventResult {
-        match self.view {
-            View::IssueList => self.views.issue_list.handle_key(
+        match self.ui.view {
+            View::IssueList => self.ui.views.issue_list.handle_key(
                 key,
-                &mut self.dirty,
-                &mut self.pending_cmds,
-                &mut self.needs_redraw,
+                &mut self.ui.dirty,
+                &mut self.ui.pending_cmds,
+                &mut self.ui.needs_redraw,
             ),
-            View::MrList => self.views.mr_list.handle_key(
+            View::MrList => self.ui.views.mr_list.handle_key(
                 key,
-                &mut self.dirty,
-                &mut self.pending_cmds,
-                &mut self.needs_redraw,
+                &mut self.ui.dirty,
+                &mut self.ui.pending_cmds,
+                &mut self.ui.needs_redraw,
             ),
-            View::IssueDetail => self.views.issue_detail.handle_key(key),
-            View::MrDetail => self.views.mr_detail.handle_key(key),
-            View::Dashboard => self.views.board.handle_key(
+            View::IssueDetail => self.ui.views.issue_detail.handle_key(key),
+            View::MrDetail => self.ui.views.mr_detail.handle_key(key),
+            View::Dashboard => self.ui.views.board.handle_key(
                 key,
-                self.views.health.as_mut(),
-                &mut self.dirty,
-                &mut self.pending_cmds,
-                &mut self.needs_redraw,
+                self.ui.views.health.as_mut(),
+                &mut self.ui.dirty,
+                &mut self.ui.pending_cmds,
+                &mut self.ui.needs_redraw,
             ),
-            View::Planning => self.views.planning.handle_key(
+            View::Planning => self.ui.views.planning.handle_key(
                 key,
-                &mut self.dirty,
-                &mut self.pending_cmds,
-                &mut self.needs_redraw,
+                &mut self.ui.dirty,
+                &mut self.ui.pending_cmds,
+                &mut self.ui.needs_redraw,
             ),
         }
     }
@@ -140,17 +140,17 @@ impl App {
             KeyAction::Approve => {
                 if let Some(FocusedItem::Mr {
                     ref project, iid, ..
-                }) = self.focused
+                }) = self.ui.focused
                 {
-                    self.overlay = Overlay::Confirm(super::ConfirmAction::ApproveMr(project.clone(), iid));
+                    self.ui.overlay = Overlay::Confirm(super::ConfirmAction::ApproveMr(project.clone(), iid));
                 }
             }
             KeyAction::Merge => {
                 if let Some(FocusedItem::Mr {
                     ref project, iid, ..
-                }) = self.focused
+                }) = self.ui.focused
                 {
-                    self.overlay = Overlay::Confirm(super::ConfirmAction::MergeMr(project.clone(), iid));
+                    self.ui.overlay = Overlay::Confirm(super::ConfirmAction::MergeMr(project.clone(), iid));
                 }
             }
             _ => {}
@@ -161,38 +161,38 @@ impl App {
     fn execute_global_action(&mut self, action: KeyAction) {
         match action {
             KeyAction::Back => {
-                if let Some(prev) = self.view_stack.pop() {
-                    self.view = prev;
-                    self.dirty.selection = true;
+                if let Some(prev) = self.ui.view_stack.pop() {
+                    self.ui.view = prev;
+                    self.ui.dirty.selection = true;
                 } else {
-                    self.overlay = Overlay::Confirm(super::ConfirmAction::QuitApp);
+                    self.ui.overlay = Overlay::Confirm(super::ConfirmAction::QuitApp);
                 }
             }
             KeyAction::ToggleHelp => {
-                self.overlay = Overlay::Help;
+                self.ui.overlay = Overlay::Help;
             }
             KeyAction::ShowLastError => {
-                if let Some(err) = &self.error {
-                    self.overlay = Overlay::Error(err.clone());
+                if let Some(err) = &self.ui.error {
+                    self.ui.overlay = Overlay::Error(err.clone());
                 }
             }
-            KeyAction::SwitchTeam if !self.config.teams.is_empty() => {
+            KeyAction::SwitchTeam if !self.ctx.config.teams.is_empty() => {
                 let mut names: Vec<String> = vec!["All".to_string()];
-                names.extend(self.config.teams.iter().map(|t| t.name.clone()));
-                self.picker_state = Some(crate::ui::components::picker::PickerState::new("Switch Team", names, false));
-                self.overlay = Overlay::Picker(super::PickerContext::Team);
+                names.extend(self.ctx.config.teams.iter().map(|t| t.name.clone()));
+                self.ui.picker_state = Some(crate::ui::components::picker::PickerState::new("Switch Team", names, false));
+                self.ui.overlay = Overlay::Picker(super::PickerContext::Team);
             }
-            KeyAction::NavigateTo(target) if self.view != target => {
+            KeyAction::NavigateTo(target) if self.ui.view != target => {
                 self.navigate_to_view(target);
             }
             KeyAction::OpenDetail => self.action_open_detail(),
             KeyAction::Refresh => {
-                self.loading = true;
-                self.pending_cmds.push(crate::cmd::Cmd::FetchAll);
+                self.ui.loading = true;
+                self.ui.pending_cmds.push(crate::cmd::Cmd::FetchAll);
             }
             KeyAction::FullRefresh => {
-                self.loading = true;
-                self.pending_cmds.push(crate::cmd::Cmd::FetchAllFull);
+                self.ui.loading = true;
+                self.ui.pending_cmds.push(crate::cmd::Cmd::FetchAllFull);
             }
             KeyAction::FilterMenu => self.action_show_filter_menu(),
             KeyAction::SortByField => self.action_sort_by_field(),
@@ -204,13 +204,13 @@ impl App {
     // ── Action helpers ───────────────────────────────────────────────
 
     fn navigate_to_view(&mut self, target: View) {
-        self.view_stack.clear();
+        self.ui.view_stack.clear();
         if target != View::Dashboard {
-            self.view_stack.push(View::Dashboard);
+            self.ui.view_stack.push(View::Dashboard);
         }
-        self.view = target;
+        self.ui.view = target;
         // Ensure the target view has up-to-date indices
-        self.dirty.view_state = true;
-        self.dirty.selection = true;
+        self.ui.dirty.view_state = true;
+        self.ui.dirty.selection = true;
     }
 }

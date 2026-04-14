@@ -23,61 +23,61 @@ impl App {
         .split(area);
 
         // Tab bar
-        crate::ui::components::tab_bar::render(frame, chunks[0], self.view);
+        crate::ui::components::tab_bar::render(frame, chunks[0], self.ui.view);
 
         let ctx = crate::ui::RenderCtx {
-            label_colors: &self.label_color_map,
+            label_colors: &self.data.label_color_map,
         };
 
         // Render main view
-        match self.view {
+        match self.ui.view {
             View::Dashboard => {
-                let current_iter = self.views.planning.current_iteration.as_ref();
+                let current_iter = self.ui.views.planning.current_iteration.as_ref();
                 dashboard::render(
                     frame,
                     chunks[1],
-                    &self.config,
-                    self.active_team,
-                    &self.issues,
-                    &self.mrs,
-                    self.loading,
-                    &mut self.views.board,
+                    &self.ctx.config,
+                    self.ui.active_team,
+                    &self.data.issues,
+                    &self.data.mrs,
+                    self.ui.loading,
+                    &mut self.ui.views.board,
                     current_iter,
-                    self.views.health.as_mut(),
-                    &self.shadow_work_cache,
-                    &self.unplanned_work_cache,
+                    self.ui.views.health.as_mut(),
+                    &self.data.shadow_work_cache,
+                    &self.data.unplanned_work_cache,
                 );
             }
             View::IssueList => {
                 issue_list::render(
                     frame,
                     chunks[1],
-                    &mut self.views.issue_list,
-                    &self.issues,
+                    &mut self.ui.views.issue_list,
+                    &self.data.issues,
                     &ctx,
                 );
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
-                    issue_detail::render(frame, chunks[1], &item, &self.views.issue_detail, &ctx);
+                    issue_detail::render(frame, chunks[1], &item, &self.ui.views.issue_detail, &ctx);
                 }
             }
             View::MrList => {
-                mr_list::render(frame, chunks[1], &mut self.views.mr_list, &self.mrs, &ctx);
+                mr_list::render(frame, chunks[1], &mut self.ui.views.mr_list, &self.data.mrs, &ctx);
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(frame, chunks[1], &item, &self.views.mr_detail, &ctx);
+                    mr_detail::render(frame, chunks[1], &item, &self.ui.views.mr_detail, &ctx);
                 }
             }
             View::Planning => {
                 planning::render(
                     frame,
                     chunks[1],
-                    &mut self.views.planning,
-                    &self.issues,
-                    &self.config,
-                    self.active_team,
+                    &mut self.ui.views.planning,
+                    &self.data.issues,
+                    &self.ctx.config,
+                    self.ui.active_team,
                     &ctx,
                 );
             }
@@ -85,10 +85,10 @@ impl App {
 
         // Status bar
         let team_name = self
-            .active_team
-            .and_then(|idx| self.config.teams.get(idx))
+            .ui.active_team
+            .and_then(|idx| self.ctx.config.teams.get(idx))
             .map_or("all", |t| t.name.as_str());
-        let view_name = match self.view {
+        let view_name = match self.ui.view {
             View::Dashboard => "Dashboard",
             View::IssueList => "Issues",
             View::IssueDetail => "Issue Detail",
@@ -96,19 +96,19 @@ impl App {
             View::MrDetail => "MR Detail",
             View::Planning => "Planning",
         };
-        let item_count = match self.view {
-            View::IssueList => self.views.issue_list.list.len(),
-            View::MrList => self.views.mr_list.list.len(),
+        let item_count = match self.ui.view {
+            View::IssueList => self.ui.views.issue_list.list.len(),
+            View::MrList => self.ui.views.mr_list.list.len(),
             View::Planning => self
-                .views.planning
+                .ui.views.planning
                 .columns
                 .iter()
                 .map(|c| c.list.len())
                 .sum(),
-            _ => self.issues.len() + self.mrs.len(),
+            _ => self.data.issues.len() + self.data.mrs.len(),
         };
         // Skip Global and Navigation groups — tabs handle those
-        let binding_hints: Vec<(&str, &str)> = keybindings::binding_groups_for_view(self.view)
+        let binding_hints: Vec<(&str, &str)> = keybindings::binding_groups_for_view(self.ui.view)
             .iter()
             .filter(|g| g.title != "Global" && g.title != "Navigation")
             .flat_map(|g| g.bindings.iter())
@@ -124,23 +124,23 @@ impl App {
                 view_name,
                 team_name,
                 item_count,
-                loading: self.loading,
-                loading_msg: self.loading_msg,
-                error: self.error.as_deref(),
-                last_fetched_at: self.last_fetched_at,
-                last_fetch_ms: self.last_fetch_ms,
+                loading: self.ui.loading,
+                loading_msg: self.ui.loading_msg,
+                error: self.ui.error.as_deref(),
+                last_fetched_at: self.ui.last_fetched_at,
+                last_fetch_ms: self.ui.last_fetch_ms,
                 hints,
             },
         );
 
         // Render overlay on top
-        match &self.overlay {
+        match &self.ui.overlay {
             Overlay::None => {}
             Overlay::Help => {
-                help::render(frame, area, self.view);
+                help::render(frame, area, self.ui.view);
             }
             Overlay::FilterEditor => {
-                filter_editor::render(frame, area, &mut self.filter_editor_state, &ctx);
+                filter_editor::render(frame, area, &mut self.ui.filter_editor_state, &ctx);
             }
             Overlay::Confirm(action) => {
                 let (title, msg) = match action {
@@ -160,29 +160,29 @@ impl App {
                 confirm_dialog::render(frame, area, title, &msg);
             }
             Overlay::Picker(_) => {
-                if let Some(ref mut ps) = self.picker_state {
+                if let Some(ref mut ps) = self.ui.picker_state {
                     picker::render(frame, area, ps, &ctx);
                 }
             }
             Overlay::CommentInput => {
                 let popup = centered_rect(60, 40, area);
                 ratatui::widgets::Clear.render(popup, frame.buffer_mut());
-                let title = if self.reply_discussion_id.is_some() {
+                let title = if self.ui.reply_discussion_id.is_some() {
                     "Reply (Enter submit, C-j newline)"
                 } else {
                     "Comment (Enter submit, C-j newline)"
                 };
-                crate::ui::components::input::render(frame, popup, &mut self.comment_input, title);
-                crate::ui::components::autocomplete::render(frame, popup, &self.autocomplete);
+                crate::ui::components::input::render(frame, popup, &mut self.ui.comment_input, title);
+                crate::ui::components::autocomplete::render(frame, popup, &self.ui.autocomplete);
             }
             Overlay::Chord(_) => {
-                if let Some(ref cs) = self.chord_state {
+                if let Some(ref cs) = self.ui.chord_state {
                     chord_popup::render(frame, area, cs);
                 }
             }
             Overlay::LabelEditor => {
-                if let Some(ref les) = self.label_editor_state {
-                    label_editor::render(frame, area, les, &self.label_color_map);
+                if let Some(ref les) = self.ui.label_editor_state {
+                    label_editor::render(frame, area, les, &self.data.label_color_map);
                 }
             }
             Overlay::Error(msg) => {
