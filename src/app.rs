@@ -21,7 +21,7 @@ use crate::ui::components::{
     chord_popup, confirm_dialog, error_popup, help, input, label_editor, picker,
 };
 use crate::ui::keys;
-use crate::ui::views::list_model::{ListCursor, NavOp, UserFilter};
+use crate::ui::views::list_model::UserFilter;
 use crate::ui::views::Views;
 use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
@@ -1828,20 +1828,23 @@ impl App {
                 }
             }
 
-            // === List / detail navigation ===
-            KeyAction::MoveDown => self.nav_down(),
-            KeyAction::MoveUp => self.nav_up(),
-            KeyAction::Top => self.nav(NavOp::First),
-            KeyAction::Bottom => self.nav(NavOp::Last),
-            KeyAction::PageDown => self.nav(NavOp::PageDown),
-            KeyAction::PageUp => self.nav(NavOp::PageUp),
+            // === Detail open (App manages view transitions) ===
             KeyAction::OpenDetail => self.action_open_detail(),
 
-            // === Search & Filter ===
-            KeyAction::StartSearch => self.action_start_search(),
-            KeyAction::FocusFilterBar => self.action_focus_filter_bar(),
+            // === Nav handled by views — these arms are unreachable but
+            //     the match must be exhaustive ===
+            KeyAction::MoveDown
+            | KeyAction::MoveUp
+            | KeyAction::Top
+            | KeyAction::Bottom
+            | KeyAction::PageDown
+            | KeyAction::PageUp
+            | KeyAction::StartSearch
+            | KeyAction::FocusFilterBar
+            | KeyAction::ClearFilters => {}
+
+            // === Filter / sort (open overlays via shared state) ===
             KeyAction::FilterMenu => self.action_show_filter_menu(),
-            KeyAction::ClearFilters => self.action_clear_filters(),
             KeyAction::SortByField => self.action_sort_by_field(),
 
             // === Item actions (resolved via view/FocusedItem) ===
@@ -1923,65 +1926,6 @@ impl App {
         self.view = target;
         // Ensure the target view has up-to-date indices
         self.dirty.view_state = true;
-        self.dirty.selection = true;
-    }
-
-    /// Return a non-generic cursor for the active list, or `None` for detail views.
-    fn active_list_cursor(&mut self) -> Option<ListCursor<'_>> {
-        match self.view {
-            View::IssueList => Some(self.views.issue_list.list.cursor()),
-            View::MrList => Some(self.views.mr_list.list.cursor()),
-            View::Planning => {
-                let col = self.views.planning.focused_column;
-                Some(self.views.planning.columns[col].list.cursor())
-            }
-            View::Dashboard if self.views.board.health_focused => {
-                self.views.health.as_mut().map(|h| h.active_list_mut().cursor())
-            }
-            View::Dashboard => {
-                let col = self.views.board.focused_column;
-                self.views.board
-                    .columns
-                    .get_mut(col)
-                    .map(|c| c.list.cursor())
-            }
-            View::IssueDetail | View::MrDetail => None,
-        }
-    }
-
-    /// Unified list navigation.  Detail views scroll; list views dispatch
-    /// through `active_list_cursor` so the view-match lives in one place.
-    fn nav(&mut self, op: NavOp) {
-        if let Some(ref mut cursor) = self.active_list_cursor() {
-            if cursor.apply(op) {
-                self.dirty.selection = true;
-            } else {
-                self.needs_redraw = false;
-            }
-        }
-    }
-
-    fn nav_down(&mut self) {
-        match self.view {
-            View::IssueDetail => self.views.issue_detail.scroll_down(),
-            View::MrDetail => self.views.mr_detail.scroll_down(),
-            _ => {
-                self.nav(NavOp::Next);
-                return;
-            }
-        }
-        self.dirty.selection = true;
-    }
-
-    fn nav_up(&mut self) {
-        match self.view {
-            View::IssueDetail => self.views.issue_detail.scroll_up(),
-            View::MrDetail => self.views.mr_detail.scroll_up(),
-            _ => {
-                self.nav(NavOp::Prev);
-                return;
-            }
-        }
         self.dirty.selection = true;
     }
 
@@ -2134,18 +2078,6 @@ impl App {
             _ => {}
         }
         self.dirty.selection = true;
-    }
-
-    fn action_start_search(&mut self) {
-        self.active_filter_mut().start_search();
-    }
-
-    fn action_focus_filter_bar(&mut self) {
-        let f = self.active_filter_mut();
-        if !f.conditions.is_empty() {
-            f.bar_focused = true;
-            f.bar_selected = 0;
-        }
     }
 
     fn action_clear_filters(&mut self) {
