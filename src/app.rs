@@ -22,6 +22,7 @@ use crate::ui::components::{
 };
 use crate::ui::keys;
 use crate::ui::views::list_model::{ListCursor, NavOp, UserFilter};
+use crate::ui::views::Views;
 use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
 };
@@ -146,16 +147,6 @@ pub enum FetchState {
     Done,
 }
 
-pub struct Views {
-    pub issue_list: issue_list::IssueListState,
-    pub mr_list: mr_list::MrListState,
-    pub issue_detail: issue_detail::IssueDetailState,
-    pub mr_detail: mr_detail::MrDetailState,
-    pub planning: planning::PlanningViewState,
-    pub board: dashboard::IterationBoardState,
-    pub health: Option<dashboard::IterationHealth>,
-}
-
 pub struct App {
     pub config: Config,
     pub client: GitLabClient,
@@ -253,15 +244,7 @@ impl App {
             loading: false,
             loading_msg: "",
             error: None,
-            views: Views {
-                issue_list: issue_list::IssueListState::default(),
-                mr_list: mr_list::MrListState::default(),
-                issue_detail: issue_detail::IssueDetailState::default(),
-                mr_detail: mr_detail::MrDetailState::default(),
-                planning: planning::PlanningViewState::default(),
-                board: dashboard::IterationBoardState::default(),
-                health: None,
-            },
+            views: Views::default(),
             filter_editor_state: filter_editor::FilterEditorState::default(),
             picker_state: None,
             comment_input: crate::ui::components::input::CommentInput::default(),
