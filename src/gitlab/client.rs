@@ -5,8 +5,8 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::gitlab::types::{
-    ApprovalUser, Discussion, Issue, Iteration, MergeRequest, MergeRequestApprovals, Milestone,
-    Note, ProjectLabel, References, TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
+    ApprovalUser, Discussion, Issue, Iteration, MergeRequest, Milestone, Note, ProjectLabel,
+    References, TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
 };
 
 // ── GraphQL response types (serde-driven) ──
@@ -783,22 +783,6 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
-    #[allow(dead_code)]
-    pub async fn list_issue_notes(&self, project: &str, iid: u64) -> Result<Vec<Note>> {
-        let url = self.api_url(&format!(
-            "/projects/{}/issues/{}/notes",
-            Self::encode_project(project),
-            iid
-        ));
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[("sort", "asc"), ("per_page", "100")])
-            .send()
-            .await?;
-        Self::handle_response(resp).await
-    }
-
     pub async fn list_issue_discussions(&self, project: &str, iid: u64) -> Result<Vec<Discussion>> {
         let url = self.api_url(&format!(
             "/projects/{}/issues/{}/discussions",
@@ -837,17 +821,6 @@ impl GitLabClient {
     }
 
     // ── Merge Requests (REST, single-item) ──
-
-    #[allow(dead_code)]
-    pub async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
-        let url = self.api_url(&format!(
-            "/projects/{}/merge_requests/{}",
-            Self::encode_project(project),
-            iid
-        ));
-        let resp = self.client.get(&url).send().await?;
-        Self::handle_response(resp).await
-    }
 
     pub async fn approve_mr(&self, project: &str, iid: u64) -> Result<()> {
         let url = self.api_url(&format!(
@@ -894,22 +867,6 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
-    #[allow(dead_code)]
-    pub async fn list_mr_notes(&self, project: &str, iid: u64) -> Result<Vec<Note>> {
-        let url = self.api_url(&format!(
-            "/projects/{}/merge_requests/{}/notes",
-            Self::encode_project(project),
-            iid
-        ));
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[("sort", "asc"), ("per_page", "100")])
-            .send()
-            .await?;
-        Self::handle_response(resp).await
-    }
-
     pub async fn list_mr_discussions(&self, project: &str, iid: u64) -> Result<Vec<Discussion>> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}/discussions",
@@ -944,17 +901,6 @@ impl GitLabClient {
             .json(&serde_json::json!({"body": body}))
             .send()
             .await?;
-        Self::handle_response(resp).await
-    }
-
-    #[allow(dead_code)]
-    pub async fn get_mr_approvals(&self, project: &str, iid: u64) -> Result<MergeRequestApprovals> {
-        let url = self.api_url(&format!(
-            "/projects/{}/merge_requests/{}/approvals",
-            Self::encode_project(project),
-            iid
-        ));
-        let resp = self.client.get(&url).send().await?;
         Self::handle_response(resp).await
     }
 

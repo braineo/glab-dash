@@ -39,8 +39,3 @@ pub fn is_right(key: &KeyEvent) -> bool {
 pub fn is_tab(key: &KeyEvent) -> bool {
     key.code == KeyCode::Tab && key.modifiers == KeyModifiers::NONE
 }
-
-#[allow(dead_code)]
-pub fn is_backtab(key: &KeyEvent) -> bool {
-    key.code == KeyCode::BackTab
-}
