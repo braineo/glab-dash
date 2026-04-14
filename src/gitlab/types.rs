@@ -12,14 +12,6 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Label {
-    pub id: u64,
-    pub name: String,
-    #[serde(default)]
-    pub color: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Milestone {
     pub id: u64,
     pub title: String,
@@ -165,12 +157,6 @@ pub struct ProjectLabel {
     pub name: String,
     #[serde(default)]
     pub color: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MergeRequestApprovals {
-    #[serde(default)]
-    pub approved_by: Vec<ApprovalUser>,
 }
 
 /// A work item status from GitLab's custom status system.
