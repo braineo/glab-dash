@@ -2,8 +2,7 @@
 
 use crate::cmd::Cmd;
 use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest, User};
-use crate::ui::components::{chord_popup, label_editor, picker};
-use crate::ui::views::planning;
+use crate::ui::components::{chord_popup, picker};
 
 use super::{
     App, ChordContext, ConfirmAction, FocusedItem, Overlay, PickerContext, View,
@@ -11,58 +10,6 @@ use super::{
 };
 
 impl App {
-    pub(super) fn action_open_browser(&self) {
-        let url = self
-            .find_focused_issue()
-            .map(|i| i.issue.web_url.as_str())
-            .or_else(|| self.find_focused_mr().map(|m| m.mr.web_url.as_str()));
-        if let Some(url) = url {
-            let _ = open::that_detached(url);
-        }
-    }
-
-    pub(super) fn action_edit_labels(&mut self) {
-        let current = self
-            .find_focused_issue()
-            .map(|i| i.issue.labels.clone())
-            .or_else(|| self.find_focused_mr().map(|m| m.mr.labels.clone()));
-        let Some(current) = current else { return };
-        let label_names: Vec<String> = self.data.labels.iter().map(|l| l.name.clone()).collect();
-        let issue_labels: Vec<Vec<String>> =
-            self.data.issues.iter().map(|i| i.issue.labels.clone()).collect();
-        self.ui.label_editor_state = Some(label_editor::LabelEditorState::new(
-            label_names,
-            &current,
-            &self.data.label_usage,
-            &issue_labels,
-            20,
-        ));
-        self.ui.overlay = Overlay::LabelEditor;
-    }
-
-    pub(super) fn action_edit_assignee(&mut self) {
-        let members = self.picker_members();
-        let is_detail = matches!(self.ui.view, View::IssueDetail | View::MrDetail);
-        if is_detail {
-            self.ui.picker_state = Some(picker::PickerState::new("Assignee", members, false));
-            self.ui.overlay = Overlay::Picker(PickerContext::Assignee);
-        } else {
-            self.ui.chord_state = Some(chord_popup::ChordState::new_for_names(
-                "Set Assignee",
-                members,
-            ));
-            self.ui.overlay = Overlay::Chord(ChordContext::Assignee);
-        }
-    }
-
-    pub(super) fn action_open_comment(&mut self) {
-        if self.ui.focused.is_some() {
-            self.ui.comment_input = crate::ui::components::input::CommentInput::default();
-            self.ui.reply_discussion_id = None;
-            self.ui.overlay = Overlay::CommentInput;
-        }
-    }
-
     pub(super) fn action_reply_thread(&mut self) {
         let infos = match self.ui.view {
             View::IssueDetail => self.ui.views.issue_detail.thread_picker_items(),
@@ -76,34 +23,6 @@ impl App {
                     .with_subtitles(subtitles),
             );
             self.ui.overlay = Overlay::Picker(PickerContext::ReplyThread(infos));
-        }
-    }
-
-    /// `s` key — open full status picker/chord for the focused issue.
-    pub(super) fn do_set_status(&mut self) {
-        if let Some(FocusedItem::Issue {
-            project, id, iid, ..
-        }) = self.ui.focused.clone()
-        {
-            self.fetch_statuses_and_show_chord(&project, id, iid, false);
-        }
-    }
-
-    /// `x` key — close/reopen the focused item.
-    /// Issues: chord picker filtered to close-category statuses (e.g. Done, Won't Do).
-    /// Falls back to simple confirm if no custom statuses exist.
-    /// MRs: simple close confirm.
-    pub(super) fn do_toggle_state(&mut self) {
-        match self.ui.focused.clone() {
-            Some(FocusedItem::Issue {
-                project, id, iid, ..
-            }) => {
-                self.fetch_statuses_and_show_chord(&project, id, iid, true);
-            }
-            Some(FocusedItem::Mr { project, iid, .. }) => {
-                self.ui.overlay = Overlay::Confirm(ConfirmAction::CloseMr(project, iid));
-            }
-            None => {}
         }
     }
 
@@ -451,28 +370,6 @@ impl App {
         self.data.labels.iter().find(|l| l.name == name).map(|l| l.id)
     }
 
-    /// Look up the focused issue by ID.  Searches both `self.data.issues` and
-    /// `self.data.shadow_work_cache` (for health-panel items).
-    pub(super) fn find_focused_issue(&self) -> Option<&TrackedIssue> {
-        let FocusedItem::Issue { id, .. } = self.ui.focused.as_ref()? else {
-            return None;
-        };
-        self.data.issues
-            .iter()
-            .find(|i| i.issue.id == *id)
-            .or_else(|| self.data.shadow_work_cache.iter().find(|i| i.issue.id == *id))
-    }
-
-    /// Look up the focused MR by (project, iid).
-    pub(super) fn find_focused_mr(&self) -> Option<&TrackedMergeRequest> {
-        let FocusedItem::Mr { project, iid } = self.ui.focused.as_ref()? else {
-            return None;
-        };
-        self.data.mrs
-            .iter()
-            .find(|m| m.mr.iid == *iid && m.project_path == *project)
-    }
-
     pub(super) fn current_detail_issue(&self) -> Option<&TrackedIssue> {
         // The detail view shows the issue that was selected when we opened it
         self.ui.views.issue_list.selected_issue(&self.data.issues)
@@ -689,31 +586,6 @@ impl App {
             ConfirmAction::QuitApp => unreachable!(),
         };
         self.ui.pending_cmds.push(spawn_cmd);
-    }
-
-    pub(super) fn show_iteration_chord(&mut self) {
-        let Some(FocusedItem::Issue { id, .. }) = &self.ui.focused else {
-            return;
-        };
-        let Some(issue_idx) = self.data.issues.iter().position(|i| i.issue.id == *id) else {
-            return;
-        };
-
-        // Build choices: prev / current / next / remove
-        let mut labels = Vec::new();
-        if let Some(iter) = &self.ui.views.planning.prev_iteration {
-            labels.push(format!("◁ {}", planning::iteration_label(iter)));
-        }
-        if let Some(iter) = &self.ui.views.planning.current_iteration {
-            labels.push(format!("● {}", planning::iteration_label(iter)));
-        }
-        if let Some(iter) = &self.ui.views.planning.next_iteration {
-            labels.push(format!("▷ {}", planning::iteration_label(iter)));
-        }
-        labels.push("⊘ Remove iteration".to_string());
-
-        self.ui.chord_state = Some(chord_popup::ChordState::new("Move to iteration", labels));
-        self.ui.overlay = Overlay::Chord(ChordContext::Iteration(issue_idx));
     }
 
     pub(super) fn apply_iteration_move(&mut self, issue_idx: usize, choice: &str) {

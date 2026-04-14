@@ -3,7 +3,9 @@ mod async_msg;
 mod execute;
 mod fetch;
 mod filter;
+mod issue_actions;
 mod keys;
+mod mr_actions;
 mod overlay;
 mod render;
 
