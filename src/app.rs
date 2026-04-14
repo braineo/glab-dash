@@ -21,7 +21,7 @@ use crate::ui::components::{
     chord_popup, confirm_dialog, error_popup, help, input, label_editor, picker,
 };
 use crate::ui::keys;
-use crate::ui::views::list_model::UserFilter;
+use crate::ui::views::list_model::{ListNav, UserFilter};
 use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
 };
@@ -1729,10 +1729,10 @@ impl App {
             // === List / detail navigation ===
             KeyAction::MoveDown => self.nav_down(),
             KeyAction::MoveUp => self.nav_up(),
-            KeyAction::Top => self.nav_top(),
-            KeyAction::Bottom => self.nav_bottom(),
-            KeyAction::PageDown => self.nav_page_down(),
-            KeyAction::PageUp => self.nav_page_up(),
+            KeyAction::Top => self.nav(|l| l.select_first()),
+            KeyAction::Bottom => self.nav(|l| l.select_last()),
+            KeyAction::PageDown => self.nav(|l| l.page_down()),
+            KeyAction::PageUp => self.nav(|l| l.page_up()),
             KeyAction::OpenDetail => self.action_open_detail(),
 
             // === Search & Filter ===
@@ -1824,48 +1824,49 @@ impl App {
         self.dirty.selection = true;
     }
 
+    /// Return the active list for the current view, or `None` for detail views.
+    fn active_list_nav(&mut self) -> Option<&mut dyn ListNav> {
+        match self.view {
+            View::IssueList => Some(&mut self.issue_list_state.list),
+            View::MrList => Some(&mut self.mr_list_state.list),
+            View::Planning => {
+                let col = self.planning_state.focused_column;
+                Some(&mut self.planning_state.columns[col].list)
+            }
+            View::Dashboard if self.iteration_board_state.health_focused => self
+                .iteration_health
+                .as_mut()
+                .map(|h| h.active_list_mut() as &mut dyn ListNav),
+            View::Dashboard => {
+                let col = self.iteration_board_state.focused_column;
+                self.iteration_board_state
+                    .columns
+                    .get_mut(col)
+                    .map(|c| &mut c.list as &mut dyn ListNav)
+            }
+            View::IssueDetail | View::MrDetail => None,
+        }
+    }
+
+    /// Unified list navigation.  Detail views scroll; list views dispatch
+    /// through `active_list_nav` so the view-match lives in one place.
+    fn nav(&mut self, f: impl FnOnce(&mut dyn ListNav) -> bool) {
+        if let Some(list) = self.active_list_nav() {
+            if f(list) {
+                self.dirty.selection = true;
+            } else {
+                self.needs_redraw = false;
+            }
+        }
+    }
+
     fn nav_down(&mut self) {
         match self.view {
             View::IssueDetail => self.issue_detail_state.scroll_down(),
             View::MrDetail => self.mr_detail_state.scroll_down(),
-            View::IssueList => {
-                if !self.issue_list_state.list.select_next() {
-                    self.needs_redraw = false;
-                    return;
-                }
-            }
-            View::MrList => {
-                if !self.mr_list_state.list.select_next() {
-                    self.needs_redraw = false;
-                    return;
-                }
-            }
-            View::Planning => {
-                let col = self.planning_state.focused_column;
-                if !self.planning_state.columns[col].list.select_next() {
-                    self.needs_redraw = false;
-                    return;
-                }
-            }
-            View::Dashboard if self.iteration_board_state.health_focused => {
-                if let Some(ref mut health) = self.iteration_health
-                    && !health.active_list_mut().select_next()
-                {
-                    self.needs_redraw = false;
-                    return;
-                }
-            }
-            View::Dashboard => {
-                let col = self.iteration_board_state.focused_column;
-                let moved = self
-                    .iteration_board_state
-                    .columns
-                    .get_mut(col)
-                    .is_some_and(|c| c.list.select_next());
-                if !moved {
-                    self.needs_redraw = false;
-                    return;
-                }
+            _ => {
+                self.nav(|l| l.select_next());
+                return;
             }
         }
         self.dirty.selection = true;
@@ -1875,159 +1876,12 @@ impl App {
         match self.view {
             View::IssueDetail => self.issue_detail_state.scroll_up(),
             View::MrDetail => self.mr_detail_state.scroll_up(),
-            View::IssueList => {
-                if !self.issue_list_state.list.select_prev() {
-                    self.needs_redraw = false;
-                    return;
-                }
-            }
-            View::MrList => {
-                if !self.mr_list_state.list.select_prev() {
-                    self.needs_redraw = false;
-                    return;
-                }
-            }
-            View::Planning => {
-                let col = self.planning_state.focused_column;
-                if !self.planning_state.columns[col].list.select_prev() {
-                    self.needs_redraw = false;
-                    return;
-                }
-            }
-            View::Dashboard if self.iteration_board_state.health_focused => {
-                if let Some(ref mut health) = self.iteration_health
-                    && !health.active_list_mut().select_prev()
-                {
-                    self.needs_redraw = false;
-                    return;
-                }
-            }
-            View::Dashboard => {
-                let col = self.iteration_board_state.focused_column;
-                let moved = self
-                    .iteration_board_state
-                    .columns
-                    .get_mut(col)
-                    .is_some_and(|c| c.list.select_prev());
-                if !moved {
-                    self.needs_redraw = false;
-                    return;
-                }
+            _ => {
+                self.nav(|l| l.select_prev());
+                return;
             }
         }
         self.dirty.selection = true;
-    }
-
-    fn nav_top(&mut self) {
-        let moved = match self.view {
-            View::IssueList => self.issue_list_state.list.select_first(),
-            View::MrList => self.mr_list_state.list.select_first(),
-            View::Planning => {
-                let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.select_first()
-            }
-            View::Dashboard if self.iteration_board_state.health_focused => self
-                .iteration_health
-                .as_mut()
-                .is_some_and(|h| h.active_list_mut().select_first()),
-            View::Dashboard => {
-                let col = self.iteration_board_state.focused_column;
-                self.iteration_board_state
-                    .columns
-                    .get_mut(col)
-                    .is_some_and(|c| c.list.select_first())
-            }
-            _ => return,
-        };
-        if moved {
-            self.dirty.selection = true;
-        } else {
-            self.needs_redraw = false;
-        }
-    }
-
-    fn nav_bottom(&mut self) {
-        let moved = match self.view {
-            View::IssueList => self.issue_list_state.list.select_last(),
-            View::MrList => self.mr_list_state.list.select_last(),
-            View::Planning => {
-                let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.select_last()
-            }
-            View::Dashboard if self.iteration_board_state.health_focused => self
-                .iteration_health
-                .as_mut()
-                .is_some_and(|h| h.active_list_mut().select_last()),
-            View::Dashboard => {
-                let col = self.iteration_board_state.focused_column;
-                self.iteration_board_state
-                    .columns
-                    .get_mut(col)
-                    .is_some_and(|c| c.list.select_last())
-            }
-            _ => return,
-        };
-        if moved {
-            self.dirty.selection = true;
-        } else {
-            self.needs_redraw = false;
-        }
-    }
-
-    fn nav_page_down(&mut self) {
-        let moved = match self.view {
-            View::IssueList => self.issue_list_state.list.page_down(),
-            View::MrList => self.mr_list_state.list.page_down(),
-            View::Planning => {
-                let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.page_down()
-            }
-            View::Dashboard if self.iteration_board_state.health_focused => self
-                .iteration_health
-                .as_mut()
-                .is_some_and(|h| h.active_list_mut().page_down()),
-            View::Dashboard => {
-                let col = self.iteration_board_state.focused_column;
-                self.iteration_board_state
-                    .columns
-                    .get_mut(col)
-                    .is_some_and(|c| c.list.page_down())
-            }
-            _ => return,
-        };
-        if moved {
-            self.dirty.selection = true;
-        } else {
-            self.needs_redraw = false;
-        }
-    }
-
-    fn nav_page_up(&mut self) {
-        let moved = match self.view {
-            View::IssueList => self.issue_list_state.list.page_up(),
-            View::MrList => self.mr_list_state.list.page_up(),
-            View::Planning => {
-                let col = self.planning_state.focused_column;
-                self.planning_state.columns[col].list.page_up()
-            }
-            View::Dashboard if self.iteration_board_state.health_focused => self
-                .iteration_health
-                .as_mut()
-                .is_some_and(|h| h.active_list_mut().page_up()),
-            View::Dashboard => {
-                let col = self.iteration_board_state.focused_column;
-                self.iteration_board_state
-                    .columns
-                    .get_mut(col)
-                    .is_some_and(|c| c.list.page_up())
-            }
-            _ => return,
-        };
-        if moved {
-            self.dirty.selection = true;
-        } else {
-            self.needs_redraw = false;
-        }
     }
 
     /// Ensure `issue_list_state` points at the issue identified by (project, iid)
