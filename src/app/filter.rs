@@ -347,7 +347,7 @@ impl App {
                 self.set_issue_status(&project, issue_id, iid, value);
             }
             Overlay::Chord(ChordContext::Assignee) => {
-                self.update_assignee(value);
+                self.dispatch_update_assignee(value);
             }
             Overlay::Chord(ChordContext::Iteration(issue_idx)) => {
                 self.apply_iteration_move(issue_idx, value);
@@ -377,7 +377,7 @@ impl App {
         match context {
             Overlay::Picker(super::PickerContext::Assignee) => {
                 if let Some(username) = values.first() {
-                    self.update_assignee(username);
+                    self.dispatch_update_assignee(username);
                 }
             }
             Overlay::Picker(super::PickerContext::Team) => {

@@ -3,7 +3,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::cmd::EventResult;
-use crate::gitlab::types::TrackedMergeRequest;
+use crate::gitlab::types::{TrackedMergeRequest, User};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
 
@@ -79,5 +79,85 @@ impl TrackedMergeRequest {
             _ => return EventResult::Bubble,
         }
         EventResult::Consumed
+    }
+
+    // ── Mutations (called from overlay completion handlers) ──────────
+
+    /// Update labels via REST API.
+    pub fn update_labels(&mut self, labels: &[String], ctx: &AppCtx, ui: &mut UiState) {
+        self.mr.labels = labels.to_vec();
+        let project = self.project_path.clone();
+        let iid = self.mr.iid;
+        let payload = serde_json::json!({"labels": labels.join(",")});
+        let client = ctx.client.clone();
+        let tx = ctx.async_tx.clone();
+        tokio::spawn(async move {
+            let result = client.update_mr(&project, iid, payload).await;
+            let _ = tx.send(super::AsyncMsg::MrUpdated(result, project));
+        });
+        ui.dirty.mrs = true;
+    }
+
+    /// Update assignee via REST API.
+    pub fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
+        let placeholder = User {
+            id: 0,
+            username: username.to_string(),
+            name: username.to_string(),
+            avatar_url: None,
+            web_url: String::new(),
+        };
+        self.mr.assignees = vec![placeholder];
+
+        let project = self.project_path.clone();
+        let iid = self.mr.iid;
+        let client = ctx.client.clone();
+        let tx = ctx.async_tx.clone();
+        let username = username.to_string();
+        tokio::spawn(async move {
+            let users = client.search_users(&username).await;
+            match users {
+                Ok(users) => {
+                    if let Some(user) = users.first() {
+                        let payload = serde_json::json!({"assignee_ids": [user.id]});
+                        let result = client.update_mr(&project, iid, payload).await;
+                        let _ = tx.send(super::AsyncMsg::MrUpdated(result, project));
+                    } else {
+                        let _ = tx.send(super::AsyncMsg::ActionDone(Err(anyhow::anyhow!(
+                            "User '{username}' not found"
+                        ))));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
+                }
+            }
+        });
+        ui.dirty.mrs = true;
+    }
+
+    /// Submit a comment or reply.
+    pub fn submit_comment(&self, body: &str, reply_discussion_id: Option<String>, ctx: &AppCtx, ui: &mut UiState) {
+        let client = ctx.client.clone();
+        let tx = ctx.async_tx.clone();
+        let body = body.to_string();
+        let project = self.project_path.clone();
+        let iid = self.mr.iid;
+
+        ui.loading = true;
+        tokio::spawn(async move {
+            let create_result = match &reply_discussion_id {
+                Some(disc_id) => {
+                    client.reply_to_mr_discussion(&project, iid, disc_id, &body).await
+                }
+                None => client.create_mr_note(&project, iid, &body).await,
+            };
+            if let Err(e) = create_result {
+                let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
+                return;
+            }
+            let discussions = client.list_mr_discussions(&project, iid).await;
+            let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
+        });
     }
 }

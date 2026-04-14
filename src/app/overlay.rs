@@ -132,7 +132,7 @@ impl App {
                         let body = self.ui.comment_input.text();
                         let body = body.trim().to_string();
                         if !body.is_empty() {
-                            self.submit_comment(&body);
+                            self.dispatch_submit_comment(&body);
                         }
                         self.ui.autocomplete.dismiss();
                         self.ui.overlay = Overlay::None;
