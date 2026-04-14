@@ -1612,18 +1612,19 @@ impl App {
             ),
             View::IssueDetail => self.views.issue_detail.handle_key(key),
             View::MrDetail => self.views.mr_detail.handle_key(key),
-            // Dashboard + Planning still use the old path
-            View::Dashboard | View::Planning => {
-                if self.active_filter().is_searching() {
-                    self.handle_fuzzy_text(*key);
-                    return EventResult::Consumed;
-                }
-                if self.active_filter().bar_focused {
-                    self.handle_filter_bar_key(*key);
-                    return EventResult::Consumed;
-                }
-                EventResult::Bubble
-            }
+            View::Dashboard => self.views.board.handle_key(
+                key,
+                self.views.health.as_mut(),
+                &mut self.dirty,
+                &mut self.pending_cmds,
+                &mut self.needs_redraw,
+            ),
+            View::Planning => self.views.planning.handle_key(
+                key,
+                &mut self.dirty,
+                &mut self.pending_cmds,
+                &mut self.needs_redraw,
+            ),
         }
     }
 
@@ -1789,21 +1790,6 @@ impl App {
                 EventResult::Consumed
             }
         }
-    }
-
-    /// Centralized fuzzy search handler.
-    fn handle_fuzzy_text(&mut self, key: KeyEvent) {
-        let is_issue_or_mr = matches!(self.view, View::IssueList | View::MrList);
-        let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
-
-        let needs_refilter = self.active_filter_mut().handle_fuzzy_input(&key);
-        if needs_refilter == Some(true) {
-            self.dirty.view_state = true;
-        }
-        if is_issue_or_mr && is_exit {
-            self.pending_cmds.push(Cmd::PersistViewState);
-        }
-        self.dirty.selection = true;
     }
 
     // ── Action execution ─────────────────────────────────────────────
@@ -2540,35 +2526,6 @@ impl App {
             old_iteration,
         });
         self.pending_cmds.push(Cmd::FetchHealthData);
-    }
-
-    fn handle_filter_bar_key(&mut self, key: KeyEvent) {
-        if keys::is_back(&key) || keys::is_tab(&key) {
-            self.active_filter_mut().bar_focused = false;
-            return;
-        }
-        if keys::is_left(&key) {
-            let f = self.active_filter_mut();
-            f.bar_selected = f.bar_selected.saturating_sub(1);
-        } else if keys::is_right(&key) {
-            let f = self.active_filter_mut();
-            if f.bar_selected + 1 < f.conditions.len() {
-                f.bar_selected += 1;
-            }
-        } else if key.code == KeyCode::Char('x') || key.code == KeyCode::Char('d') {
-            let f = self.active_filter_mut();
-            if f.bar_selected < f.conditions.len() {
-                f.conditions.remove(f.bar_selected);
-                if f.bar_selected > 0 && f.bar_selected >= f.conditions.len() {
-                    f.bar_selected = f.conditions.len().saturating_sub(1);
-                }
-                if f.conditions.is_empty() {
-                    f.bar_focused = false;
-                }
-                self.dirty.view_state = true;
-                self.pending_cmds.push(Cmd::PersistViewState);
-            }
-        }
     }
 
     fn execute_confirm(&mut self, action: ConfirmAction) {
