@@ -1597,21 +1597,80 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         self.needs_redraw = true;
 
-        // 1. Overlay gets first shot (innermost focus)
+        // 1. Overlay (innermost)
         let overlay_result = self.dispatch_overlay(&key);
         if overlay_result.handled() {
             return matches!(overlay_result, EventResult::Quit);
         }
 
-        // 2. View-level dispatch (view handles its own nav, inline modes, etc.)
+        // 2. View (nav, inline modes, view-specific bindings)
         let view_result = self.dispatch_view(&key);
         if view_result.handled() {
             return matches!(view_result, EventResult::Quit);
         }
 
-        // 3. Bubbled — fall back to binding registry (global + remaining view bindings)
-        if let Some(action) = keybindings::match_binding(self.view, &key) {
+        // 3. Focused item (issue/MR actions: s/l/a/c/x/i/o/A/M)
+        let item_result = self.dispatch_focused_item(&key);
+        if item_result.handled() {
+            return matches!(item_result, EventResult::Quit);
+        }
+
+        // 4. Global (navigation, help, quit, refresh, team switch)
+        self.dispatch_global(&key)
+    }
+
+    /// Focused item handles item-specific actions (s/l/a/c/x/i/o for issues,
+    /// plus A/M for MRs).  No focused item → everything bubbles.
+    fn dispatch_focused_item(&mut self, key: &KeyEvent) -> EventResult {
+        let bindings: &[keybindings::Binding] = match &self.focused {
+            Some(FocusedItem::Issue { .. }) => keybindings::ISSUE_ACTION_BINDINGS,
+            Some(FocusedItem::Mr { .. }) => keybindings::MR_ACTION_BINDINGS,
+            None => return EventResult::Bubble,
+        };
+        let Some(action) = keybindings::match_group(bindings, key) else {
+            // Also check for `o` (OpenBrowser) which is in LIST_NAV_BINDINGS
+            if let Some(KeyAction::OpenBrowser) = keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key) {
+                self.action_open_browser();
+                return EventResult::Consumed;
+            }
+            return EventResult::Bubble;
+        };
+        self.execute_action(action);
+        EventResult::Consumed
+    }
+
+    /// Global bindings: navigation (1-4), quit (q/Esc), help (?), team (t),
+    /// refresh (r/R), error (E).
+    fn dispatch_global(&mut self, key: &KeyEvent) -> bool {
+        // Global bindings
+        if let Some(action) = keybindings::match_group(keybindings::GLOBAL_BINDINGS, key) {
             return self.execute_action(action);
+        }
+        // Global navigation (1-4)
+        if let Some(action) = keybindings::match_group(keybindings::GLOBAL_NAV_BINDINGS, key) {
+            return self.execute_action(action);
+        }
+        // Refresh (r/R) from LIST_NAV_BINDINGS — global, not item-specific
+        if let Some(action @ (KeyAction::Refresh | KeyAction::FullRefresh)) =
+            keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
+        {
+            return self.execute_action(action);
+        }
+        // Filter/sort (f/F/S/Tab) — global overlay actions
+        if let Some(action) = keybindings::match_group(keybindings::FILTER_BINDINGS, key) {
+            return self.execute_action(action);
+        }
+        // Open detail (Enter) from LIST_NAV_BINDINGS
+        if let Some(KeyAction::OpenDetail) =
+            keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
+        {
+            return self.execute_action(KeyAction::OpenDetail);
+        }
+        // ReplyThread from DETAIL_NAV_BINDINGS
+        if let Some(KeyAction::ReplyThread) =
+            keybindings::match_group(keybindings::DETAIL_NAV_BINDINGS, key)
+        {
+            return self.execute_action(KeyAction::ReplyThread);
         }
         false
     }
