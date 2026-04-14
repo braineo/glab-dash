@@ -7,6 +7,21 @@ use crate::filter::FilterCondition;
 use crate::sort::SortSpec;
 use crate::ui::styles;
 
+// ── List navigation trait ──
+
+/// Type-erased navigation for any `ItemList<T>`.
+///
+/// All six methods return `true` when the selection actually moved,
+/// allowing callers to skip redraws on no-ops.
+pub trait ListNav {
+    fn select_next(&mut self) -> bool;
+    fn select_prev(&mut self) -> bool;
+    fn select_first(&mut self) -> bool;
+    fn select_last(&mut self) -> bool;
+    fn page_down(&mut self) -> bool;
+    fn page_up(&mut self) -> bool;
+}
+
 // ── ItemList ──
 
 /// A list of items with table selection state and indices into a source slice.
@@ -119,6 +134,27 @@ impl<T> ItemList<T> {
         let next = current.saturating_sub(20);
         self.table_state.select(Some(next));
         next != current
+    }
+}
+
+impl<T> ListNav for ItemList<T> {
+    fn select_next(&mut self) -> bool {
+        self.select_next()
+    }
+    fn select_prev(&mut self) -> bool {
+        self.select_prev()
+    }
+    fn select_first(&mut self) -> bool {
+        self.select_first()
+    }
+    fn select_last(&mut self) -> bool {
+        self.select_last()
+    }
+    fn page_down(&mut self) -> bool {
+        self.page_down()
+    }
+    fn page_up(&mut self) -> bool {
+        self.page_up()
     }
 }
 
