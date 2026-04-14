@@ -67,7 +67,7 @@ impl App {
         if let Some(action) = keybindings::match_group(keybindings::GLOBAL_BINDINGS, key) {
             self.execute_global_action(action);
             return matches!(action, KeyAction::Back) && self.ui.view_stack.is_empty()
-                && matches!(self.ui.overlay, Overlay::Confirm(_));
+                && matches!(self.ui.overlay, Overlay::Confirm);
         }
         // Global navigation (1-4)
         if let Some(action) = keybindings::match_group(keybindings::GLOBAL_NAV_BINDINGS, key) {
@@ -139,7 +139,10 @@ impl App {
                     self.ui.view = prev;
                     self.ui.dirty.selection = true;
                 } else {
-                    self.ui.overlay = Overlay::Confirm(super::ConfirmAction::QuitApp);
+                    self.ui.confirm_title = "Quit".to_string();
+                    self.ui.confirm_message = "Quit glab-dash?".to_string();
+                    self.ui.confirm_on_accept = None; // None = quit
+                    self.ui.overlay = Overlay::Confirm;
                 }
             }
             KeyAction::ToggleHelp => {
@@ -154,7 +157,19 @@ impl App {
                 let mut names: Vec<String> = vec!["All".to_string()];
                 names.extend(self.ctx.config.teams.iter().map(|t| t.name.clone()));
                 self.ui.picker_state = Some(crate::ui::components::picker::PickerState::new("Switch Team", names, false));
-                self.ui.overlay = Overlay::Picker(super::PickerContext::Team);
+                self.ui.picker_on_complete = Some(Box::new(|values, app| {
+                    if let Some(name) = values.first() {
+                        if name == "All" {
+                            app.ui.active_team = None;
+                        } else {
+                            app.ui.active_team = app.ctx.config.teams.iter().position(|t| t.name == *name);
+                        }
+                        app.ui.dirty.issues = true;
+                        app.ui.dirty.mrs = true;
+                        app.ui.dirty.selection = true;
+                    }
+                }));
+                self.ui.overlay = Overlay::Picker;
             }
             KeyAction::NavigateTo(target) if self.ui.view != target => {
                 self.navigate_to_view(target);

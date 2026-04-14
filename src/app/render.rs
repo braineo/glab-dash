@@ -10,7 +10,7 @@ use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
 };
 
-use super::{App, ConfirmAction, Overlay, View};
+use super::{App, Overlay, View};
 
 impl App {
     pub fn render(&mut self, frame: &mut Frame) {
@@ -142,24 +142,10 @@ impl App {
             Overlay::FilterEditor => {
                 filter_editor::render(frame, area, &mut self.ui.filter_editor_state, &ctx);
             }
-            Overlay::Confirm(action) => {
-                let (title, msg) = match action {
-                    ConfirmAction::CloseIssue(_, iid) => {
-                        ("Close Issue", format!("Close issue #{iid}?"))
-                    }
-                    ConfirmAction::ReopenIssue(_, iid) => {
-                        ("Reopen Issue", format!("Reopen issue #{iid}?"))
-                    }
-                    ConfirmAction::CloseMr(_, iid) => ("Close MR", format!("Close MR !{iid}?")),
-                    ConfirmAction::ApproveMr(_, iid) => {
-                        ("Approve MR", format!("Approve MR !{iid}?"))
-                    }
-                    ConfirmAction::MergeMr(_, iid) => ("Merge MR", format!("Merge MR !{iid}?")),
-                    ConfirmAction::QuitApp => ("Quit", "Quit glab-dash?".to_string()),
-                };
-                confirm_dialog::render(frame, area, title, &msg);
+            Overlay::Confirm => {
+                confirm_dialog::render(frame, area, &self.ui.confirm_title, &self.ui.confirm_message);
             }
-            Overlay::Picker(_) => {
+            Overlay::Picker => {
                 if let Some(ref mut ps) = self.ui.picker_state {
                     picker::render(frame, area, ps, &ctx);
                 }
@@ -175,7 +161,7 @@ impl App {
                 crate::ui::components::input::render(frame, popup, &mut self.ui.comment_input, title);
                 crate::ui::components::autocomplete::render(frame, popup, &self.ui.autocomplete);
             }
-            Overlay::Chord(_) => {
+            Overlay::Chord => {
                 if let Some(ref cs) = self.ui.chord_state {
                     chord_popup::render(frame, area, cs);
                 }

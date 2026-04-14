@@ -6,12 +6,12 @@
 
 use crossterm::event::KeyEvent;
 
-use crate::cmd::EventResult;
+use crate::cmd::{Cmd, EventResult};
 use crate::gitlab::types::{ProjectLabel, TrackedIssue, User};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
 
-use super::{AppCtx, AppData, ChordContext, ConfirmAction, Overlay, UiState, View};
+use super::{AppCtx, AppData, Overlay, UiState, View};
 
 impl TrackedIssue {
     pub fn handle_action_key(
@@ -75,11 +75,19 @@ impl TrackedIssue {
                 if is_detail {
                     ui.picker_state =
                         Some(crate::ui::components::picker::PickerState::new("Assignee", members, false));
-                    ui.overlay = Overlay::Picker(super::PickerContext::Assignee);
+                    ui.picker_on_complete = Some(Box::new(|values, app| {
+                        if let Some(username) = values.first() {
+                            app.dispatch_update_assignee(username);
+                        }
+                    }));
+                    ui.overlay = Overlay::Picker;
                 } else {
                     ui.chord_state =
                         Some(chord_popup::ChordState::new_for_names("Set Assignee", members));
-                    ui.overlay = Overlay::Chord(ChordContext::Assignee);
+                    ui.chord_on_complete = Some(Box::new(|value, app| {
+                        app.dispatch_update_assignee(&value);
+                    }));
+                    ui.overlay = Overlay::Chord;
                 }
             }
             KeyAction::Comment => {
@@ -157,6 +165,8 @@ impl TrackedIssue {
         }
         let all_names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
 
+        let project_owned = project.to_string();
+
         if close_only {
             let is_close_category = |s: &crate::gitlab::types::WorkItemStatus| {
                 s.category
@@ -177,12 +187,7 @@ impl TrackedIssue {
                     .iter()
                     .find(|i| i.issue.id == issue_id)
                     .map_or("opened", |i| i.issue.state.as_str());
-                let action = if item_state == "opened" {
-                    ConfirmAction::CloseIssue(issue_id, iid)
-                } else {
-                    ConfirmAction::ReopenIssue(issue_id, iid)
-                };
-                ui.overlay = Overlay::Confirm(action);
+                Self::show_close_reopen_confirm(issue_id, iid, item_state, ui);
                 return;
             }
 
@@ -215,7 +220,47 @@ impl TrackedIssue {
                     .with_kind(chord_popup::ChordKind::Status),
             );
         }
-        ui.overlay = Overlay::Chord(ChordContext::Status(project.to_string(), issue_id, iid));
+        ui.chord_on_complete = Some(Box::new(move |value, app| {
+            app.set_issue_status(&project_owned, issue_id, iid, &value);
+        }));
+        ui.overlay = Overlay::Chord;
+    }
+
+    /// Show a close/reopen confirm dialog for issues without custom statuses.
+    pub fn show_close_reopen_confirm(
+        issue_id: u64,
+        iid: u64,
+        item_state: &str,
+        ui: &mut UiState,
+    ) {
+        if item_state == "opened" {
+            ui.confirm_title = "Close Issue".to_string();
+            ui.confirm_message = format!("Close issue #{iid}?");
+            ui.confirm_on_accept = Some(Box::new(move |app| {
+                // Optimistic update
+                if let Some(pos) = app.data.issues.iter().position(|i| i.issue.id == issue_id) {
+                    app.data.issues[pos].issue.state = "closed".to_string();
+                    app.data.issues[pos].issue.updated_at = chrono::Utc::now();
+                    app.ui.dirty.issues = true;
+                    app.ui.pending_cmds.push(Cmd::PersistIssues);
+                }
+                app.ui.pending_cmds.push(Cmd::SpawnCloseIssue { issue_id });
+            }));
+        } else {
+            ui.confirm_title = "Reopen Issue".to_string();
+            ui.confirm_message = format!("Reopen issue #{iid}?");
+            ui.confirm_on_accept = Some(Box::new(move |app| {
+                // Optimistic update
+                if let Some(pos) = app.data.issues.iter().position(|i| i.issue.id == issue_id) {
+                    app.data.issues[pos].issue.state = "opened".to_string();
+                    app.data.issues[pos].issue.updated_at = chrono::Utc::now();
+                    app.ui.dirty.issues = true;
+                    app.ui.pending_cmds.push(Cmd::PersistIssues);
+                }
+                app.ui.pending_cmds.push(Cmd::SpawnReopenIssue { issue_id });
+            }));
+        }
+        ui.overlay = Overlay::Confirm;
     }
 
     /// Open the iteration move chord.
@@ -250,7 +295,10 @@ impl TrackedIssue {
             options,
             max_code_len,
         ));
-        ui.overlay = Overlay::Chord(ChordContext::Iteration(pos));
+        ui.chord_on_complete = Some(Box::new(move |value, app| {
+            app.apply_iteration_move(pos, &value);
+        }));
+        ui.overlay = Overlay::Chord;
     }
 
     // ── Mutations (called from overlay completion handlers) ──────────

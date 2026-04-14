@@ -3,7 +3,7 @@
 use crate::cmd::Cmd;
 use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
 
-use super::{App, AsyncMsg, ConfirmAction, FetchState, Overlay, View};
+use super::{App, AsyncMsg, FetchState, View};
 
 impl App {
     pub(super) fn handle_async_msg(&mut self, msg: AsyncMsg) {
@@ -147,13 +147,8 @@ impl App {
                                 .ui.views.issue_list
                                 .selected_issue(&self.data.issues)
                                 .or_else(|| self.current_detail_issue())
-                                .map_or("opened", |i| i.issue.state.as_str());
-                            let action = if item_state == "opened" {
-                                ConfirmAction::CloseIssue(issue_id, iid)
-                            } else {
-                                ConfirmAction::ReopenIssue(issue_id, iid)
-                            };
-                            self.ui.overlay = Overlay::Confirm(action);
+                                .map_or("opened".to_string(), |i| i.issue.state.clone());
+                            TrackedIssue::show_close_reopen_confirm(issue_id, iid, &item_state, &mut self.ui);
                         } else if !statuses.is_empty() {
                             self.data.work_item_statuses.insert(project.clone(), statuses);
                             self.ui.dirty.statuses = true;
