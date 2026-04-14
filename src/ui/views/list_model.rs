@@ -7,19 +7,46 @@ use crate::filter::FilterCondition;
 use crate::sort::SortSpec;
 use crate::ui::styles;
 
-// ── List navigation trait ──
+// ── ListCursor — non-generic borrowed handle for navigation ──
 
-/// Type-erased navigation for any `ItemList<T>`.
-///
-/// All six methods return `true` when the selection actually moved,
-/// allowing callers to skip redraws on no-ops.
-pub trait ListNav {
-    fn select_next(&mut self) -> bool;
-    fn select_prev(&mut self) -> bool;
-    fn select_first(&mut self) -> bool;
-    fn select_last(&mut self) -> bool;
-    fn page_down(&mut self) -> bool;
-    fn page_up(&mut self) -> bool;
+/// Which navigation operation to perform on a list.
+#[derive(Clone, Copy)]
+pub enum NavOp {
+    Next,
+    Prev,
+    First,
+    Last,
+    PageDown,
+    PageUp,
+}
+
+/// A borrowed cursor into any `ItemList<T>`, carrying only the two fields
+/// that navigation needs (`table_state` + length).  Because it is concrete
+/// (not generic over `T`), callers can obtain one from *any* list without
+/// dynamic dispatch.
+pub struct ListCursor<'a> {
+    table_state: &'a mut TableState,
+    len: usize,
+}
+
+impl ListCursor<'_> {
+    /// Apply a navigation operation.  Returns `true` if the selection moved.
+    pub fn apply(&mut self, op: NavOp) -> bool {
+        if self.len == 0 {
+            return false;
+        }
+        let cur = self.table_state.selected().unwrap_or(0);
+        let next = match op {
+            NavOp::Next => (cur + 1).min(self.len - 1),
+            NavOp::Prev => cur.saturating_sub(1),
+            NavOp::First => 0,
+            NavOp::Last => self.len - 1,
+            NavOp::PageDown => (cur + 20).min(self.len - 1),
+            NavOp::PageUp => cur.saturating_sub(20),
+        };
+        self.table_state.select(Some(next));
+        next != cur
+    }
 }
 
 // ── ItemList ──
@@ -43,6 +70,14 @@ impl<T> Default for ItemList<T> {
 }
 
 impl<T> ItemList<T> {
+    /// Borrow a non-generic cursor for navigation dispatch.
+    pub fn cursor(&mut self) -> ListCursor<'_> {
+        ListCursor {
+            table_state: &mut self.table_state,
+            len: self.indices.len(),
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.indices.len()
     }
@@ -69,93 +104,6 @@ impl<T> ItemList<T> {
         }
     }
 
-    /// Returns `true` if the selection actually changed.
-    pub fn select_next(&mut self) -> bool {
-        let len = self.indices.len();
-        if len == 0 {
-            return false;
-        }
-        let current = self.table_state.selected().unwrap_or(0);
-        let next = (current + 1).min(len - 1);
-        self.table_state.select(Some(next));
-        next != current
-    }
-
-    /// Returns `true` if the selection actually changed.
-    pub fn select_prev(&mut self) -> bool {
-        if self.indices.is_empty() {
-            return false;
-        }
-        let current = self.table_state.selected().unwrap_or(0);
-        let next = current.saturating_sub(1);
-        self.table_state.select(Some(next));
-        next != current
-    }
-
-    /// Returns `true` if the selection actually changed.
-    pub fn select_first(&mut self) -> bool {
-        if self.indices.is_empty() {
-            return false;
-        }
-        let changed = self.table_state.selected() != Some(0);
-        self.table_state.select(Some(0));
-        changed
-    }
-
-    /// Returns `true` if the selection actually changed.
-    pub fn select_last(&mut self) -> bool {
-        if self.indices.is_empty() {
-            return false;
-        }
-        let last = self.indices.len() - 1;
-        let changed = self.table_state.selected() != Some(last);
-        self.table_state.select(Some(last));
-        changed
-    }
-
-    /// Returns `true` if the selection actually changed.
-    pub fn page_down(&mut self) -> bool {
-        let len = self.indices.len();
-        if len == 0 {
-            return false;
-        }
-        let current = self.table_state.selected().unwrap_or(0);
-        let next = (current + 20).min(len - 1);
-        self.table_state.select(Some(next));
-        next != current
-    }
-
-    /// Returns `true` if the selection actually changed.
-    pub fn page_up(&mut self) -> bool {
-        if self.indices.is_empty() {
-            return false;
-        }
-        let current = self.table_state.selected().unwrap_or(0);
-        let next = current.saturating_sub(20);
-        self.table_state.select(Some(next));
-        next != current
-    }
-}
-
-impl<T> ListNav for ItemList<T> {
-    fn select_next(&mut self) -> bool {
-        self.select_next()
-    }
-    fn select_prev(&mut self) -> bool {
-        self.select_prev()
-    }
-    fn select_first(&mut self) -> bool {
-        self.select_first()
-    }
-    fn select_last(&mut self) -> bool {
-        self.select_last()
-    }
-    fn page_down(&mut self) -> bool {
-        self.page_down()
-    }
-    fn page_up(&mut self) -> bool {
-        self.page_up()
-    }
 }
 
 // ── UserFilter ──

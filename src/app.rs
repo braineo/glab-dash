@@ -21,7 +21,7 @@ use crate::ui::components::{
     chord_popup, confirm_dialog, error_popup, help, input, label_editor, picker,
 };
 use crate::ui::keys;
-use crate::ui::views::list_model::{ListNav, UserFilter};
+use crate::ui::views::list_model::{ListCursor, NavOp, UserFilter};
 use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
 };
@@ -1729,10 +1729,10 @@ impl App {
             // === List / detail navigation ===
             KeyAction::MoveDown => self.nav_down(),
             KeyAction::MoveUp => self.nav_up(),
-            KeyAction::Top => self.nav(|l| l.select_first()),
-            KeyAction::Bottom => self.nav(|l| l.select_last()),
-            KeyAction::PageDown => self.nav(|l| l.page_down()),
-            KeyAction::PageUp => self.nav(|l| l.page_up()),
+            KeyAction::Top => self.nav(NavOp::First),
+            KeyAction::Bottom => self.nav(NavOp::Last),
+            KeyAction::PageDown => self.nav(NavOp::PageDown),
+            KeyAction::PageUp => self.nav(NavOp::PageUp),
             KeyAction::OpenDetail => self.action_open_detail(),
 
             // === Search & Filter ===
@@ -1824,35 +1824,34 @@ impl App {
         self.dirty.selection = true;
     }
 
-    /// Return the active list for the current view, or `None` for detail views.
-    fn active_list_nav(&mut self) -> Option<&mut dyn ListNav> {
+    /// Return a non-generic cursor for the active list, or `None` for detail views.
+    fn active_list_cursor(&mut self) -> Option<ListCursor<'_>> {
         match self.view {
-            View::IssueList => Some(&mut self.issue_list_state.list),
-            View::MrList => Some(&mut self.mr_list_state.list),
+            View::IssueList => Some(self.issue_list_state.list.cursor()),
+            View::MrList => Some(self.mr_list_state.list.cursor()),
             View::Planning => {
                 let col = self.planning_state.focused_column;
-                Some(&mut self.planning_state.columns[col].list)
+                Some(self.planning_state.columns[col].list.cursor())
             }
-            View::Dashboard if self.iteration_board_state.health_focused => self
-                .iteration_health
-                .as_mut()
-                .map(|h| h.active_list_mut() as &mut dyn ListNav),
+            View::Dashboard if self.iteration_board_state.health_focused => {
+                self.iteration_health.as_mut().map(|h| h.active_list_mut().cursor())
+            }
             View::Dashboard => {
                 let col = self.iteration_board_state.focused_column;
                 self.iteration_board_state
                     .columns
                     .get_mut(col)
-                    .map(|c| &mut c.list as &mut dyn ListNav)
+                    .map(|c| c.list.cursor())
             }
             View::IssueDetail | View::MrDetail => None,
         }
     }
 
     /// Unified list navigation.  Detail views scroll; list views dispatch
-    /// through `active_list_nav` so the view-match lives in one place.
-    fn nav(&mut self, f: impl FnOnce(&mut dyn ListNav) -> bool) {
-        if let Some(list) = self.active_list_nav() {
-            if f(list) {
+    /// through `active_list_cursor` so the view-match lives in one place.
+    fn nav(&mut self, op: NavOp) {
+        if let Some(ref mut cursor) = self.active_list_cursor() {
+            if cursor.apply(op) {
                 self.dirty.selection = true;
             } else {
                 self.needs_redraw = false;
@@ -1865,7 +1864,7 @@ impl App {
             View::IssueDetail => self.issue_detail_state.scroll_down(),
             View::MrDetail => self.mr_detail_state.scroll_down(),
             _ => {
-                self.nav(|l| l.select_next());
+                self.nav(NavOp::Next);
                 return;
             }
         }
@@ -1877,7 +1876,7 @@ impl App {
             View::IssueDetail => self.issue_detail_state.scroll_up(),
             View::MrDetail => self.mr_detail_state.scroll_up(),
             _ => {
-                self.nav(|l| l.select_prev());
+                self.nav(NavOp::Prev);
                 return;
             }
         }
