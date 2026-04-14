@@ -7,7 +7,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::cmd::{Cmd, EventResult};
-use crate::gitlab::types::{ProjectLabel, TrackedIssue, User};
+use crate::gitlab::types::{Iteration, ProjectLabel, TrackedIssue, User};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
 
@@ -262,42 +262,47 @@ impl TrackedIssue {
 
     /// Open the iteration move chord.
     fn show_iteration_chord(issue_id: u64, data: &AppData, ui: &mut UiState) {
-        let Some(pos) = data.issues.iter().position(|i| i.issue.id == issue_id) else {
-            return;
-        };
-        let current_iter_id = data.issues[pos]
-            .issue
-            .iteration
-            .as_ref()
-            .map(|i| i.id.clone());
+        let current_pos = data.iterations.iter().position(|i| i.state == "current");
 
-        let mut options: Vec<(String, String)> = Vec::new();
-        options.push(("n".to_string(), "None (remove)".to_string()));
+        let mut display_opts: Vec<(String, String)> = Vec::new();
+        let mut action_map: Vec<(String, Option<Iteration>)> = Vec::new();
 
-        let mut code = b'a';
-        for iter in &data.iterations {
-            if Some(&iter.id) != current_iter_id.as_ref() {
-                let label = if iter.title.is_empty() {
-                    "Unnamed"
-                } else {
-                    &iter.title
-                };
-                options.push((String::from(code as char), label.to_string()));
-                code += 1;
-                if code > b'z' {
-                    break;
+        let prefixes = ["a", "s", "d"];
+
+        if let Some(pos) = current_pos {
+            for (i, prefix_char) in prefixes.iter().enumerate() {
+                if let Some(it) = data.iterations.get(pos + i) {
+                    let start = it.start_date.as_deref().unwrap_or("?");
+                    let end = it.due_date.as_deref().unwrap_or("?");
+                    let title = if it.title.is_empty() {
+                        format!("{start} \u{2192} {end}") // e.g. "2024-01-01 -> 2024-01-14"
+                    } else {
+                        format!("{} ({} \u{2192} {})", it.title, start, end)
+                    };
+
+                    let code = prefix_char.to_string();
+                    display_opts.push((code, title.clone()));
+                    action_map.push((title, Some(it.clone())));
                 }
             }
         }
 
-        let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
+        display_opts.push(("x".to_string(), "Remove".to_string()));
+        action_map.push(("Remove".to_string(), None));
+
+        let max_code_len = display_opts.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
         ui.chord_state = Some(chord_popup::ChordState::from_options(
             "Move to Iteration",
-            options,
+            display_opts,
             max_code_len,
         ));
+
         ui.chord_on_complete = Some(Box::new(move |value, app| {
-            app.apply_iteration_move(pos, &value);
+            let target = action_map
+                .into_iter()
+                .find(|(t, _)| t == &value)
+                .and_then(|(_, it)| it);
+            app.apply_iteration_move(issue_id, target.as_ref());
         }));
         ui.overlay = Overlay::Chord;
     }

@@ -226,26 +226,20 @@ impl App {
         self.ui.dirty.selection = true;
     }
 
-    pub(super) fn apply_iteration_move(&mut self, issue_idx: usize, choice: &str) {
-        let target = if choice.starts_with('\u{25C1}') {
-            self.ui.views.planning.prev_iteration.clone()
-        } else if choice.starts_with('\u{25CF}') {
-            self.ui.views.planning.current_iteration.clone()
-        } else if choice.starts_with('\u{25B7}') {
-            self.ui.views.planning.next_iteration.clone()
-        } else {
-            // Remove iteration
-            None
+    pub(super) fn apply_iteration_move(
+        &mut self,
+        issue_id: u64,
+        target: Option<&crate::gitlab::types::Iteration>,
+    ) {
+        let issue_idx = self.data.issues.iter().position(|i| i.issue.id == issue_id);
+        let Some(issue_idx) = issue_idx else {
+            return;
         };
 
-        let issue_id = self.data.issues[issue_idx].issue.id;
         let old_iteration = self.data.issues[issue_idx].issue.iteration.clone();
 
         // Optimistic update
-        self.data.issues[issue_idx]
-            .issue
-            .iteration
-            .clone_from(&target);
+        self.data.issues[issue_idx].issue.iteration = target.cloned();
         self.data.issues[issue_idx].issue.updated_at = chrono::Utc::now();
         self.ui.dirty.issues = true;
 
