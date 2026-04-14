@@ -122,7 +122,6 @@ impl<T> ItemList<T> {
             self.table_state.select(Some(self.indices.len() - 1));
         }
     }
-
 }
 
 // ── UserFilter ──

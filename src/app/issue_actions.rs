@@ -21,8 +21,7 @@ impl TrackedIssue {
         data: &AppData,
         ui: &mut UiState,
     ) -> EventResult {
-        let Some(action) = keybindings::match_group(keybindings::ISSUE_ACTION_BINDINGS, key)
-        else {
+        let Some(action) = keybindings::match_group(keybindings::ISSUE_ACTION_BINDINGS, key) else {
             if keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
                 == Some(KeyAction::OpenBrowser)
             {
@@ -56,8 +55,7 @@ impl TrackedIssue {
                 );
             }
             KeyAction::EditLabels => {
-                let label_names: Vec<String> =
-                    data.labels.iter().map(|l| l.name.clone()).collect();
+                let label_names: Vec<String> = data.labels.iter().map(|l| l.name.clone()).collect();
                 let issue_labels: Vec<Vec<String>> =
                     data.issues.iter().map(|i| i.issue.labels.clone()).collect();
                 ui.label_editor_state = Some(label_editor::LabelEditorState::new(
@@ -73,8 +71,9 @@ impl TrackedIssue {
                 let members = ctx.config.all_members();
                 let is_detail = matches!(ui.view, View::IssueDetail);
                 if is_detail {
-                    ui.picker_state =
-                        Some(crate::ui::components::picker::PickerState::new("Assignee", members, false));
+                    ui.picker_state = Some(crate::ui::components::picker::PickerState::new(
+                        "Assignee", members, false,
+                    ));
                     ui.picker_on_complete = Some(Box::new(|values, app| {
                         if let Some(username) = values.first() {
                             app.dispatch_update_assignee(username);
@@ -82,8 +81,10 @@ impl TrackedIssue {
                     }));
                     ui.overlay = Overlay::Picker;
                 } else {
-                    ui.chord_state =
-                        Some(chord_popup::ChordState::new_for_names("Set Assignee", members));
+                    ui.chord_state = Some(chord_popup::ChordState::new_for_names(
+                        "Set Assignee",
+                        members,
+                    ));
                     ui.chord_on_complete = Some(Box::new(|value, app| {
                         app.dispatch_update_assignee(&value);
                     }));
@@ -142,9 +143,8 @@ impl TrackedIssue {
         data: &AppData,
         ui: &mut UiState,
     ) {
-        let is_duplicate = |s: &crate::gitlab::types::WorkItemStatus| {
-            s.name.to_lowercase().contains("duplicate")
-        };
+        let is_duplicate =
+            |s: &crate::gitlab::types::WorkItemStatus| s.name.to_lowercase().contains("duplicate");
 
         let mut sorted_indices: Vec<usize> = (0..statuses.len())
             .filter(|&i| !is_duplicate(&statuses[i]))
@@ -155,8 +155,10 @@ impl TrackedIssue {
             Some("canceled") => 2,
             _ => 3,
         });
-        let sorted_names: Vec<String> =
-            sorted_indices.iter().map(|&i| statuses[i].name.clone()).collect();
+        let sorted_names: Vec<String> = sorted_indices
+            .iter()
+            .map(|&i| statuses[i].name.clone())
+            .collect();
         let sorted_codes = chord_popup::generate_priority_codes(&sorted_names);
 
         let mut all_codes = vec![String::new(); statuses.len()];
@@ -227,12 +229,7 @@ impl TrackedIssue {
     }
 
     /// Show a close/reopen confirm dialog for issues without custom statuses.
-    pub fn show_close_reopen_confirm(
-        issue_id: u64,
-        iid: u64,
-        item_state: &str,
-        ui: &mut UiState,
-    ) {
+    pub fn show_close_reopen_confirm(issue_id: u64, iid: u64, item_state: &str, ui: &mut UiState) {
         if item_state == "opened" {
             ui.confirm_title = "Close Issue".to_string();
             ui.confirm_message = format!("Close issue #{iid}?");
@@ -280,7 +277,11 @@ impl TrackedIssue {
         let mut code = b'a';
         for iter in &data.iterations {
             if Some(&iter.id) != current_iter_id.as_ref() {
-                let label = if iter.title.is_empty() { "Unnamed" } else { &iter.title };
+                let label = if iter.title.is_empty() {
+                    "Unnamed"
+                } else {
+                    &iter.title
+                };
                 options.push((String::from(code as char), label.to_string()));
                 code += 1;
                 if code > b'z' {
@@ -312,8 +313,7 @@ impl TrackedIssue {
         ui: &mut UiState,
     ) {
         let old_labels = &self.issue.labels;
-        let new_set: std::collections::HashSet<&str> =
-            labels.iter().map(String::as_str).collect();
+        let new_set: std::collections::HashSet<&str> = labels.iter().map(String::as_str).collect();
         let old_set: std::collections::HashSet<&str> =
             old_labels.iter().map(String::as_str).collect();
 
@@ -391,7 +391,13 @@ impl TrackedIssue {
     }
 
     /// Submit a comment or reply.
-    pub fn submit_comment(&self, body: &str, reply_discussion_id: Option<String>, ctx: &AppCtx, ui: &mut UiState) {
+    pub fn submit_comment(
+        &self,
+        body: &str,
+        reply_discussion_id: Option<String>,
+        ctx: &AppCtx,
+        ui: &mut UiState,
+    ) {
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         let body = body.to_string();
@@ -402,7 +408,9 @@ impl TrackedIssue {
         tokio::spawn(async move {
             let create_result = match &reply_discussion_id {
                 Some(disc_id) => {
-                    client.reply_to_issue_discussion(&project, iid, disc_id, &body).await
+                    client
+                        .reply_to_issue_discussion(&project, iid, disc_id, &body)
+                        .await
                 }
                 None => client.create_issue_note(&project, iid, &body).await,
             };

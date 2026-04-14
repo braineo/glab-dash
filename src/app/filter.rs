@@ -1,11 +1,11 @@
 //! Filter and sort methods: active filter access, sort/filter UI, chord callbacks.
 
+use super::{App, Overlay, View};
 use crate::cmd::Cmd;
 use crate::filter::{Field, FilterCondition, Op};
 use crate::ui::components::chord_popup;
 use crate::ui::views::filter_editor;
 use crate::ui::views::list_model::UserFilter;
-use super::{App, Overlay, View};
 
 impl App {
     /// Returns a mutable reference to the `UserFilter` for the current view.
@@ -103,7 +103,11 @@ impl App {
         let field_name_clone = field_name.clone();
         let label_scope_clone = label_scope.clone();
         self.ui.chord_on_complete = Some(Box::new(move |value, app| {
-            app.handle_sort_direction_chosen(&field_name_clone, label_scope_clone.as_deref(), &value);
+            app.handle_sort_direction_chosen(
+                &field_name_clone,
+                label_scope_clone.as_deref(),
+                &value,
+            );
         }));
         self.ui.overlay = Overlay::Chord;
     }
@@ -140,7 +144,8 @@ impl App {
 
     fn apply_sort_preset(&mut self, name: &str) {
         let specs = self
-            .ctx.config
+            .ctx
+            .config
             .sort_presets
             .iter()
             .find(|p| p.name == name)

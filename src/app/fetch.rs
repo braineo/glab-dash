@@ -166,7 +166,8 @@ impl App {
 
         // Collect issues in the current iteration that we haven't cached yet
         let items: Vec<(String, String, u64)> = self
-            .data.issues
+            .data
+            .issues
             .iter()
             .filter(|i| {
                 i.issue
@@ -178,7 +179,8 @@ impl App {
             .map(|i| {
                 // Derive namespace from project_path (same as the tracking project ancestor)
                 let namespace = self
-                    .ctx.config
+                    .ctx
+                    .config
                     .tracking_projects
                     .first()
                     .cloned()

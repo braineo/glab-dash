@@ -146,8 +146,13 @@ impl App {
                         let text = self.ui.comment_input.text();
                         let cursor = self.ui.comment_input.cursor_byte_pos();
                         let members = self.ctx.config.all_members();
-                        self.ui.autocomplete
-                            .update(&text, cursor, &members, &self.data.issues, &self.data.mrs);
+                        self.ui.autocomplete.update(
+                            &text,
+                            cursor,
+                            &members,
+                            &self.data.issues,
+                            &self.data.mrs,
+                        );
                     }
                 }
                 EventResult::Consumed

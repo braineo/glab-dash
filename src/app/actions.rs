@@ -3,10 +3,7 @@
 use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
 use crate::ui::components::picker;
 
-use super::{
-    App, FocusedItem, Overlay, View,
-    build_thread_picker_display,
-};
+use super::{App, FocusedItem, Overlay, View, build_thread_picker_display};
 
 impl App {
     pub(super) fn action_reply_thread(&mut self) {
@@ -35,10 +32,17 @@ impl App {
         }
     }
 
-    pub(super) fn set_issue_status(&mut self, project: &str, issue_id: u64, iid: u64, status_name: &str) {
+    pub(super) fn set_issue_status(
+        &mut self,
+        project: &str,
+        issue_id: u64,
+        iid: u64,
+        status_name: &str,
+    ) {
         // Find the status ID from cached statuses
         let status_id = self
-            .data.work_item_statuses
+            .data
+            .work_item_statuses
             .get(project)
             .and_then(|statuses| statuses.iter().find(|s| s.name == status_name))
             .map(|s| s.id.clone());
@@ -50,7 +54,8 @@ impl App {
 
         // Optimistic update
         if let Some(pos) = self
-            .data.issues
+            .data
+            .issues
             .iter()
             .position(|e| e.issue.iid == iid && e.project_path == project)
         {
@@ -84,7 +89,8 @@ impl App {
         new_value.push_str(&text[cursor..]);
 
         let new_cursor = trigger_pos + trigger_len + item.insert.len() + 1;
-        self.ui.comment_input
+        self.ui
+            .comment_input
             .set_text_and_cursor(&new_value, new_cursor);
         self.ui.autocomplete.dismiss();
     }
@@ -94,13 +100,14 @@ impl App {
         self.ui.overlay = Overlay::Error(msg);
     }
 
-
     pub(super) fn handle_label_editor_result(&mut self, labels: &[String]) {
         for label in labels {
             *self.data.label_usage.entry(label.clone()).or_insert(0) += 1;
         }
         self.dispatch_update_labels(labels);
-        self.ui.pending_cmds.push(crate::cmd::Cmd::PersistLabelUsage);
+        self.ui
+            .pending_cmds
+            .push(crate::cmd::Cmd::PersistLabelUsage);
     }
 
     /// Dispatch label update to the focused issue or MR.
@@ -112,7 +119,12 @@ impl App {
                 }
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                if let Some(mr) = self.data.mrs.iter_mut().find(|m| m.mr.iid == iid && m.project_path == project) {
+                if let Some(mr) = self
+                    .data
+                    .mrs
+                    .iter_mut()
+                    .find(|m| m.mr.iid == iid && m.project_path == project)
+                {
                     mr.update_labels(labels, &self.ctx, &mut self.ui);
                 }
             }
@@ -129,7 +141,12 @@ impl App {
                 }
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                if let Some(mr) = self.data.mrs.iter_mut().find(|m| m.mr.iid == iid && m.project_path == project) {
+                if let Some(mr) = self
+                    .data
+                    .mrs
+                    .iter_mut()
+                    .find(|m| m.mr.iid == iid && m.project_path == project)
+                {
                     mr.update_assignee(username, &self.ctx, &mut self.ui);
                 }
             }
@@ -147,7 +164,12 @@ impl App {
                 }
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                if let Some(mr) = self.data.mrs.iter().find(|m| m.mr.iid == iid && m.project_path == project) {
+                if let Some(mr) = self
+                    .data
+                    .mrs
+                    .iter()
+                    .find(|m| m.mr.iid == iid && m.project_path == project)
+                {
                     mr.submit_comment(body, reply_id, &self.ctx, &mut self.ui);
                 }
             }
@@ -220,16 +242,21 @@ impl App {
         let old_iteration = self.data.issues[issue_idx].issue.iteration.clone();
 
         // Optimistic update
-        self.data.issues[issue_idx].issue.iteration.clone_from(&target);
+        self.data.issues[issue_idx]
+            .issue
+            .iteration
+            .clone_from(&target);
         self.data.issues[issue_idx].issue.updated_at = chrono::Utc::now();
         self.ui.dirty.issues = true;
 
         let target_gid = target.as_ref().map(|i| i.id.clone());
-        self.ui.pending_cmds.push(crate::cmd::Cmd::SpawnMoveIteration {
-            issue_id,
-            target_gid,
-            old_iteration,
-        });
+        self.ui
+            .pending_cmds
+            .push(crate::cmd::Cmd::SpawnMoveIteration {
+                issue_id,
+                target_gid,
+                old_iteration,
+            });
         self.ui.pending_cmds.push(crate::cmd::Cmd::FetchHealthData);
     }
 }

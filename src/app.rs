@@ -18,8 +18,7 @@ use crate::config::Config;
 use crate::db::{Db, ViewState};
 use crate::gitlab::client::GitLabClient;
 use crate::gitlab::types::{
-    Issue, Iteration, MergeRequest, ProjectLabel, TrackedIssue, TrackedMergeRequest,
-    WorkItemStatus,
+    Issue, Iteration, MergeRequest, ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus,
 };
 use crate::ui::views::Views;
 use crate::ui::views::{dashboard, filter_editor};
@@ -292,7 +291,9 @@ impl App {
     fn refresh_focused(&mut self) {
         self.ui.focused = match self.ui.view {
             View::IssueList | View::IssueDetail => self
-                .ui.views.issue_list
+                .ui
+                .views
+                .issue_list
                 .selected_issue(&self.data.issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
@@ -300,7 +301,9 @@ impl App {
                     iid: item.issue.iid,
                 }),
             View::MrList | View::MrDetail => {
-                self.ui.views.mr_list
+                self.ui
+                    .views
+                    .mr_list
                     .selected_mr(&self.data.mrs)
                     .map(|item| FocusedItem::Mr {
                         project: item.project_path.clone(),
@@ -308,7 +311,9 @@ impl App {
                     })
             }
             View::Planning => self
-                .ui.views.planning
+                .ui
+                .views
+                .planning
                 .selected_issue(&self.data.issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
@@ -316,7 +321,9 @@ impl App {
                     iid: item.issue.iid,
                 }),
             View::Dashboard if self.ui.views.board.health_focused => self
-                .ui.views.health
+                .ui
+                .views
+                .health
                 .as_ref()
                 .and_then(|h| h.selected_issue(&self.data.issues, &self.data.shadow_work_cache))
                 .map(|item| FocusedItem::Issue {
@@ -324,15 +331,16 @@ impl App {
                     id: item.issue.id,
                     iid: item.issue.iid,
                 }),
-            View::Dashboard => {
-                self.ui.views.board
-                    .selected_issue(&self.data.issues)
-                    .map(|item| FocusedItem::Issue {
-                        project: item.project_path.clone(),
-                        id: item.issue.id,
-                        iid: item.issue.iid,
-                    })
-            }
+            View::Dashboard => self
+                .ui
+                .views
+                .board
+                .selected_issue(&self.data.issues)
+                .map(|item| FocusedItem::Issue {
+                    project: item.project_path.clone(),
+                    id: item.issue.id,
+                    iid: item.issue.iid,
+                }),
         };
     }
 
@@ -356,7 +364,8 @@ impl App {
 
     fn rebuild_label_color_map(&mut self) {
         self.data.label_color_map = self
-            .data.labels
+            .data
+            .labels
             .iter()
             .filter_map(|l| Some((l.name.clone(), l.color.clone()?)))
             .collect();
@@ -427,12 +436,18 @@ impl App {
     pub fn refilter_issues(&mut self) {
         let me = self.ctx.config.me.clone();
         let members = self.active_team_members();
-        self.ui.views.issue_list
-            .apply_filters(&self.data.issues, &me, &members, &self.data.label_sort_orders);
+        self.ui.views.issue_list.apply_filters(
+            &self.data.issues,
+            &me,
+            &members,
+            &self.data.label_sort_orders,
+        );
     }
 
     pub fn refilter_planning(&mut self) {
-        self.ui.views.planning
+        self.ui
+            .views
+            .planning
             .partition_issues(&self.data.issues, &self.data.label_sort_orders);
     }
 
@@ -453,7 +468,11 @@ impl App {
         // Iterations come sorted by CADENCE_AND_DUE_DATE_ASC.
         // States: "closed", "current", "upcoming".
         // Find current, then adjacent entries are previous/next.
-        let current_pos = self.data.iterations.iter().position(|i| i.state == "current");
+        let current_pos = self
+            .data
+            .iterations
+            .iter()
+            .position(|i| i.state == "current");
 
         let new_current = current_pos.map(|pos| self.data.iterations[pos].clone());
 
@@ -497,7 +516,9 @@ impl App {
             }
         }
         if !all_statuses.is_empty() {
-            self.ui.views.board
+            self.ui
+                .views
+                .board
                 .build_columns(&all_statuses, &self.ctx.config.kanban_columns);
         }
     }
@@ -514,9 +535,10 @@ impl App {
         };
         let closed_after = format!("{start}T00:00:00+00:00");
         let closed_before = format!("{end}T23:59:59+00:00");
-        if let Ok(shadow) = self
-            .ctx.db
-            .query_shadow_work(&closed_after, &closed_before, Some(&iter.id))
+        if let Ok(shadow) =
+            self.ctx
+                .db
+                .query_shadow_work(&closed_after, &closed_before, Some(&iter.id))
         {
             self.data.shadow_work_cache = shadow;
         }
@@ -542,8 +564,12 @@ impl App {
     fn refilter_mrs(&mut self) {
         let me = self.ctx.config.me.clone();
         let members = self.active_team_members();
-        self.ui.views.mr_list
-            .apply_filters(&self.data.mrs, &me, &members, &self.data.label_sort_orders);
+        self.ui.views.mr_list.apply_filters(
+            &self.data.mrs,
+            &me,
+            &members,
+            &self.data.label_sort_orders,
+        );
     }
 }
 

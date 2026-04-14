@@ -105,11 +105,13 @@ async fn debug_fetch() -> Result<()> {
     let db = crate::db::Db::open().context("Failed to open database")?;
     let mut app = App::new(config, client, async_tx, db);
     let tracking = app
-        .ctx.client
+        .ctx
+        .client
         .fetch_tracking_issues(Some("opened"), None)
         .await?;
     let assigned = app
-        .ctx.client
+        .ctx
+        .client
         .fetch_assigned_issues(&members, Some("opened"), None)
         .await?;
     println!("  tracking={} assigned={}", tracking.len(), assigned.len());
