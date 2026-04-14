@@ -370,6 +370,28 @@ impl App {
         };
     }
 
+    /// Look up the focused issue by ID.  Searches both `self.issues` and
+    /// `self.shadow_work_cache` (for health-panel items).
+    fn find_focused_issue(&self) -> Option<&TrackedIssue> {
+        let FocusedItem::Issue { id, .. } = self.focused.as_ref()? else {
+            return None;
+        };
+        self.issues
+            .iter()
+            .find(|i| i.issue.id == *id)
+            .or_else(|| self.shadow_work_cache.iter().find(|i| i.issue.id == *id))
+    }
+
+    /// Look up the focused MR by (project, iid).
+    fn find_focused_mr(&self) -> Option<&TrackedMergeRequest> {
+        let FocusedItem::Mr { project, iid } = self.focused.as_ref()? else {
+            return None;
+        };
+        self.mrs
+            .iter()
+            .find(|m| m.mr.iid == *iid && m.project_path == *project)
+    }
+
     /// Get members for the active team, or empty vec for "All" view.
     /// Used for implicit team filtering — empty means no filter.
     fn active_team_members(&self) -> Vec<String> {
@@ -2190,102 +2212,47 @@ impl App {
         self.overlay = Overlay::FilterEditor;
     }
 
-    fn action_open_browser(&mut self) {
-        match self.view {
-            View::IssueList | View::IssueDetail => {
-                if let Some(item) = self
-                    .current_detail_issue()
-                    .or_else(|| self.views.issue_list.selected_issue(&self.issues))
-                {
-                    let _ = open::that_detached(&item.issue.web_url);
-                }
-            }
-            View::MrList | View::MrDetail => {
-                if let Some(item) = self
-                    .current_detail_mr()
-                    .or_else(|| self.views.mr_list.selected_mr(&self.mrs))
-                {
-                    let _ = open::that_detached(&item.mr.web_url);
-                }
-            }
-            View::Dashboard if self.views.board.health_focused => {
-                if let Some(item) = self
-                    .views.health
-                    .as_ref()
-                    .and_then(|h| h.selected_issue(&self.issues, &self.shadow_work_cache))
-                {
-                    let _ = open::that_detached(&item.issue.web_url);
-                }
-            }
-            View::Dashboard => {
-                if let Some(item) = self.views.board.selected_issue(&self.issues) {
-                    let _ = open::that_detached(&item.issue.web_url);
-                }
-            }
-            View::Planning => {
-                if let Some(item) = self.views.planning.selected_issue(&self.issues) {
-                    let _ = open::that(&item.issue.web_url);
-                }
-            }
+    fn action_open_browser(&self) {
+        let url = self
+            .find_focused_issue()
+            .map(|i| i.issue.web_url.as_str())
+            .or_else(|| self.find_focused_mr().map(|m| m.mr.web_url.as_str()));
+        if let Some(url) = url {
+            let _ = open::that_detached(url);
         }
     }
 
     fn action_edit_labels(&mut self) {
+        let current = self
+            .find_focused_issue()
+            .map(|i| i.issue.labels.clone())
+            .or_else(|| self.find_focused_mr().map(|m| m.mr.labels.clone()));
+        let Some(current) = current else { return };
         let label_names: Vec<String> = self.labels.iter().map(|l| l.name.clone()).collect();
-        let current = match self.view {
-            View::IssueList => self
-                .views.issue_list
-                .selected_issue(&self.issues)
-                .map(|i| i.issue.labels.clone()),
-            View::IssueDetail => self.current_detail_issue().map(|i| i.issue.labels.clone()),
-            View::MrList => self
-                .views.mr_list
-                .selected_mr(&self.mrs)
-                .map(|m| m.mr.labels.clone()),
-            View::MrDetail => self.current_detail_mr().map(|m| m.mr.labels.clone()),
-            View::Dashboard if self.views.board.health_focused => self
-                .views.health
-                .as_ref()
-                .and_then(|h| h.selected_issue(&self.issues, &self.shadow_work_cache))
-                .map(|i| i.issue.labels.clone()),
-            View::Dashboard => self
-                .views.board
-                .selected_issue(&self.issues)
-                .map(|i| i.issue.labels.clone()),
-            View::Planning => self
-                .views.planning
-                .selected_issue(&self.issues)
-                .map(|i| i.issue.labels.clone()),
-        };
-        if let Some(current) = current {
-            let issue_labels: Vec<Vec<String>> =
-                self.issues.iter().map(|i| i.issue.labels.clone()).collect();
-            self.label_editor_state = Some(label_editor::LabelEditorState::new(
-                label_names,
-                &current,
-                &self.label_usage,
-                &issue_labels,
-                20,
-            ));
-            self.overlay = Overlay::LabelEditor;
-        }
+        let issue_labels: Vec<Vec<String>> =
+            self.issues.iter().map(|i| i.issue.labels.clone()).collect();
+        self.label_editor_state = Some(label_editor::LabelEditorState::new(
+            label_names,
+            &current,
+            &self.label_usage,
+            &issue_labels,
+            20,
+        ));
+        self.overlay = Overlay::LabelEditor;
     }
 
     fn action_edit_assignee(&mut self) {
-        match self.view {
-            View::IssueDetail | View::MrDetail => {
-                let members = self.picker_members();
-                self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
-                self.overlay = Overlay::Picker(PickerContext::Assignee);
-            }
-            _ => {
-                let members = self.picker_members();
-                self.chord_state = Some(chord_popup::ChordState::new_for_names(
-                    "Set Assignee",
-                    members,
-                ));
-                self.overlay = Overlay::Chord(ChordContext::Assignee);
-            }
+        let members = self.picker_members();
+        let is_detail = matches!(self.view, View::IssueDetail | View::MrDetail);
+        if is_detail {
+            self.picker_state = Some(picker::PickerState::new("Assignee", members, false));
+            self.overlay = Overlay::Picker(PickerContext::Assignee);
+        } else {
+            self.chord_state = Some(chord_popup::ChordState::new_for_names(
+                "Set Assignee",
+                members,
+            ));
+            self.overlay = Overlay::Chord(ChordContext::Assignee);
         }
     }
 
@@ -2525,35 +2492,20 @@ impl App {
         }
     }
 
-    /// Return the index into self.issues / self.mrs for the currently selected item,
+    /// Return the index into `self.issues` / `self.mrs` for the focused item,
     /// plus (`project_path`, iid, `is_mr`).
     fn selected_item_idx(&self) -> Option<(usize, String, u64, bool)> {
-        match self.view {
-            View::IssueList | View::IssueDetail => {
-                let idx = self.views.issue_list.list.selected_index()?;
-                let item = self.issues.get(idx)?;
-                Some((idx, item.project_path.clone(), item.issue.iid, false))
+        match self.focused.as_ref()? {
+            FocusedItem::Issue { project, id, iid } => {
+                let idx = self.issues.iter().position(|i| i.issue.id == *id)?;
+                Some((idx, project.clone(), *iid, false))
             }
-            View::Planning => {
-                let col = self.views.planning.focused_column;
-                let idx = self.views.planning.columns[col].list.selected_index()?;
-                let item = self.issues.get(idx)?;
-                Some((idx, item.project_path.clone(), item.issue.iid, false))
-            }
-            View::MrList | View::MrDetail => {
-                let idx = self.views.mr_list.list.selected_index()?;
-                let item = self.mrs.get(idx)?;
-                Some((idx, item.project_path.clone(), item.mr.iid, true))
-            }
-            View::Dashboard => {
-                let col = self.views.board.focused_column;
+            FocusedItem::Mr { project, iid } => {
                 let idx = self
-                    .views.board
-                    .columns
-                    .get(col)
-                    .and_then(|c| c.list.selected_index())?;
-                let item = self.issues.get(idx)?;
-                Some((idx, item.project_path.clone(), item.issue.iid, false))
+                    .mrs
+                    .iter()
+                    .position(|m| m.mr.iid == *iid && m.project_path == *project)?;
+                Some((idx, project.clone(), *iid, true))
             }
         }
     }
@@ -2704,41 +2656,12 @@ impl App {
         let tx = self.async_tx.clone();
         let body = body.to_string();
 
-        let (project, iid, is_mr) = match self.view {
-            View::IssueList | View::Planning => {
-                let selected = if self.view == View::Planning {
-                    self.views.planning.selected_issue(&self.issues).cloned()
-                } else {
-                    self.views.issue_list.selected_issue(&self.issues).cloned()
-                };
-                if let Some(item) = selected {
-                    (item.project_path.clone(), item.issue.iid, false)
-                } else {
-                    return;
-                }
+        let (project, iid, is_mr) = match self.focused.as_ref() {
+            Some(FocusedItem::Issue { project, iid, .. }) => {
+                (project.clone(), *iid, false)
             }
-            View::IssueDetail => {
-                if let Some(item) = self.current_detail_issue() {
-                    (item.project_path.clone(), item.issue.iid, false)
-                } else {
-                    return;
-                }
-            }
-            View::MrList => {
-                if let Some(item) = self.views.mr_list.selected_mr(&self.mrs) {
-                    (item.project_path.clone(), item.mr.iid, true)
-                } else {
-                    return;
-                }
-            }
-            View::MrDetail => {
-                if let Some(item) = self.current_detail_mr() {
-                    (item.project_path.clone(), item.mr.iid, true)
-                } else {
-                    return;
-                }
-            }
-            View::Dashboard => return,
+            Some(FocusedItem::Mr { project, iid }) => (project.clone(), *iid, true),
+            None => return,
         };
 
         let reply_id = self.reply_discussion_id.take();
