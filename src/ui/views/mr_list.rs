@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
@@ -6,10 +7,11 @@ use ratatui::widgets::{Cell, Paragraph, Row, Table};
 
 use std::collections::HashMap;
 
+use crate::cmd::{Cmd, Dirty, EventResult};
 use crate::filter::matches_mr;
 use crate::gitlab::types::TrackedMergeRequest;
 use crate::sort;
-use crate::ui::views::list_model::{self, ItemList, UserFilter};
+use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
 use crate::ui::{components, styles};
 
 #[derive(Default)]
@@ -19,6 +21,58 @@ pub struct MrListState {
 }
 
 impl MrListState {
+    // ── Key handling ────────────────────────────────────────────────
+
+    pub fn handle_key(
+        &mut self,
+        key: &KeyEvent,
+        dirty: &mut Dirty,
+        cmds: &mut Vec<Cmd>,
+        needs_redraw: &mut bool,
+    ) -> EventResult {
+        if self.filter.bar_focused {
+            match self.filter.handle_bar_key(key) {
+                FilterBarAction::Deleted => {
+                    dirty.view_state = true;
+                    cmds.push(Cmd::PersistViewState);
+                }
+                FilterBarAction::Unfocused | FilterBarAction::Consumed => {}
+            }
+            return EventResult::Consumed;
+        }
+
+        if self.filter.is_searching() {
+            let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
+            if self.filter.handle_fuzzy_input(key) == Some(true) {
+                dirty.view_state = true;
+            }
+            if is_exit {
+                cmds.push(Cmd::PersistViewState);
+            }
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        if let Some(moved) = self.list.handle_nav_key(key) {
+            if moved {
+                dirty.selection = true;
+            } else {
+                *needs_redraw = false;
+            }
+            return EventResult::Consumed;
+        }
+
+        if key.code == KeyCode::Char('/') {
+            self.filter.start_search();
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        EventResult::Bubble
+    }
+
+    // ── Filtering ───────────────────────────────────────────────────
+
     pub fn apply_filters(
         &mut self,
         mrs: &[TrackedMergeRequest],

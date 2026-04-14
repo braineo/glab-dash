@@ -1597,8 +1597,6 @@ impl App {
     /// Dispatch to the active view's key handler.  Views handle their own
     /// navigation, fuzzy search, and filter bar.  Unhandled keys bubble.
     fn dispatch_view(&mut self, key: &KeyEvent) -> EventResult {
-        // Suppress: will have more arms as views are migrated.
-        #[allow(clippy::single_match_else)]
         match self.view {
             View::IssueList => self.views.issue_list.handle_key(
                 key,
@@ -1606,8 +1604,16 @@ impl App {
                 &mut self.pending_cmds,
                 &mut self.needs_redraw,
             ),
-            // Other views still use the old path (inline modes + match_binding)
-            _ => {
+            View::MrList => self.views.mr_list.handle_key(
+                key,
+                &mut self.dirty,
+                &mut self.pending_cmds,
+                &mut self.needs_redraw,
+            ),
+            View::IssueDetail => self.views.issue_detail.handle_key(key),
+            View::MrDetail => self.views.mr_detail.handle_key(key),
+            // Dashboard + Planning still use the old path
+            View::Dashboard | View::Planning => {
                 if self.active_filter().is_searching() {
                     self.handle_fuzzy_text(*key);
                     return EventResult::Consumed;
