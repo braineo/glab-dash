@@ -1831,8 +1831,7 @@ impl App {
             // === Detail open (App manages view transitions) ===
             KeyAction::OpenDetail => self.action_open_detail(),
 
-            // === Nav handled by views — these arms are unreachable but
-            //     the match must be exhaustive ===
+            // === Handled by views — unreachable here but match must be exhaustive ===
             KeyAction::MoveDown
             | KeyAction::MoveUp
             | KeyAction::Top
@@ -1841,7 +1840,13 @@ impl App {
             | KeyAction::PageUp
             | KeyAction::StartSearch
             | KeyAction::FocusFilterBar
-            | KeyAction::ClearFilters => {}
+            | KeyAction::ClearFilters
+            | KeyAction::ToggleDashboardFocus
+            | KeyAction::ColumnLeft
+            | KeyAction::ColumnRight
+            | KeyAction::ToggleColumnPrev
+            | KeyAction::ToggleColumnNext
+            | KeyAction::ToggleLayout => {}
 
             // === Filter / sort (open overlays via shared state) ===
             KeyAction::FilterMenu => self.action_show_filter_menu(),
@@ -1884,31 +1889,7 @@ impl App {
             // === Detail-specific ===
             KeyAction::ReplyThread => self.action_reply_thread(),
 
-            // === Board / column navigation ===
-            KeyAction::ToggleDashboardFocus => {
-                if self.view == View::Dashboard {
-                    self.views.board.health_focused =
-                        !self.views.board.health_focused;
-                    self.dirty.selection = true;
-                }
-            }
-            KeyAction::ColumnLeft => self.action_column_left(),
-            KeyAction::ColumnRight => self.action_column_right(),
-
-            // === Planning-specific ===
-            KeyAction::ToggleColumnPrev => {
-                self.views.planning.column_visible[0] = !self.views.planning.column_visible[0];
-                self.views.planning.clamp_focus();
-            }
-            KeyAction::ToggleColumnNext => {
-                self.views.planning.column_visible[2] = !self.views.planning.column_visible[2];
-                self.views.planning.clamp_focus();
-            }
-            KeyAction::ToggleLayout => {
-                self.views.planning.toggle_layout();
-                self.dirty.issues = true;
-                self.dirty.selection = true;
-            }
+            // === Item action that opens overlay ===
             KeyAction::MoveIteration => {
                 self.show_iteration_chord();
             }
@@ -2332,48 +2313,7 @@ impl App {
         }
     }
 
-    fn action_column_left(&mut self) {
-        match self.view {
-            View::Dashboard if self.views.board.health_focused => {
-                if let Some(ref mut health) = self.views.health {
-                    health.active_tab = health.active_tab.prev();
-                    health.active_list_mut().table_state.select(Some(0));
-                }
-            }
-            View::Dashboard if !self.views.board.columns.is_empty() => {
-                self.views.board.focused_column =
-                    self.views.board.focused_column.saturating_sub(1);
-            }
-            View::Planning => {
-                self.views.planning.move_focus_left();
-            }
-            _ => {}
-        }
-        self.dirty.selection = true;
-    }
 
-    fn action_column_right(&mut self) {
-        match self.view {
-            View::Dashboard if self.views.board.health_focused => {
-                if let Some(ref mut health) = self.views.health {
-                    health.active_tab = health.active_tab.next();
-                    health.active_list_mut().table_state.select(Some(0));
-                }
-            }
-            View::Dashboard
-                if !self.views.board.columns.is_empty()
-                    && self.views.board.focused_column + 1
-                        < self.views.board.columns.len() =>
-            {
-                self.views.board.focused_column += 1;
-            }
-            View::Planning => {
-                self.views.planning.move_focus_right();
-            }
-            _ => {}
-        }
-        self.dirty.selection = true;
-    }
 
     fn handle_chord_result(&mut self, value: &str) {
         let context = std::mem::replace(&mut self.overlay, Overlay::None);
