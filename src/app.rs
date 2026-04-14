@@ -1627,50 +1627,53 @@ impl App {
             Some(FocusedItem::Mr { .. }) => keybindings::MR_ACTION_BINDINGS,
             None => return EventResult::Bubble,
         };
-        let Some(action) = keybindings::match_group(bindings, key) else {
-            // Also check for `o` (OpenBrowser) which is in LIST_NAV_BINDINGS
-            if let Some(KeyAction::OpenBrowser) = keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key) {
-                self.action_open_browser();
-                return EventResult::Consumed;
-            }
-            return EventResult::Bubble;
-        };
-        self.execute_action(action);
-        EventResult::Consumed
+        if let Some(action) = keybindings::match_group(bindings, key) {
+            self.execute_item_action(action);
+            return EventResult::Consumed;
+        }
+        // `o` (OpenBrowser) is in LIST_NAV_BINDINGS but is item-scoped
+        if keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
+            == Some(KeyAction::OpenBrowser)
+        {
+            self.action_open_browser();
+            return EventResult::Consumed;
+        }
+        EventResult::Bubble
     }
 
     /// Global bindings: navigation (1-4), quit (q/Esc), help (?), team (t),
     /// refresh (r/R), error (E).
     fn dispatch_global(&mut self, key: &KeyEvent) -> bool {
-        // Global bindings
+        // Global bindings (q, ?, Esc, E, t)
         if let Some(action) = keybindings::match_group(keybindings::GLOBAL_BINDINGS, key) {
-            return self.execute_action(action);
+            self.execute_global_action(action);
+            return matches!(action, KeyAction::Back) && self.view_stack.is_empty()
+                && matches!(self.overlay, Overlay::Confirm(_));
         }
         // Global navigation (1-4)
         if let Some(action) = keybindings::match_group(keybindings::GLOBAL_NAV_BINDINGS, key) {
-            return self.execute_action(action);
+            self.execute_global_action(action);
+            return false;
         }
-        // Refresh (r/R) from LIST_NAV_BINDINGS — global, not item-specific
-        if let Some(action @ (KeyAction::Refresh | KeyAction::FullRefresh)) =
-            keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
+        // Refresh (r/R), Open detail (Enter) from LIST_NAV_BINDINGS
+        if let Some(
+            action @ (KeyAction::Refresh | KeyAction::FullRefresh | KeyAction::OpenDetail),
+        ) = keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
         {
-            return self.execute_action(action);
+            self.execute_global_action(action);
+            return false;
         }
-        // Filter/sort (f/F/S/Tab) — global overlay actions
+        // Filter/sort (f/F/S/Tab)
         if let Some(action) = keybindings::match_group(keybindings::FILTER_BINDINGS, key) {
-            return self.execute_action(action);
+            self.execute_global_action(action);
+            return false;
         }
-        // Open detail (Enter) from LIST_NAV_BINDINGS
-        if let Some(KeyAction::OpenDetail) =
-            keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
-        {
-            return self.execute_action(KeyAction::OpenDetail);
-        }
-        // ReplyThread from DETAIL_NAV_BINDINGS
-        if let Some(KeyAction::ReplyThread) =
+        // ReplyThread (r in detail views)
+        if let Some(action @ KeyAction::ReplyThread) =
             keybindings::match_group(keybindings::DETAIL_NAV_BINDINGS, key)
         {
-            return self.execute_action(KeyAction::ReplyThread);
+            self.execute_global_action(action);
+            return false;
         }
         false
     }
@@ -1875,81 +1878,15 @@ impl App {
 
     // ── Action execution ─────────────────────────────────────────────
 
-    #[allow(clippy::too_many_lines)]
-    fn execute_action(&mut self, action: KeyAction) -> bool {
+    /// Execute an item action (called from `dispatch_focused_item`).
+    fn execute_item_action(&mut self, action: KeyAction) {
         match action {
-            // === Global ===
-            KeyAction::Back => {
-                if let Some(prev) = self.view_stack.pop() {
-                    self.view = prev;
-                    self.dirty.selection = true;
-                } else {
-                    self.overlay = Overlay::Confirm(ConfirmAction::QuitApp);
-                }
-            }
-            KeyAction::ToggleHelp => {
-                self.overlay = Overlay::Help;
-            }
-            KeyAction::ShowLastError => {
-                if let Some(err) = &self.error {
-                    self.overlay = Overlay::Error(err.clone());
-                }
-            }
-            KeyAction::SwitchTeam => {
-                if !self.config.teams.is_empty() {
-                    let mut names: Vec<String> = vec!["All".to_string()];
-                    names.extend(self.config.teams.iter().map(|t| t.name.clone()));
-                    self.picker_state = Some(picker::PickerState::new("Switch Team", names, false));
-                    self.overlay = Overlay::Picker(PickerContext::Team);
-                }
-            }
-            KeyAction::NavigateTo(target) => {
-                if self.view != target {
-                    self.navigate_to_view(target);
-                }
-            }
-
-            // === Detail open (App manages view transitions) ===
-            KeyAction::OpenDetail => self.action_open_detail(),
-
-            // === Handled by views — unreachable here but match must be exhaustive ===
-            KeyAction::MoveDown
-            | KeyAction::MoveUp
-            | KeyAction::Top
-            | KeyAction::Bottom
-            | KeyAction::PageDown
-            | KeyAction::PageUp
-            | KeyAction::StartSearch
-            | KeyAction::FocusFilterBar
-            | KeyAction::ClearFilters
-            | KeyAction::ToggleDashboardFocus
-            | KeyAction::ColumnLeft
-            | KeyAction::ColumnRight
-            | KeyAction::ToggleColumnPrev
-            | KeyAction::ToggleColumnNext
-            | KeyAction::ToggleLayout => {}
-
-            // === Filter / sort (open overlays via shared state) ===
-            KeyAction::FilterMenu => self.action_show_filter_menu(),
-            KeyAction::SortByField => self.action_sort_by_field(),
-
-            // === Item actions (resolved via view/FocusedItem) ===
-            KeyAction::Refresh => {
-                self.loading = true;
-                self.pending_cmds.push(Cmd::FetchAll);
-            }
-            KeyAction::FullRefresh => {
-                self.loading = true;
-                self.pending_cmds.push(Cmd::FetchAllFull);
-            }
-            KeyAction::OpenBrowser => self.action_open_browser(),
             KeyAction::SetStatus => self.do_set_status(),
             KeyAction::ToggleState => self.do_toggle_state(),
             KeyAction::EditLabels => self.action_edit_labels(),
             KeyAction::EditAssignee => self.action_edit_assignee(),
             KeyAction::Comment => self.action_open_comment(),
-
-            // === MR-specific ===
+            KeyAction::MoveIteration => self.show_iteration_chord(),
             KeyAction::Approve => {
                 if let Some(FocusedItem::Mr {
                     ref project, iid, ..
@@ -1966,16 +1903,52 @@ impl App {
                     self.overlay = Overlay::Confirm(ConfirmAction::MergeMr(project.clone(), iid));
                 }
             }
-
-            // === Detail-specific ===
-            KeyAction::ReplyThread => self.action_reply_thread(),
-
-            // === Item action that opens overlay ===
-            KeyAction::MoveIteration => {
-                self.show_iteration_chord();
-            }
+            _ => {}
         }
-        false
+    }
+
+    /// Execute a global action (called from `dispatch_global`).
+    fn execute_global_action(&mut self, action: KeyAction) {
+        match action {
+            KeyAction::Back => {
+                if let Some(prev) = self.view_stack.pop() {
+                    self.view = prev;
+                    self.dirty.selection = true;
+                } else {
+                    self.overlay = Overlay::Confirm(ConfirmAction::QuitApp);
+                }
+            }
+            KeyAction::ToggleHelp => {
+                self.overlay = Overlay::Help;
+            }
+            KeyAction::ShowLastError => {
+                if let Some(err) = &self.error {
+                    self.overlay = Overlay::Error(err.clone());
+                }
+            }
+            KeyAction::SwitchTeam if !self.config.teams.is_empty() => {
+                let mut names: Vec<String> = vec!["All".to_string()];
+                names.extend(self.config.teams.iter().map(|t| t.name.clone()));
+                self.picker_state = Some(picker::PickerState::new("Switch Team", names, false));
+                self.overlay = Overlay::Picker(PickerContext::Team);
+            }
+            KeyAction::NavigateTo(target) if self.view != target => {
+                self.navigate_to_view(target);
+            }
+            KeyAction::OpenDetail => self.action_open_detail(),
+            KeyAction::Refresh => {
+                self.loading = true;
+                self.pending_cmds.push(Cmd::FetchAll);
+            }
+            KeyAction::FullRefresh => {
+                self.loading = true;
+                self.pending_cmds.push(Cmd::FetchAllFull);
+            }
+            KeyAction::FilterMenu => self.action_show_filter_menu(),
+            KeyAction::SortByField => self.action_sort_by_field(),
+            KeyAction::ReplyThread => self.action_reply_thread(),
+            _ => {}
+        }
     }
 
     // ── Action helpers ───────────────────────────────────────────────
