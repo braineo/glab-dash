@@ -97,14 +97,15 @@ Event (key press / async result / timer)
 
 | Dirty flag | Triggers |
 |------------|----------|
-| `issues` | `refilter_issues`, `refilter_planning`, `refilter_iteration_board`, `refresh_focused`, `compute_iteration_health` |
+| `labels` | `rebuild_label_color_map` |
+| `issues` | `refilter_issues`, `refilter_planning`, `refilter_iteration_board`, `refresh_focused`, `refresh_shadow_work`, `compute_iteration_health` |
 | `mrs` | `refilter_mrs`, `refresh_focused` |
 | `iterations` | `refilter_planning`, `refilter_iteration_board`, `refresh_focused`, `compute_iteration_health` |
 | `statuses` | `rebuild_iteration_board_columns`, `refilter_iteration_board`, `refresh_focused`, `compute_iteration_health` |
 | `view_state` | all refilters + `refresh_focused` |
 | `selection` | `refresh_focused` |
 
-**Never call `refilter_*()`, `refresh_focused()`, or `compute_iteration_health()` directly from handlers.** Set the appropriate dirty flags and let `reconcile()` handle it.
+**Never call `refilter_*()`, `refresh_focused()`, `refresh_shadow_work()`, `rebuild_label_color_map()`, or `compute_iteration_health()` directly from handlers.** Set the appropriate dirty flags and let `reconcile()` handle it.
 
 **`process_async_msg()` / `process_key()`**: wrappers called from the event loop that run the full handle → reconcile → execute cycle.
 
