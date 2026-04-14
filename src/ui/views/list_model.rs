@@ -4,7 +4,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, TableState};
 
 use crate::filter::FilterCondition;
+use crate::keybindings::{self, KeyAction};
 use crate::sort::SortSpec;
+use crate::ui::keys;
 use crate::ui::styles;
 
 // ── ListCursor — non-generic borrowed handle for navigation ──
@@ -92,6 +94,23 @@ impl<T> ItemList<T> {
         self.selected_index().and_then(|idx| items.get(idx))
     }
 
+    /// Handle list navigation keys (j/k/g/G/pgup/pgdn/arrows).
+    /// Returns `Some(true)` if selection moved, `Some(false)` if at boundary,
+    /// `None` if the key is not a nav key.
+    pub fn handle_nav_key(&mut self, key: &KeyEvent) -> Option<bool> {
+        let action = keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)?;
+        let op = match action {
+            KeyAction::MoveDown => NavOp::Next,
+            KeyAction::MoveUp => NavOp::Prev,
+            KeyAction::Top => NavOp::First,
+            KeyAction::Bottom => NavOp::Last,
+            KeyAction::PageDown => NavOp::PageDown,
+            KeyAction::PageUp => NavOp::PageUp,
+            _ => return None,
+        };
+        Some(self.cursor().apply(op))
+    }
+
     pub fn clamp_selection(&mut self) {
         if self.indices.is_empty() {
             self.table_state.select(None);
@@ -119,7 +138,48 @@ pub struct UserFilter {
     pub bar_selected: usize,
 }
 
+/// Result of filter bar handling a key.
+pub enum FilterBarAction {
+    /// Key consumed, no external effect.
+    Consumed,
+    /// User exited the filter bar (Esc/Tab).
+    Unfocused,
+    /// A filter condition was deleted — caller should refilter + persist.
+    Deleted,
+}
+
 impl UserFilter {
+    /// Handle keys when the filter bar is focused.
+    /// The filter bar owns its navigation and condition deletion.
+    pub fn handle_bar_key(&mut self, key: &KeyEvent) -> FilterBarAction {
+        if keys::is_back(key) || keys::is_tab(key) {
+            self.bar_focused = false;
+            return FilterBarAction::Unfocused;
+        }
+        if keys::is_left(key) {
+            self.bar_selected = self.bar_selected.saturating_sub(1);
+            return FilterBarAction::Consumed;
+        }
+        if keys::is_right(key)
+            && !self.conditions.is_empty()
+            && self.bar_selected + 1 < self.conditions.len()
+        {
+            self.bar_selected += 1;
+            return FilterBarAction::Consumed;
+        }
+        if matches!(key.code, KeyCode::Char('x' | 'd')) && !self.conditions.is_empty() {
+            self.conditions.remove(self.bar_selected);
+            if self.bar_selected > 0 && self.bar_selected >= self.conditions.len() {
+                self.bar_selected -= 1;
+            }
+            if self.conditions.is_empty() {
+                self.bar_focused = false;
+            }
+            return FilterBarAction::Deleted;
+        }
+        FilterBarAction::Consumed
+    }
+
     pub fn is_searching(&self) -> bool {
         self.fuzzy_active
     }

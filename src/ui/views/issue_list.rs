@@ -10,10 +10,8 @@ use std::collections::HashMap;
 use crate::cmd::{Cmd, Dirty, EventResult};
 use crate::filter::matches_issue;
 use crate::gitlab::types::TrackedIssue;
-use crate::keybindings::{self, KeyAction};
 use crate::sort;
-use crate::ui::keys;
-use crate::ui::views::list_model::{self, ItemList, NavOp, UserFilter};
+use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
 use crate::ui::{components, styles};
 
 #[derive(Default)]
@@ -25,8 +23,11 @@ pub struct IssueListState {
 impl IssueListState {
     // ── Key handling ────────────────────────────────────────────────
 
-    /// Handle keys for the issue list view.  Handles nav, fuzzy search,
-    /// and filter bar locally; bubbles everything else to the parent.
+    /// Handle keys for the issue list view.
+    ///
+    /// Delegates to focused children first (filter bar → fuzzy → list nav),
+    /// then handles view-level keys (start search).  Bubbles everything
+    /// else (item actions, global nav) to the parent.
     pub fn handle_key(
         &mut self,
         key: &KeyEvent,
@@ -34,19 +35,34 @@ impl IssueListState {
         cmds: &mut Vec<Cmd>,
         needs_redraw: &mut bool,
     ) -> EventResult {
-        // Fuzzy search captures all keys when active
-        if self.filter.is_searching() {
-            return self.handle_fuzzy_key(key, dirty, cmds);
-        }
-
-        // Filter bar captures all keys when focused
+        // 1. Filter bar owns its keys when focused
         if self.filter.bar_focused {
-            return self.handle_filter_bar_key(key, dirty, cmds);
+            match self.filter.handle_bar_key(key) {
+                FilterBarAction::Deleted => {
+                    dirty.view_state = true;
+                    cmds.push(Cmd::PersistViewState);
+                }
+                FilterBarAction::Unfocused | FilterBarAction::Consumed => {}
+            }
+            return EventResult::Consumed;
         }
 
-        // List navigation (j/k/g/G/pgup/pgdn)
-        if let Some(op) = Self::nav_op_for_key(key) {
-            if self.list.cursor().apply(op) {
+        // 2. Fuzzy search owns its keys when active
+        if self.filter.is_searching() {
+            let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
+            if self.filter.handle_fuzzy_input(key) == Some(true) {
+                dirty.view_state = true;
+            }
+            if is_exit {
+                cmds.push(Cmd::PersistViewState);
+            }
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        // 3. List owns navigation (j/k/g/G/pgup/pgdn)
+        if let Some(moved) = self.list.handle_nav_key(key) {
+            if moved {
                 dirty.selection = true;
             } else {
                 *needs_redraw = false;
@@ -54,7 +70,7 @@ impl IssueListState {
             return EventResult::Consumed;
         }
 
-        // Start fuzzy search
+        // 4. View-level: start search (only the view knows which filter to activate)
         if key.code == KeyCode::Char('/') {
             self.filter.start_search();
             dirty.selection = true;
@@ -63,75 +79,6 @@ impl IssueListState {
 
         // Everything else (item actions, filter menu, global nav) bubbles
         EventResult::Bubble
-    }
-
-    /// Map a key event to a nav operation using the binding registry.
-    fn nav_op_for_key(key: &KeyEvent) -> Option<NavOp> {
-        let action = keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)?;
-        match action {
-            KeyAction::MoveDown => Some(NavOp::Next),
-            KeyAction::MoveUp => Some(NavOp::Prev),
-            KeyAction::Top => Some(NavOp::First),
-            KeyAction::Bottom => Some(NavOp::Last),
-            KeyAction::PageDown => Some(NavOp::PageDown),
-            KeyAction::PageUp => Some(NavOp::PageUp),
-            _ => None,
-        }
-    }
-
-    fn handle_fuzzy_key(
-        &mut self,
-        key: &KeyEvent,
-        dirty: &mut Dirty,
-        cmds: &mut Vec<Cmd>,
-    ) -> EventResult {
-        let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
-        let needs_refilter = self.filter.handle_fuzzy_input(key);
-        if needs_refilter == Some(true) {
-            dirty.view_state = true;
-        }
-        if is_exit {
-            cmds.push(Cmd::PersistViewState);
-        }
-        dirty.selection = true;
-        EventResult::Consumed
-    }
-
-    fn handle_filter_bar_key(
-        &mut self,
-        key: &KeyEvent,
-        dirty: &mut Dirty,
-        cmds: &mut Vec<Cmd>,
-    ) -> EventResult {
-        if keys::is_back(key) || keys::is_tab(key) {
-            self.filter.bar_focused = false;
-            return EventResult::Consumed;
-        }
-        if keys::is_left(key) {
-            self.filter.bar_selected = self.filter.bar_selected.saturating_sub(1);
-            return EventResult::Consumed;
-        }
-        if keys::is_right(key)
-            && !self.filter.conditions.is_empty()
-            && self.filter.bar_selected + 1 < self.filter.conditions.len()
-        {
-            self.filter.bar_selected += 1;
-            return EventResult::Consumed;
-        }
-        if matches!(key.code, KeyCode::Char('x' | 'd')) && !self.filter.conditions.is_empty() {
-            self.filter.conditions.remove(self.filter.bar_selected);
-            if self.filter.bar_selected > 0
-                && self.filter.bar_selected >= self.filter.conditions.len()
-            {
-                self.filter.bar_selected -= 1;
-            }
-            if self.filter.conditions.is_empty() {
-                self.filter.bar_focused = false;
-            }
-            dirty.view_state = true;
-            cmds.push(Cmd::PersistViewState);
-        }
-        EventResult::Consumed
     }
 
     // ── Filtering ───────────────────────────────────────────────────
