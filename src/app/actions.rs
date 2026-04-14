@@ -1,7 +1,7 @@
 //! Action methods: browser, labels, assignee, comment, status, confirm, detail navigation.
 
 use crate::cmd::Cmd;
-use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest, User};
+use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
 use crate::ui::components::{chord_popup, picker};
 
 use super::{
@@ -156,163 +156,6 @@ impl App {
         });
     }
 
-    pub(super) fn update_labels(&mut self, labels: &[String]) {
-        let Some((idx, project, iid, is_mr)) = self.selected_item_idx() else {
-            return;
-        };
-
-        let client = self.ctx.client.clone();
-        let tx = self.ctx.async_tx.clone();
-
-        if is_mr {
-            self.data.mrs[idx].mr.labels = labels.to_vec();
-            let payload = serde_json::json!({"labels": labels.join(",")});
-            tokio::spawn(async move {
-                let result = client.update_mr(&project, iid, payload).await;
-                let _ = tx.send(super::AsyncMsg::MrUpdated(result, project));
-            });
-        } else {
-            let old_labels = &self.data.issues[idx].issue.labels;
-            let new_set: std::collections::HashSet<&str> =
-                labels.iter().map(String::as_str).collect();
-            let old_set: std::collections::HashSet<&str> =
-                old_labels.iter().map(String::as_str).collect();
-
-            let add_gids: Vec<String> = new_set
-                .difference(&old_set)
-                .filter_map(|name| self.label_id_by_name(name))
-                .map(|id| format!("gid://gitlab/Label/{id}"))
-                .collect();
-            let remove_gids: Vec<String> = old_set
-                .difference(&new_set)
-                .filter_map(|name| self.label_id_by_name(name))
-                .map(|id| format!("gid://gitlab/Label/{id}"))
-                .collect();
-
-            self.data.issues[idx].issue.labels = labels.to_vec();
-            let issue_id = self.data.issues[idx].issue.id;
-            let input = serde_json::json!({
-                "labelsWidget": {
-                    "addLabelIds": add_gids,
-                    "removeLabelIds": remove_gids,
-                }
-            });
-            tokio::spawn(async move {
-                let result = client.update_issue(issue_id, input).await;
-                let _ = tx.send(super::AsyncMsg::IssueUpdated(result));
-            });
-        }
-    }
-
-    pub(super) fn update_assignee(&mut self, username: &str) {
-        let Some((idx, project, iid, is_mr)) = self.selected_item_idx() else {
-            return;
-        };
-
-        // Optimistic update with a placeholder User
-        let placeholder = User {
-            id: 0,
-            username: username.to_string(),
-            name: username.to_string(),
-            avatar_url: None,
-            web_url: String::new(),
-        };
-        if is_mr {
-            self.data.mrs[idx].mr.assignees = vec![placeholder.clone()];
-        } else {
-            self.data.issues[idx].issue.assignees = vec![placeholder];
-        }
-
-        let issue_id = if is_mr {
-            0 // not used for MRs
-        } else {
-            self.data.issues[idx].issue.id
-        };
-
-        let client = self.ctx.client.clone();
-        let tx = self.ctx.async_tx.clone();
-        let username = username.to_string();
-        tokio::spawn(async move {
-            let users = client.search_users(&username).await;
-            match users {
-                Ok(users) => {
-                    if let Some(user) = users.first() {
-                        if is_mr {
-                            let payload = serde_json::json!({"assignee_ids": [user.id]});
-                            let result = client.update_mr(&project, iid, payload).await;
-                            let _ = tx.send(super::AsyncMsg::MrUpdated(result, project));
-                        } else {
-                            let input = serde_json::json!({
-                                "assigneesWidget": {
-                                    "assigneeIds": [format!("gid://gitlab/User/{}", user.id)]
-                                }
-                            });
-                            let result = client.update_issue(issue_id, input).await;
-                            let _ = tx.send(super::AsyncMsg::IssueUpdated(result));
-                        }
-                    } else {
-                        let _ = tx.send(super::AsyncMsg::ActionDone(Err(anyhow::anyhow!(
-                            "User '{username}' not found"
-                        ))));
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
-                }
-            }
-        });
-    }
-
-    pub(super) fn submit_comment(&mut self, body: &str) {
-        let client = self.ctx.client.clone();
-        let tx = self.ctx.async_tx.clone();
-        let body = body.to_string();
-
-        let (project, iid, is_mr) = match self.ui.focused.as_ref() {
-            Some(FocusedItem::Issue { project, iid, .. }) => {
-                (project.clone(), *iid, false)
-            }
-            Some(FocusedItem::Mr { project, iid }) => (project.clone(), *iid, true),
-            None => return,
-        };
-
-        let reply_id = self.ui.reply_discussion_id.take();
-        self.ui.loading = true;
-        tokio::spawn(async move {
-            let create_result = match &reply_id {
-                Some(disc_id) => {
-                    if is_mr {
-                        client
-                            .reply_to_mr_discussion(&project, iid, disc_id, &body)
-                            .await
-                    } else {
-                        client
-                            .reply_to_issue_discussion(&project, iid, disc_id, &body)
-                            .await
-                    }
-                }
-                None => {
-                    if is_mr {
-                        client.create_mr_note(&project, iid, &body).await
-                    } else {
-                        client.create_issue_note(&project, iid, &body).await
-                    }
-                }
-            };
-            if let Err(e) = create_result {
-                let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
-                return;
-            }
-            // Re-fetch discussions so the UI shows the new comment
-            let discussions = if is_mr {
-                client.list_mr_discussions(&project, iid).await
-            } else {
-                client.list_issue_discussions(&project, iid).await
-            };
-            let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
-        });
-    }
-
     pub(super) fn accept_completion(&mut self) {
         let Some(item) = self.ui.autocomplete.selected_item().cloned() else {
             return;
@@ -340,34 +183,65 @@ impl App {
         self.ui.overlay = Overlay::Error(msg);
     }
 
-    /// Return the index into `self.data.issues` / `self.data.mrs` for the focused item,
-    /// plus (`project_path`, iid, `is_mr`).
-    fn selected_item_idx(&self) -> Option<(usize, String, u64, bool)> {
-        match self.ui.focused.as_ref()? {
-            FocusedItem::Issue { project, id, iid } => {
-                let idx = self.data.issues.iter().position(|i| i.issue.id == *id)?;
-                Some((idx, project.clone(), *iid, false))
-            }
-            FocusedItem::Mr { project, iid } => {
-                let idx = self
-                    .data.mrs
-                    .iter()
-                    .position(|m| m.mr.iid == *iid && m.project_path == *project)?;
-                Some((idx, project.clone(), *iid, true))
-            }
-        }
-    }
 
     pub(super) fn handle_label_editor_result(&mut self, labels: &[String]) {
         for label in labels {
             *self.data.label_usage.entry(label.clone()).or_insert(0) += 1;
         }
-        self.update_labels(labels);
+        self.dispatch_update_labels(labels);
         self.ui.pending_cmds.push(Cmd::PersistLabelUsage);
     }
 
-    fn label_id_by_name(&self, name: &str) -> Option<u64> {
-        self.data.labels.iter().find(|l| l.name == name).map(|l| l.id)
+    /// Dispatch label update to the focused issue or MR.
+    pub(super) fn dispatch_update_labels(&mut self, labels: &[String]) {
+        match self.ui.focused.clone() {
+            Some(FocusedItem::Issue { id, .. }) => {
+                if let Some(issue) = self.data.issues.iter_mut().find(|i| i.issue.id == id) {
+                    issue.update_labels(labels, &self.data.labels, &self.ctx, &mut self.ui);
+                }
+            }
+            Some(FocusedItem::Mr { project, iid }) => {
+                if let Some(mr) = self.data.mrs.iter_mut().find(|m| m.mr.iid == iid && m.project_path == project) {
+                    mr.update_labels(labels, &self.ctx, &mut self.ui);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Dispatch assignee update to the focused issue or MR.
+    pub(super) fn dispatch_update_assignee(&mut self, username: &str) {
+        match self.ui.focused.clone() {
+            Some(FocusedItem::Issue { id, .. }) => {
+                if let Some(issue) = self.data.issues.iter_mut().find(|i| i.issue.id == id) {
+                    issue.update_assignee(username, &self.ctx, &mut self.ui);
+                }
+            }
+            Some(FocusedItem::Mr { project, iid }) => {
+                if let Some(mr) = self.data.mrs.iter_mut().find(|m| m.mr.iid == iid && m.project_path == project) {
+                    mr.update_assignee(username, &self.ctx, &mut self.ui);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Dispatch comment submit to the focused issue or MR.
+    pub(super) fn dispatch_submit_comment(&mut self, body: &str) {
+        let reply_id = self.ui.reply_discussion_id.take();
+        match self.ui.focused.clone() {
+            Some(FocusedItem::Issue { id, .. }) => {
+                if let Some(issue) = self.data.issues.iter().find(|i| i.issue.id == id) {
+                    issue.submit_comment(body, reply_id, &self.ctx, &mut self.ui);
+                }
+            }
+            Some(FocusedItem::Mr { project, iid }) => {
+                if let Some(mr) = self.data.mrs.iter().find(|m| m.mr.iid == iid && m.project_path == project) {
+                    mr.submit_comment(body, reply_id, &self.ctx, &mut self.ui);
+                }
+            }
+            None => {}
+        }
     }
 
     pub(super) fn current_detail_issue(&self) -> Option<&TrackedIssue> {

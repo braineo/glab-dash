@@ -7,7 +7,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::cmd::EventResult;
-use crate::gitlab::types::TrackedIssue;
+use crate::gitlab::types::{ProjectLabel, TrackedIssue, User};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
 
@@ -251,5 +251,119 @@ impl TrackedIssue {
             max_code_len,
         ));
         ui.overlay = Overlay::Chord(ChordContext::Iteration(pos));
+    }
+
+    // ── Mutations (called from overlay completion handlers) ──────────
+
+    /// Update labels via GraphQL diff (add/remove GIDs).
+    pub fn update_labels(
+        &mut self,
+        labels: &[String],
+        all_labels: &[ProjectLabel],
+        ctx: &AppCtx,
+        ui: &mut UiState,
+    ) {
+        let old_labels = &self.issue.labels;
+        let new_set: std::collections::HashSet<&str> =
+            labels.iter().map(String::as_str).collect();
+        let old_set: std::collections::HashSet<&str> =
+            old_labels.iter().map(String::as_str).collect();
+
+        let label_id = |name: &str| -> Option<u64> {
+            all_labels.iter().find(|l| l.name == name).map(|l| l.id)
+        };
+
+        let add_gids: Vec<String> = new_set
+            .difference(&old_set)
+            .filter_map(|name| label_id(name))
+            .map(|id| format!("gid://gitlab/Label/{id}"))
+            .collect();
+        let remove_gids: Vec<String> = old_set
+            .difference(&new_set)
+            .filter_map(|name| label_id(name))
+            .map(|id| format!("gid://gitlab/Label/{id}"))
+            .collect();
+
+        self.issue.labels = labels.to_vec();
+        let issue_id = self.issue.id;
+        let input = serde_json::json!({
+            "labelsWidget": {
+                "addLabelIds": add_gids,
+                "removeLabelIds": remove_gids,
+            }
+        });
+        let client = ctx.client.clone();
+        let tx = ctx.async_tx.clone();
+        tokio::spawn(async move {
+            let result = client.update_issue(issue_id, input).await;
+            let _ = tx.send(super::AsyncMsg::IssueUpdated(result));
+        });
+        ui.dirty.issues = true;
+    }
+
+    /// Update assignee via GraphQL.
+    pub fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
+        let placeholder = User {
+            id: 0,
+            username: username.to_string(),
+            name: username.to_string(),
+            avatar_url: None,
+            web_url: String::new(),
+        };
+        self.issue.assignees = vec![placeholder];
+
+        let issue_id = self.issue.id;
+        let client = ctx.client.clone();
+        let tx = ctx.async_tx.clone();
+        let username = username.to_string();
+        tokio::spawn(async move {
+            let users = client.search_users(&username).await;
+            match users {
+                Ok(users) => {
+                    if let Some(user) = users.first() {
+                        let input = serde_json::json!({
+                            "assigneesWidget": {
+                                "assigneeIds": [format!("gid://gitlab/User/{}", user.id)]
+                            }
+                        });
+                        let result = client.update_issue(issue_id, input).await;
+                        let _ = tx.send(super::AsyncMsg::IssueUpdated(result));
+                    } else {
+                        let _ = tx.send(super::AsyncMsg::ActionDone(Err(anyhow::anyhow!(
+                            "User '{username}' not found"
+                        ))));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
+                }
+            }
+        });
+        ui.dirty.issues = true;
+    }
+
+    /// Submit a comment or reply.
+    pub fn submit_comment(&self, body: &str, reply_discussion_id: Option<String>, ctx: &AppCtx, ui: &mut UiState) {
+        let client = ctx.client.clone();
+        let tx = ctx.async_tx.clone();
+        let body = body.to_string();
+        let project = self.project_path.clone();
+        let iid = self.issue.iid;
+
+        ui.loading = true;
+        tokio::spawn(async move {
+            let create_result = match &reply_discussion_id {
+                Some(disc_id) => {
+                    client.reply_to_issue_discussion(&project, iid, disc_id, &body).await
+                }
+                None => client.create_issue_note(&project, iid, &body).await,
+            };
+            if let Err(e) = create_result {
+                let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
+                return;
+            }
+            let discussions = client.list_issue_discussions(&project, iid).await;
+            let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
+        });
     }
 }
