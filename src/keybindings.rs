@@ -628,15 +628,3 @@ pub fn match_group(bindings: &[Binding], key: &KeyEvent) -> Option<KeyAction> {
     bindings.iter().find(|b| b.matches(key)).map(|b| b.action)
 }
 
-/// Find the first matching binding across all groups for a view.
-pub fn match_binding(view: View, key: &KeyEvent) -> Option<KeyAction> {
-    let groups = binding_groups_for_view(view);
-    for group in groups {
-        for binding in group.bindings {
-            if binding.matches(key) {
-                return Some(binding.action);
-            }
-        }
-    }
-    None
-}
