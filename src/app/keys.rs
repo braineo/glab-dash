@@ -79,9 +79,7 @@ impl App {
         // Global bindings (q, ?, Esc, E, t)
         if let Some(action) = keybindings::match_group(keybindings::GLOBAL_BINDINGS, key) {
             self.execute_global_action(action);
-            return matches!(action, KeyAction::Back)
-                && self.ui.view_stack.is_empty()
-                && matches!(self.ui.overlay, Overlay::Confirm);
+            return false;
         }
         // Global navigation (1-4)
         if let Some(action) = keybindings::match_group(keybindings::GLOBAL_NAV_BINDINGS, key) {
