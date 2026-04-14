@@ -15,12 +15,12 @@ impl App {
 
     /// Fetch work item statuses for each tracking project (for the iteration board).
     fn fetch_statuses_for_board(&self) {
-        for project in &self.config.tracking_projects {
-            if self.work_item_statuses.contains_key(project) {
+        for project in &self.ctx.config.tracking_projects {
+            if self.data.work_item_statuses.contains_key(project) {
                 continue; // already cached
             }
-            let client = self.client.clone();
-            let tx = self.async_tx.clone();
+            let client = self.ctx.client.clone();
+            let tx = self.ctx.async_tx.clone();
             let project = project.clone();
             tokio::spawn(async move {
                 let result = client.fetch_work_item_statuses(&project).await;
@@ -59,18 +59,18 @@ impl App {
     /// Record fetch duration. Called by each data handler; the last one to arrive
     /// captures the total wall-clock time from `fetch_all()`.
     pub(super) fn record_fetch_done(&mut self) {
-        self.loading = false;
-        if let Some(started) = self.fetch_started_at {
-            self.last_fetch_ms = Some(Self::now_millis().saturating_sub(started));
+        self.ui.loading = false;
+        if let Some(started) = self.ui.fetch_started_at {
+            self.ui.last_fetch_ms = Some(Self::now_millis().saturating_sub(started));
         }
     }
 
     fn fetch_issues(&self) {
-        let client = self.client.clone();
-        let tx = self.async_tx.clone();
-        let updated_after = self.last_fetched_at.map(Self::updated_after_param);
+        let client = self.ctx.client.clone();
+        let tx = self.ctx.async_tx.clone();
+        let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
-        let members = self.config.all_members();
+        let members = self.ctx.config.all_members();
         tokio::spawn(async move {
             let ua = updated_after.as_deref();
             let (tracking, assigned) = tokio::join!(
@@ -91,10 +91,10 @@ impl App {
     }
 
     fn fetch_mrs(&self) {
-        let client = self.client.clone();
-        let members = self.config.all_members();
-        let tx = self.async_tx.clone();
-        let updated_after = self.last_fetched_at.map(Self::updated_after_param);
+        let client = self.ctx.client.clone();
+        let members = self.ctx.config.all_members();
+        let tx = self.ctx.async_tx.clone();
+        let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
         tokio::spawn(async move {
             let ua = updated_after.as_deref();
@@ -109,9 +109,9 @@ impl App {
     }
 
     fn fetch_labels(&self) {
-        let client = self.client.clone();
-        let projects = self.config.tracking_projects.clone();
-        let tx = self.async_tx.clone();
+        let client = self.ctx.client.clone();
+        let projects = self.ctx.config.tracking_projects.clone();
+        let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
             let mut all_labels = Vec::new();
             let mut seen_ids = std::collections::HashSet::new();
@@ -129,9 +129,9 @@ impl App {
     }
 
     pub(super) fn fetch_notes_for_issue(&self, project: &str, iid: u64) {
-        let client = self.client.clone();
+        let client = self.ctx.client.clone();
         let project = project.to_string();
-        let tx = self.async_tx.clone();
+        let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
             let result = client.list_issue_discussions(&project, iid).await;
             let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
@@ -148,12 +148,12 @@ impl App {
         close_only: bool,
     ) {
         // If we already have cached statuses for this project, show chord immediately
-        if let Some(statuses) = self.work_item_statuses.get(project) {
+        if let Some(statuses) = self.data.work_item_statuses.get(project) {
             if statuses.is_empty() {
                 // No custom statuses — fall back to open/close toggle
                 let item_state = self
-                    .views.issue_list
-                    .selected_issue(&self.issues)
+                    .ui.views.issue_list
+                    .selected_issue(&self.data.issues)
                     .or_else(|| self.current_detail_issue())
                     .map_or("opened", |i| i.issue.state.as_str());
                 let action = if item_state == "opened" {
@@ -161,7 +161,7 @@ impl App {
                 } else {
                     super::ConfirmAction::ReopenIssue(issue_id, iid)
                 };
-                self.overlay = super::Overlay::Confirm(action);
+                self.ui.overlay = super::Overlay::Confirm(action);
             } else {
                 self.show_status_chord(project, issue_id, iid, close_only);
             }
@@ -169,10 +169,10 @@ impl App {
         }
 
         // Fetch statuses from GitLab
-        let client = self.client.clone();
-        let tx = self.async_tx.clone();
+        let client = self.ctx.client.clone();
+        let tx = self.ctx.async_tx.clone();
         let project = project.to_string();
-        self.loading = true;
+        self.ui.loading = true;
         tokio::spawn(async move {
             let result = client.fetch_work_item_statuses(&project).await;
             let _ = tx.send(AsyncMsg::StatusesLoaded(
@@ -182,9 +182,9 @@ impl App {
     }
 
     pub(super) fn fetch_notes_for_mr(&self, project: &str, iid: u64) {
-        let client = self.client.clone();
+        let client = self.ctx.client.clone();
         let project = project.to_string();
-        let tx = self.async_tx.clone();
+        let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
             let result = client.list_mr_discussions(&project, iid).await;
             let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
@@ -192,8 +192,8 @@ impl App {
     }
 
     fn fetch_iterations(&self) {
-        let client = self.client.clone();
-        let tx = self.async_tx.clone();
+        let client = self.ctx.client.clone();
+        let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
             let result = client.fetch_iterations().await;
             let _ = tx.send(AsyncMsg::IterationsLoaded(result));
@@ -202,26 +202,26 @@ impl App {
 
     /// Fetch "added to iteration" dates for unplanned work detection.
     pub(super) fn fetch_unplanned_work_data(&mut self) {
-        let Some(current_iter) = self.views.planning.current_iteration.as_ref() else {
+        let Some(current_iter) = self.ui.views.planning.current_iteration.as_ref() else {
             return;
         };
         let current_id = current_iter.id.clone();
 
         // Collect issues in the current iteration that we haven't cached yet
         let items: Vec<(String, String, u64)> = self
-            .issues
+            .data.issues
             .iter()
             .filter(|i| {
                 i.issue
                     .iteration
                     .as_ref()
                     .is_some_and(|it| it.id == current_id)
-                    && !self.unplanned_work_cache.contains_key(&i.issue.id)
+                    && !self.data.unplanned_work_cache.contains_key(&i.issue.id)
             })
             .map(|i| {
                 // Derive namespace from project_path (same as the tracking project ancestor)
                 let namespace = self
-                    .config
+                    .ctx.config
                     .tracking_projects
                     .first()
                     .cloned()
@@ -231,15 +231,15 @@ impl App {
             .collect();
 
         if items.is_empty() {
-            self.unplanned_work_state = FetchState::Done;
+            self.data.unplanned_work_state = FetchState::Done;
             self.compute_iteration_health();
             return;
         }
 
-        self.unplanned_work_state = FetchState::InFlight;
+        self.data.unplanned_work_state = FetchState::InFlight;
 
-        let client = self.client.clone();
-        let tx = self.async_tx.clone();
+        let client = self.ctx.client.clone();
+        let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
             let result = client.fetch_iteration_added_dates_batch(items).await;
             let _ = tx.send(AsyncMsg::UnplannedWorkLoaded(result));
@@ -248,10 +248,10 @@ impl App {
 
     /// Trigger unplanned work fetch if conditions are met.
     pub(super) fn maybe_fetch_health_data(&mut self) {
-        if self.views.planning.current_iteration.is_none() {
+        if self.ui.views.planning.current_iteration.is_none() {
             return;
         }
-        if self.unplanned_work_state != FetchState::InFlight {
+        if self.data.unplanned_work_state != FetchState::InFlight {
             self.fetch_unplanned_work_data();
         }
     }

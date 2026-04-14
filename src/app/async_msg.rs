@@ -13,16 +13,16 @@ impl App {
                     self.merge_issues(issues, incremental);
                     // Snapshot all issues (open + closed) for DB persistence
                     // before filtering to open-only in memory.
-                    self.pending_cmds
-                        .push(Cmd::PersistIssuesFull(self.issues.clone()));
-                    self.issues.retain(|i| i.issue.state == "opened");
+                    self.ui.pending_cmds
+                        .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
+                    self.data.issues.retain(|i| i.issue.state == "opened");
                     let now = Self::now_secs();
-                    self.last_fetched_at = Some(now);
-                    self.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
-                    self.error = None;
+                    self.ui.last_fetched_at = Some(now);
+                    self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
+                    self.ui.error = None;
                     self.record_fetch_done();
-                    self.dirty.issues = true;
-                    self.pending_cmds.push(Cmd::FetchHealthData);
+                    self.ui.dirty.issues = true;
+                    self.ui.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
                     self.record_fetch_done();
@@ -35,15 +35,15 @@ impl App {
                     self.merge_mrs(mrs, incremental);
                     // Snapshot all MRs (open + closed) for DB persistence
                     // before filtering to open-only in memory.
-                    self.pending_cmds
-                        .push(Cmd::PersistMrsFull(self.mrs.clone()));
-                    self.mrs.retain(|m| m.mr.state == "opened");
+                    self.ui.pending_cmds
+                        .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
+                    self.data.mrs.retain(|m| m.mr.state == "opened");
                     let now = Self::now_secs();
-                    self.last_fetched_at = Some(now);
-                    self.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
+                    self.ui.last_fetched_at = Some(now);
+                    self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
                     self.record_fetch_done();
-                    self.error = None;
-                    self.dirty.mrs = true;
+                    self.ui.error = None;
+                    self.ui.dirty.mrs = true;
                 }
                 Err(e) => {
                     self.record_fetch_done();
@@ -51,15 +51,15 @@ impl App {
                 }
             },
             AsyncMsg::DiscussionsLoaded(result) => {
-                self.loading = false;
+                self.ui.loading = false;
                 match result {
                     Ok(discussions) => {
-                        if self.view == View::IssueDetail {
-                            self.views.issue_detail.discussions = discussions;
-                            self.views.issue_detail.loading_notes = false;
-                        } else if self.view == View::MrDetail {
-                            self.views.mr_detail.discussions = discussions;
-                            self.views.mr_detail.loading_notes = false;
+                        if self.ui.view == View::IssueDetail {
+                            self.ui.views.issue_detail.discussions = discussions;
+                            self.ui.views.issue_detail.loading_notes = false;
+                        } else if self.ui.view == View::MrDetail {
+                            self.ui.views.mr_detail.discussions = discussions;
+                            self.ui.views.mr_detail.loading_notes = false;
                         }
                     }
                     Err(e) => {
@@ -68,11 +68,11 @@ impl App {
                 }
             }
             AsyncMsg::ActionDone(result) => {
-                self.loading = false;
+                self.ui.loading = false;
                 match result {
                     Ok(_msg) => {
-                        self.error = None;
-                        self.pending_cmds.push(Cmd::FetchAll);
+                        self.ui.error = None;
+                        self.ui.pending_cmds.push(Cmd::FetchAll);
                     }
                     Err(e) => {
                         self.show_error(format!("{e:#}"));
@@ -80,72 +80,72 @@ impl App {
                 }
             }
             AsyncMsg::IssueUpdated(result) => {
-                self.loading = false;
+                self.ui.loading = false;
                 match result {
                     Ok(issue) => {
-                        if let Some(pos) = self.issues.iter().position(|e| e.issue.id == issue.id) {
-                            self.issues[pos].issue = issue;
+                        if let Some(pos) = self.data.issues.iter().position(|e| e.issue.id == issue.id) {
+                            self.data.issues[pos].issue = issue;
                         }
-                        self.error = None;
-                        self.dirty.issues = true;
-                        self.pending_cmds.push(Cmd::PersistIssues);
+                        self.ui.error = None;
+                        self.ui.dirty.issues = true;
+                        self.ui.pending_cmds.push(Cmd::PersistIssues);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
             }
             AsyncMsg::MrUpdated(result, project_path) => {
-                self.loading = false;
+                self.ui.loading = false;
                 match result {
                     Ok(mr) => {
                         if let Some(pos) = self
-                            .mrs
+                            .data.mrs
                             .iter()
                             .position(|e| e.mr.iid == mr.iid && e.project_path == project_path)
                         {
-                            self.mrs[pos].mr = mr;
+                            self.data.mrs[pos].mr = mr;
                         }
-                        self.error = None;
-                        self.dirty.mrs = true;
-                        self.pending_cmds.push(Cmd::PersistMrs);
+                        self.ui.error = None;
+                        self.ui.dirty.mrs = true;
+                        self.ui.pending_cmds.push(Cmd::PersistMrs);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
             }
             AsyncMsg::IssueStatusUpdated(result) => {
-                self.loading = false;
+                self.ui.loading = false;
                 match result {
                     Ok((project_path, iid, status_name)) => {
                         if let Some(pos) = self
-                            .issues
+                            .data.issues
                             .iter()
                             .position(|e| e.issue.iid == iid && e.project_path == project_path)
                         {
-                            self.issues[pos].issue.custom_status = Some(status_name);
+                            self.data.issues[pos].issue.custom_status = Some(status_name);
                         }
-                        self.error = None;
-                        self.dirty.issues = true;
-                        self.pending_cmds.push(Cmd::PersistIssues);
+                        self.ui.error = None;
+                        self.ui.dirty.issues = true;
+                        self.ui.pending_cmds.push(Cmd::PersistIssues);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
             }
             AsyncMsg::LabelsLoaded(result) => {
                 if let Ok(labels) = result {
-                    self.labels = labels;
-                    self.dirty.labels = true;
-                    self.pending_cmds.push(Cmd::PersistLabels);
+                    self.data.labels = labels;
+                    self.ui.dirty.labels = true;
+                    self.ui.pending_cmds.push(Cmd::PersistLabels);
                 }
             }
             AsyncMsg::StatusesLoaded(result, project, issue_id, iid, close_only) => {
-                self.loading = false;
+                self.ui.loading = false;
                 let is_background = issue_id == 0 && iid == 0;
                 match result {
                     Ok(statuses) => {
                         if statuses.is_empty() && !is_background {
                             // No custom statuses — fall back to open/close toggle
                             let item_state = self
-                                .views.issue_list
-                                .selected_issue(&self.issues)
+                                .ui.views.issue_list
+                                .selected_issue(&self.data.issues)
                                 .or_else(|| self.current_detail_issue())
                                 .map_or("opened", |i| i.issue.state.as_str());
                             let action = if item_state == "opened" {
@@ -153,11 +153,11 @@ impl App {
                             } else {
                                 ConfirmAction::ReopenIssue(issue_id, iid)
                             };
-                            self.overlay = Overlay::Confirm(action);
+                            self.ui.overlay = Overlay::Confirm(action);
                         } else if !statuses.is_empty() {
-                            self.work_item_statuses.insert(project.clone(), statuses);
-                            self.dirty.statuses = true;
-                            self.pending_cmds.push(Cmd::PersistStatuses {
+                            self.data.work_item_statuses.insert(project.clone(), statuses);
+                            self.ui.dirty.statuses = true;
+                            self.ui.pending_cmds.push(Cmd::PersistStatuses {
                                 project: project.clone(),
                             });
                             if !is_background {
@@ -174,28 +174,28 @@ impl App {
             }
             AsyncMsg::IterationsLoaded(result) => match result {
                 Ok(iters) => {
-                    self.iterations = iters;
+                    self.data.iterations = iters;
                     self.classify_iterations();
-                    self.dirty.iterations = true;
-                    self.pending_cmds.push(Cmd::PersistIterations);
-                    self.pending_cmds.push(Cmd::FetchHealthData);
+                    self.ui.dirty.iterations = true;
+                    self.ui.pending_cmds.push(Cmd::PersistIterations);
+                    self.ui.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
                     self.show_error(format!("Iterations: {e:#}"));
                 }
             },
             AsyncMsg::IterationUpdated(result, issue_id, old_iteration) => {
-                self.loading = false;
+                self.ui.loading = false;
                 match result {
                     Ok(()) => {
-                        self.error = None;
-                        self.pending_cmds.push(Cmd::PersistIssues);
+                        self.ui.error = None;
+                        self.ui.pending_cmds.push(Cmd::PersistIssues);
                     }
                     Err(e) => {
                         // Revert the optimistic update
-                        if let Some(pos) = self.issues.iter().position(|i| i.issue.id == issue_id) {
-                            self.issues[pos].issue.iteration = old_iteration;
-                            self.dirty.issues = true;
+                        if let Some(pos) = self.data.issues.iter().position(|i| i.issue.id == issue_id) {
+                            self.data.issues[pos].issue.iteration = old_iteration;
+                            self.ui.dirty.issues = true;
                         }
                         self.show_error(format!("Move iteration: {e:#}"));
                     }
@@ -203,66 +203,66 @@ impl App {
             }
             AsyncMsg::UnplannedWorkLoaded(result) => {
                 if let Ok(dates) = result {
-                    self.unplanned_work_cache.extend(dates);
+                    self.data.unplanned_work_cache.extend(dates);
                 }
-                self.unplanned_work_state = FetchState::Done;
+                self.data.unplanned_work_state = FetchState::Done;
                 // Unplanned work affects health computation, use issues dirty flag
-                self.dirty.issues = true;
-                self.pending_cmds.push(Cmd::PersistUnplannedWork);
+                self.ui.dirty.issues = true;
+                self.ui.pending_cmds.push(Cmd::PersistUnplannedWork);
             }
         }
     }
 
-    /// Merge incoming issues into `self.issues`, preserving newer cached entries.
+    /// Merge incoming issues into `self.data.issues`, preserving newer cached entries.
     fn merge_issues(&mut self, issues: Vec<TrackedIssue>, incremental: bool) {
         if incremental {
             for item in issues {
-                if let Some(pos) = self.issues.iter().position(|i| i.issue.id == item.issue.id) {
-                    if self.issues[pos].issue.updated_at <= item.issue.updated_at {
-                        self.issues[pos] = item;
+                if let Some(pos) = self.data.issues.iter().position(|i| i.issue.id == item.issue.id) {
+                    if self.data.issues[pos].issue.updated_at <= item.issue.updated_at {
+                        self.data.issues[pos] = item;
                     }
                 } else {
-                    self.issues.push(item);
+                    self.data.issues.push(item);
                 }
             }
         } else {
             let mut new_issues = issues;
             for new_iss in &mut new_issues {
                 if let Some(pos) = self
-                    .issues
+                    .data.issues
                     .iter()
                     .position(|i| i.issue.id == new_iss.issue.id)
                 {
-                    let old_iss = &self.issues[pos];
+                    let old_iss = &self.data.issues[pos];
                     if old_iss.issue.updated_at > new_iss.issue.updated_at {
                         *new_iss = old_iss.clone();
                     }
                 }
             }
-            self.issues = new_issues;
+            self.data.issues = new_issues;
         }
     }
 
-    /// Merge incoming MRs into `self.mrs`, preserving newer cached entries.
+    /// Merge incoming MRs into `self.data.mrs`, preserving newer cached entries.
     /// Uses second precision: GraphQL truncates sub-second timestamps.
     fn merge_mrs(&mut self, mrs: Vec<TrackedMergeRequest>, incremental: bool) {
         if incremental {
             for item in mrs {
-                if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == item.mr.id) {
-                    let old_secs = self.mrs[pos].mr.updated_at.timestamp();
+                if let Some(pos) = self.data.mrs.iter().position(|m| m.mr.id == item.mr.id) {
+                    let old_secs = self.data.mrs[pos].mr.updated_at.timestamp();
                     let new_secs = item.mr.updated_at.timestamp();
                     if old_secs <= new_secs {
-                        self.mrs[pos] = item;
+                        self.data.mrs[pos] = item;
                     }
                 } else {
-                    self.mrs.push(item);
+                    self.data.mrs.push(item);
                 }
             }
         } else {
             let mut new_mrs = mrs;
             for new_mr in &mut new_mrs {
-                if let Some(pos) = self.mrs.iter().position(|m| m.mr.id == new_mr.mr.id) {
-                    let old_mr = &self.mrs[pos];
+                if let Some(pos) = self.data.mrs.iter().position(|m| m.mr.id == new_mr.mr.id) {
+                    let old_mr = &self.data.mrs[pos];
                     let old_secs = old_mr.mr.updated_at.timestamp();
                     let new_secs = new_mr.mr.updated_at.timestamp();
                     if old_secs > new_secs {
@@ -270,7 +270,7 @@ impl App {
                     }
                 }
             }
-            self.mrs = new_mrs;
+            self.data.mrs = new_mrs;
         }
     }
 }

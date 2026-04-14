@@ -10,31 +10,31 @@ use super::{App, ChordContext, Overlay, View};
 impl App {
     /// Returns a mutable reference to the `UserFilter` for the current view.
     pub(super) fn active_filter_mut(&mut self) -> &mut UserFilter {
-        match self.view {
-            View::IssueList | View::IssueDetail => &mut self.views.issue_list.filter,
-            View::MrList | View::MrDetail => &mut self.views.mr_list.filter,
+        match self.ui.view {
+            View::IssueList | View::IssueDetail => &mut self.ui.views.issue_list.filter,
+            View::MrList | View::MrDetail => &mut self.ui.views.mr_list.filter,
             View::Planning => {
-                let col = self.views.planning.focused_column;
-                &mut self.views.planning.columns[col].filter
+                let col = self.ui.views.planning.focused_column;
+                &mut self.ui.views.planning.columns[col].filter
             }
-            View::Dashboard => &mut self.views.board.filter,
+            View::Dashboard => &mut self.ui.views.board.filter,
         }
     }
 
     pub(super) fn active_filter(&self) -> &UserFilter {
-        match self.view {
-            View::IssueList | View::IssueDetail => &self.views.issue_list.filter,
-            View::MrList | View::MrDetail => &self.views.mr_list.filter,
+        match self.ui.view {
+            View::IssueList | View::IssueDetail => &self.ui.views.issue_list.filter,
+            View::MrList | View::MrDetail => &self.ui.views.mr_list.filter,
             View::Planning => {
-                let col = self.views.planning.focused_column;
-                &self.views.planning.columns[col].filter
+                let col = self.ui.views.planning.focused_column;
+                &self.ui.views.planning.columns[col].filter
             }
-            View::Dashboard => &self.views.board.filter,
+            View::Dashboard => &self.ui.views.board.filter,
         }
     }
 
     pub(super) fn action_sort_by_field(&mut self) {
-        let kind = match self.view {
+        let kind = match self.ui.view {
             View::IssueList | View::IssueDetail | View::Planning | View::Dashboard => "issue",
             View::MrList | View::MrDetail => "merge_request",
         };
@@ -48,7 +48,7 @@ impl App {
         }
 
         // Sort config presets
-        for p in &self.config.sort_presets {
+        for p in &self.ctx.config.sort_presets {
             if p.kind == kind {
                 labels.push(format!("▸ {}", p.name));
             }
@@ -64,12 +64,12 @@ impl App {
         }
 
         // Label scope sorts from config
-        for order in &self.config.label_sort_orders {
+        for order in &self.ctx.config.label_sort_orders {
             labels.push(format!("{}::", order.scope));
         }
 
-        self.chord_state = Some(chord_popup::ChordState::new_for_names("Sort by", labels));
-        self.overlay = Overlay::Chord(ChordContext::SortField);
+        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names("Sort by", labels));
+        self.ui.overlay = Overlay::Chord(ChordContext::SortField);
     }
 
     fn handle_sort_field_chosen(&mut self, value: &str) {
@@ -93,11 +93,11 @@ impl App {
         };
 
         let labels = vec!["↓ Descending".to_string(), "↑ Ascending".to_string()];
-        self.chord_state = Some(chord_popup::ChordState::new_for_names(
+        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names(
             &format!("Sort {value}"),
             labels,
         ));
-        self.overlay = Overlay::Chord(ChordContext::SortDirection(field_name, label_scope));
+        self.ui.overlay = Overlay::Chord(ChordContext::SortDirection(field_name, label_scope));
     }
 
     fn handle_sort_direction_chosen(
@@ -126,13 +126,13 @@ impl App {
 
     fn apply_sort_specs(&mut self, specs: Vec<crate::sort::SortSpec>) {
         self.active_filter_mut().sort_specs = specs;
-        self.dirty.view_state = true;
-        self.pending_cmds.push(Cmd::PersistViewState);
+        self.ui.dirty.view_state = true;
+        self.ui.pending_cmds.push(Cmd::PersistViewState);
     }
 
     fn apply_sort_preset(&mut self, name: &str) {
         let specs = self
-            .config
+            .ctx.config
             .sort_presets
             .iter()
             .find(|p| p.name == name)
@@ -156,7 +156,7 @@ impl App {
     }
 
     pub(super) fn apply_preset(&mut self, name: &str) {
-        if let Some(preset) = self.config.filters.iter().find(|f| f.name == name) {
+        if let Some(preset) = self.ctx.config.filters.iter().find(|f| f.name == name) {
             let conditions: Vec<FilterCondition> = preset
                 .conditions
                 .iter()
@@ -172,13 +172,13 @@ impl App {
                 .collect();
 
             self.active_filter_mut().conditions = conditions;
-            self.dirty.view_state = true;
-            self.pending_cmds.push(Cmd::PersistViewState);
+            self.ui.dirty.view_state = true;
+            self.ui.pending_cmds.push(Cmd::PersistViewState);
         }
     }
 
     pub(super) fn action_show_filter_menu(&mut self) {
-        let kind = match self.view {
+        let kind = match self.ui.view {
             View::IssueList | View::IssueDetail | View::Planning | View::Dashboard => "issue",
             View::MrList | View::MrDetail => "merge_request",
         };
@@ -198,19 +198,19 @@ impl App {
         }
 
         // ── Presets section ──
-        let has_presets = self.config.filters.iter().any(|f| f.kind == kind);
+        let has_presets = self.ctx.config.filters.iter().any(|f| f.kind == kind);
         if has_presets {
             labels.push(chord_popup::DIVIDER.to_string());
             labels.push(format!("{}Presets", chord_popup::HEADER));
-            for f in &self.config.filters {
+            for f in &self.ctx.config.filters {
                 if f.kind == kind {
                     labels.push(format!("▸ {}", f.name));
                 }
             }
         }
 
-        self.chord_state = Some(chord_popup::ChordState::new_for_names("Filter", labels));
-        self.overlay = Overlay::Chord(ChordContext::FilterMenu);
+        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names("Filter", labels));
+        self.ui.overlay = Overlay::Chord(ChordContext::FilterMenu);
     }
 
     fn handle_filter_menu_chosen(&mut self, value: &str) {
@@ -235,8 +235,8 @@ impl App {
             if let Some(idx) = conditions.iter().position(|c| c.display() == display) {
                 conditions.remove(idx);
             }
-            self.dirty.view_state = true;
-            self.pending_cmds.push(Cmd::PersistViewState);
+            self.ui.dirty.view_state = true;
+            self.ui.pending_cmds.push(Cmd::PersistViewState);
             // Reopen the filter menu
             self.action_show_filter_menu();
         }
@@ -244,11 +244,11 @@ impl App {
 
     fn show_filter_field_chord(&mut self) {
         let labels: Vec<String> = Field::all().iter().map(|f| f.name().to_string()).collect();
-        self.chord_state = Some(chord_popup::ChordState::new_for_names(
+        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names(
             "Filter Field",
             labels,
         ));
-        self.overlay = Overlay::Chord(ChordContext::FilterField);
+        self.ui.overlay = Overlay::Chord(ChordContext::FilterField);
     }
 
     fn handle_filter_field_chosen(&mut self, value: &str) {
@@ -270,11 +270,11 @@ impl App {
                 )
             })
             .collect();
-        self.chord_state = Some(chord_popup::ChordState::new_for_names(
+        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names(
             &format!("{value}:"),
             labels,
         ));
-        self.overlay = Overlay::Chord(ChordContext::FilterOp(field));
+        self.ui.overlay = Overlay::Chord(ChordContext::FilterOp(field));
     }
 
     fn handle_filter_op_chosen(&mut self, field: Field, value: &str) {
@@ -292,23 +292,23 @@ impl App {
         };
 
         // Set up filter editor at the value step with field and op pre-selected
-        self.filter_editor_state.reset();
-        self.filter_editor_state.selected_field = Some(field);
-        self.filter_editor_state.selected_op = Some(op);
-        self.filter_editor_state.step = filter_editor::EditorStep::EnterValue;
-        self.filter_editor_state.suggestions = self.get_filter_suggestions();
-        self.overlay = Overlay::FilterEditor;
+        self.ui.filter_editor_state.reset();
+        self.ui.filter_editor_state.selected_field = Some(field);
+        self.ui.filter_editor_state.selected_op = Some(op);
+        self.ui.filter_editor_state.step = filter_editor::EditorStep::EnterValue;
+        self.ui.filter_editor_state.suggestions = self.get_filter_suggestions();
+        self.ui.overlay = Overlay::FilterEditor;
     }
 
     pub(super) fn action_clear_filters(&mut self) {
         self.active_filter_mut().conditions.clear();
-        self.dirty.view_state = true;
-        self.pending_cmds.push(Cmd::PersistViewState);
+        self.ui.dirty.view_state = true;
+        self.ui.pending_cmds.push(Cmd::PersistViewState);
     }
 
     pub(super) fn get_filter_suggestions(&self) -> Vec<String> {
-        match &self.filter_editor_state.selected_field {
-            Some(Field::Label) => self.labels.iter().map(|l| l.name.clone()).collect(),
+        match &self.ui.filter_editor_state.selected_field {
+            Some(Field::Label) => self.data.labels.iter().map(|l| l.name.clone()).collect(),
             Some(Field::State) => {
                 let mut states = vec![
                     "opened".to_string(),
@@ -316,7 +316,7 @@ impl App {
                     "merged".to_string(),
                 ];
                 // Add any custom status names from cached statuses
-                for statuses in self.work_item_statuses.values() {
+                for statuses in self.data.work_item_statuses.values() {
                     for s in statuses {
                         let name = s.name.to_lowercase();
                         if !states
@@ -341,7 +341,7 @@ impl App {
     }
 
     pub(super) fn handle_chord_result(&mut self, value: &str) {
-        let context = std::mem::replace(&mut self.overlay, Overlay::None);
+        let context = std::mem::replace(&mut self.ui.overlay, Overlay::None);
         match context {
             Overlay::Chord(ChordContext::Status(project, issue_id, iid)) => {
                 self.set_issue_status(&project, issue_id, iid, value);
@@ -373,7 +373,7 @@ impl App {
 
     pub(super) fn handle_picker_result(&mut self, values: &[String]) {
         // Determine what we picked for based on overlay context
-        let context = std::mem::replace(&mut self.overlay, Overlay::None);
+        let context = std::mem::replace(&mut self.ui.overlay, Overlay::None);
         match context {
             Overlay::Picker(super::PickerContext::Assignee) => {
                 if let Some(username) = values.first() {
@@ -383,23 +383,23 @@ impl App {
             Overlay::Picker(super::PickerContext::Team) => {
                 if let Some(name) = values.first() {
                     if name == "All" {
-                        self.active_team = None;
+                        self.ui.active_team = None;
                     } else {
-                        self.active_team = self.config.teams.iter().position(|t| t.name == *name);
+                        self.ui.active_team = self.ctx.config.teams.iter().position(|t| t.name == *name);
                     }
-                    self.dirty.issues = true;
-                    self.dirty.mrs = true;
-                    self.dirty.selection = true;
+                    self.ui.dirty.issues = true;
+                    self.ui.dirty.mrs = true;
+                    self.ui.dirty.selection = true;
                 }
             }
             Overlay::Picker(super::PickerContext::ReplyThread(infos)) => {
-                if let (Some(ps), Some(picked_label)) = (&self.picker_state, values.first())
+                if let (Some(ps), Some(picked_label)) = (&self.ui.picker_state, values.first())
                     && let Some(idx) = ps.items.iter().position(|item| item == picked_label)
                     && let Some(info) = infos.get(idx)
                 {
-                    self.reply_discussion_id = Some(info.discussion_id.clone());
-                    self.comment_input = crate::ui::components::input::CommentInput::default();
-                    self.overlay = Overlay::CommentInput;
+                    self.ui.reply_discussion_id = Some(info.discussion_id.clone());
+                    self.ui.comment_input = crate::ui::components::input::CommentInput::default();
+                    self.ui.overlay = Overlay::CommentInput;
                 }
             }
             _ => {}
