@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::cmd::{Cmd, Dirty};
+use crate::cmd::{Cmd, Dirty, EventResult};
 use crate::config::Config;
 use crate::db::{Db, ViewState};
 use crate::filter::{Field, FilterCondition, Op};
@@ -16,7 +16,7 @@ use crate::gitlab::types::{
     Discussion, Issue, Iteration, MergeRequest, ProjectLabel, TrackedIssue, TrackedMergeRequest,
     User, WorkItemStatus,
 };
-use crate::keybindings::{self, InputMode, KeyAction};
+use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{
     chord_popup, confirm_dialog, error_popup, help, input, label_editor, picker,
 };
@@ -1587,96 +1587,196 @@ impl App {
         self.apply_sort_specs(specs);
     }
 
-    // ── InputMode ──────────────────────────────────────────────────────
-
-    /// Compute the current input mode from overlay and view state.
-    fn input_mode(&self) -> InputMode {
-        // Overlay takes highest priority
-        match &self.overlay {
-            Overlay::CommentInput | Overlay::Picker(_) | Overlay::LabelEditor => {
-                return InputMode::TextInput;
-            }
-            Overlay::Chord(_) => return InputMode::Chord,
-            Overlay::Help | Overlay::Confirm(_) | Overlay::Error(_) => {
-                return InputMode::Modal;
-            }
-            Overlay::FilterEditor => {
-                return if self.filter_editor_state.step == filter_editor::EditorStep::EnterValue {
-                    InputMode::TextInput
-                } else {
-                    InputMode::Normal
-                };
-            }
-            Overlay::None => {}
-        }
-
-        // Inline fuzzy search
-        if self.active_filter().is_searching() {
-            return InputMode::TextInput;
-        }
-
-        InputMode::Normal
-    }
-
     // ── Key dispatch ─────────────────────────────────────────────────
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
-        // Assume any key press changes visible state.  Navigation methods
-        // that hit a boundary (e.g. up at top of list) clear this flag so
-        // the event loop can skip the redundant render.
         self.needs_redraw = true;
-        match self.input_mode() {
-            InputMode::TextInput => self.handle_text_input(key),
-            InputMode::Chord => self.handle_chord_input(key),
-            InputMode::Modal => self.handle_modal_input(key),
-            InputMode::Normal => self.handle_normal_input(key),
+
+        // 1. Overlay gets first shot (innermost focus)
+        let overlay_result = self.dispatch_overlay(&key);
+        if overlay_result.handled() {
+            return matches!(overlay_result, EventResult::Quit);
         }
-    }
 
-    /// All chars go to the active text widget.
-    fn handle_text_input(&mut self, key: KeyEvent) -> bool {
-        match &self.overlay {
-            Overlay::CommentInput
-            | Overlay::Picker(_)
-            | Overlay::FilterEditor
-            | Overlay::LabelEditor => self.handle_overlay_key(key),
-            Overlay::None => {
-                // Inline fuzzy search
-                self.handle_fuzzy_text(key);
-                false
-            }
-            _ => false,
+        // 2. Inline text modes (fuzzy search, filter bar)
+        if self.active_filter().is_searching() {
+            self.handle_fuzzy_text(key);
+            return false;
         }
-    }
-
-    /// Home-row keys select a chord option; Esc or anything else cancels.
-    fn handle_chord_input(&mut self, key: KeyEvent) -> bool {
-        self.handle_overlay_key(key)
-    }
-
-    /// Modal overlay dispatch (Help, Confirm, Error).
-    fn handle_modal_input(&mut self, key: KeyEvent) -> bool {
-        self.handle_overlay_key(key)
-    }
-
-    /// Normal mode: filter bar check, then binding registry dispatch.
-    fn handle_normal_input(&mut self, key: KeyEvent) -> bool {
-        // Filter bar captures all keys when focused
         if self.active_filter().bar_focused {
             self.handle_filter_bar_key(key);
             return false;
         }
 
-        // FilterEditor in field/op selection step (Normal mode)
-        if matches!(self.overlay, Overlay::FilterEditor) {
-            return self.handle_overlay_key(key);
-        }
-
-        // Binding registry dispatch
+        // 3. Binding registry dispatch (view + global)
         if let Some(action) = keybindings::match_binding(self.view, &key) {
             return self.execute_action(action);
         }
         false
+    }
+
+    /// Overlay focus: if an overlay is active, it handles the key and
+    /// returns Consumed.  Returns Bubble only when no overlay is active.
+    fn dispatch_overlay(&mut self, key: &KeyEvent) -> EventResult {
+        match &self.overlay {
+            Overlay::None => EventResult::Bubble,
+
+            Overlay::Help => {
+                if key.code == KeyCode::Char('?') || keys::is_back(key) {
+                    self.overlay = Overlay::None;
+                }
+                EventResult::Consumed
+            }
+
+            Overlay::Error(_) => {
+                self.overlay = Overlay::None;
+                EventResult::Consumed
+            }
+
+            Overlay::Confirm(action) => {
+                let action = action.clone();
+                match key.code {
+                    KeyCode::Char('y' | 'Y') => {
+                        if matches!(action, ConfirmAction::QuitApp) {
+                            return EventResult::Quit;
+                        }
+                        self.execute_confirm(action);
+                        self.overlay = Overlay::None;
+                    }
+                    KeyCode::Char('n') | KeyCode::Esc => {
+                        self.overlay = Overlay::None;
+                    }
+                    _ => {}
+                }
+                EventResult::Consumed
+            }
+
+            Overlay::Chord(_) => {
+                let Some(ref mut cs) = self.chord_state else {
+                    return EventResult::Bubble;
+                };
+                match cs.handle_key(key) {
+                    chord_popup::ChordAction::Continue => {}
+                    chord_popup::ChordAction::Cancel => {
+                        self.chord_state = None;
+                        self.overlay = Overlay::None;
+                    }
+                    chord_popup::ChordAction::Selected(value) => {
+                        self.chord_state = None;
+                        self.handle_chord_result(&value);
+                    }
+                }
+                EventResult::Consumed
+            }
+
+            Overlay::Picker(_) => {
+                let Some(ref mut ps) = self.picker_state else {
+                    return EventResult::Bubble;
+                };
+                match ps.handle_key(key) {
+                    picker::PickerAction::Continue => {}
+                    picker::PickerAction::Cancel => {
+                        self.picker_state = None;
+                        self.overlay = Overlay::None;
+                    }
+                    picker::PickerAction::Picked(values) => {
+                        self.handle_picker_result(&values);
+                        if !matches!(self.overlay, Overlay::CommentInput) {
+                            self.overlay = Overlay::None;
+                        }
+                        self.picker_state = None;
+                    }
+                }
+                EventResult::Consumed
+            }
+
+            Overlay::LabelEditor => {
+                let Some(ref mut les) = self.label_editor_state else {
+                    return EventResult::Bubble;
+                };
+                match les.handle_key(key) {
+                    label_editor::LabelEditorAction::Continue => {}
+                    label_editor::LabelEditorAction::Cancel => {
+                        self.label_editor_state = None;
+                        self.overlay = Overlay::None;
+                    }
+                    label_editor::LabelEditorAction::Confirmed(labels) => {
+                        self.handle_label_editor_result(&labels);
+                        self.label_editor_state = None;
+                        self.overlay = Overlay::None;
+                    }
+                }
+                EventResult::Consumed
+            }
+
+            Overlay::CommentInput => {
+                if self.autocomplete.active {
+                    if key.code == KeyCode::Tab {
+                        self.accept_completion();
+                        return EventResult::Consumed;
+                    }
+                    if key.code == KeyCode::Esc {
+                        self.autocomplete.dismiss();
+                        return EventResult::Consumed;
+                    }
+                    if keys::is_nav_up(key) {
+                        self.autocomplete.move_up();
+                        return EventResult::Consumed;
+                    }
+                    if keys::is_nav_down(key) {
+                        self.autocomplete.move_down();
+                        return EventResult::Consumed;
+                    }
+                }
+                match self.comment_input.handle_key(key) {
+                    input::InputAction::Cancel => {
+                        self.autocomplete.dismiss();
+                        self.overlay = Overlay::None;
+                    }
+                    input::InputAction::Submit => {
+                        let body = self.comment_input.text();
+                        let body = body.trim().to_string();
+                        if !body.is_empty() {
+                            self.submit_comment(&body);
+                        }
+                        self.autocomplete.dismiss();
+                        self.overlay = Overlay::None;
+                    }
+                    input::InputAction::Continue => {
+                        let text = self.comment_input.text();
+                        let cursor = self.comment_input.cursor_byte_pos();
+                        let members = self.config.all_members();
+                        self.autocomplete
+                            .update(&text, cursor, &members, &self.issues, &self.mrs);
+                    }
+                }
+                EventResult::Consumed
+            }
+
+            Overlay::FilterEditor => {
+                let action = self.filter_editor_state.handle_key(key);
+                if self.filter_editor_state.step == filter_editor::EditorStep::EnterValue
+                    && self.filter_editor_state.suggestions.is_empty()
+                {
+                    self.filter_editor_state.suggestions = self.get_filter_suggestions();
+                }
+                match action {
+                    filter_editor::FilterEditorAction::Continue => {}
+                    filter_editor::FilterEditorAction::Cancel => {
+                        self.overlay = Overlay::None;
+                        self.action_show_filter_menu();
+                    }
+                    filter_editor::FilterEditorAction::AddCondition(cond) => {
+                        self.active_filter_mut().conditions.push(cond);
+                        self.dirty.view_state = true;
+                        self.pending_cmds.push(Cmd::PersistViewState);
+                        self.overlay = Overlay::None;
+                        self.action_show_filter_menu();
+                    }
+                }
+                EventResult::Consumed
+            }
+        }
     }
 
     /// Centralized fuzzy search handler.
@@ -2428,157 +2528,6 @@ impl App {
             old_iteration,
         });
         self.pending_cmds.push(Cmd::FetchHealthData);
-    }
-
-    fn handle_overlay_key(&mut self, key: KeyEvent) -> bool {
-        match &self.overlay {
-            Overlay::Help => {
-                if key.code == KeyCode::Char('?') || keys::is_back(&key) {
-                    self.overlay = Overlay::None;
-                }
-            }
-            Overlay::FilterEditor => {
-                let action = self.filter_editor_state.handle_key(&key);
-                // Populate suggestions when entering value step
-                if self.filter_editor_state.step == filter_editor::EditorStep::EnterValue
-                    && self.filter_editor_state.suggestions.is_empty()
-                {
-                    self.filter_editor_state.suggestions = self.get_filter_suggestions();
-                }
-                match action {
-                    filter_editor::FilterEditorAction::Continue => {}
-                    filter_editor::FilterEditorAction::Cancel => {
-                        self.overlay = Overlay::None;
-                        self.action_show_filter_menu();
-                    }
-                    filter_editor::FilterEditorAction::AddCondition(cond) => {
-                        self.active_filter_mut().conditions.push(cond);
-                        self.dirty.view_state = true;
-                        self.pending_cmds.push(Cmd::PersistViewState);
-                        // Reopen filter menu for adding more conditions
-                        self.overlay = Overlay::None;
-                        self.action_show_filter_menu();
-                    }
-                }
-            }
-            Overlay::Confirm(action) => {
-                let action = action.clone();
-                match key.code {
-                    KeyCode::Char('y' | 'Y') => {
-                        if matches!(action, ConfirmAction::QuitApp) {
-                            return true;
-                        }
-                        self.execute_confirm(action);
-                        self.overlay = Overlay::None;
-                    }
-                    KeyCode::Char('n') | KeyCode::Esc => {
-                        self.overlay = Overlay::None;
-                    }
-                    _ => {}
-                }
-            }
-            Overlay::Picker(_) => {
-                if let Some(ref mut ps) = self.picker_state {
-                    let action = ps.handle_key(&key);
-                    match action {
-                        picker::PickerAction::Continue => {}
-                        picker::PickerAction::Cancel => {
-                            self.picker_state = None;
-                            self.overlay = Overlay::None;
-                        }
-                        picker::PickerAction::Picked(values) => {
-                            self.handle_picker_result(&values);
-                            // ReplyThread transitions to CommentInput; don't overwrite
-                            if !matches!(self.overlay, Overlay::CommentInput) {
-                                self.overlay = Overlay::None;
-                            }
-                            self.picker_state = None;
-                        }
-                    }
-                }
-            }
-            Overlay::Chord(_) => {
-                if let Some(ref mut cs) = self.chord_state {
-                    let action = cs.handle_key(&key);
-                    match action {
-                        chord_popup::ChordAction::Continue => {}
-                        chord_popup::ChordAction::Cancel => {
-                            self.chord_state = None;
-                            self.overlay = Overlay::None;
-                        }
-                        chord_popup::ChordAction::Selected(value) => {
-                            self.chord_state = None;
-                            self.handle_chord_result(&value);
-                        }
-                    }
-                }
-            }
-            Overlay::LabelEditor => {
-                if let Some(ref mut les) = self.label_editor_state {
-                    match les.handle_key(&key) {
-                        label_editor::LabelEditorAction::Continue => {}
-                        label_editor::LabelEditorAction::Cancel => {
-                            self.label_editor_state = None;
-                            self.overlay = Overlay::None;
-                        }
-                        label_editor::LabelEditorAction::Confirmed(labels) => {
-                            self.handle_label_editor_result(&labels);
-                            self.label_editor_state = None;
-                            self.overlay = Overlay::None;
-                        }
-                    }
-                }
-            }
-            Overlay::CommentInput => {
-                // Autocomplete takes priority when active
-                if self.autocomplete.active {
-                    if key.code == KeyCode::Tab {
-                        self.accept_completion();
-                        return false;
-                    }
-                    if key.code == KeyCode::Esc {
-                        self.autocomplete.dismiss();
-                        return false;
-                    }
-                    if keys::is_nav_up(&key) {
-                        self.autocomplete.move_up();
-                        return false;
-                    }
-                    if keys::is_nav_down(&key) {
-                        self.autocomplete.move_down();
-                        return false;
-                    }
-                }
-                match self.comment_input.handle_key(&key) {
-                    input::InputAction::Cancel => {
-                        self.autocomplete.dismiss();
-                        self.overlay = Overlay::None;
-                    }
-                    input::InputAction::Submit => {
-                        let body = self.comment_input.text();
-                        let body = body.trim().to_string();
-                        if !body.is_empty() {
-                            self.submit_comment(&body);
-                        }
-                        self.autocomplete.dismiss();
-                        self.overlay = Overlay::None;
-                    }
-                    input::InputAction::Continue => {
-                        let text = self.comment_input.text();
-                        let cursor = self.comment_input.cursor_byte_pos();
-                        let members = self.config.all_members();
-                        self.autocomplete
-                            .update(&text, cursor, &members, &self.issues, &self.mrs);
-                    }
-                }
-            }
-            Overlay::Error(_) => {
-                // Any key dismisses the error popup
-                self.overlay = Overlay::None;
-            }
-            Overlay::None => {}
-        }
-        false
     }
 
     fn handle_filter_bar_key(&mut self, key: KeyEvent) {

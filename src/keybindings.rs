@@ -3,22 +3,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::View;
 
 // ---------------------------------------------------------------------------
-// InputMode — derived from FocusTarget, never stored
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputMode {
-    /// Keys dispatch to navigation, commands, global bindings.
-    Normal,
-    /// All chars go to the active text widget (search, picker, comment editor).
-    TextInput,
-    /// Home-row keys select a chord option; anything else cancels.
-    Chord,
-    /// Overlay-specific modal (Help: any key dismisses; Confirm: y/n/Esc; Error: any key).
-    Modal,
-}
-
-// ---------------------------------------------------------------------------
 // KeyAction — unified action enum replacing per-view actions
 // ---------------------------------------------------------------------------
 

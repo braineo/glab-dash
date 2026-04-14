@@ -106,3 +106,20 @@ impl Dirty {
             || self.selection
     }
 }
+
+/// Result of a focus node handling a key event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventResult {
+    /// Event was consumed. Stop bubbling.
+    Consumed,
+    /// Event was not handled. Parent should try.
+    Bubble,
+    /// Application should quit.
+    Quit,
+}
+
+impl EventResult {
+    pub fn handled(self) -> bool {
+        !matches!(self, Self::Bubble)
+    }
+}
