@@ -125,7 +125,7 @@ impl TrackedIssue {
     }
 
     /// Build the status chord from already-cached statuses.
-    fn build_status_chord(
+    pub fn build_status_chord(
         project: &str,
         issue_id: u64,
         iid: u64,

@@ -2,10 +2,10 @@
 
 use crate::cmd::Cmd;
 use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
-use crate::ui::components::{chord_popup, picker};
+use crate::ui::components::picker;
 
 use super::{
-    App, ChordContext, ConfirmAction, FocusedItem, Overlay, PickerContext, View,
+    App, ConfirmAction, FocusedItem, Overlay, PickerContext, View,
     build_thread_picker_display,
 };
 
@@ -24,104 +24,6 @@ impl App {
             );
             self.ui.overlay = Overlay::Picker(PickerContext::ReplyThread(infos));
         }
-    }
-
-    /// Build and display the status chord popup from cached statuses.
-    pub(super) fn show_status_chord(&mut self, project: &str, issue_id: u64, iid: u64, close_only: bool) {
-        let Some(statuses) = self.data.work_item_statuses.get(project) else {
-            return;
-        };
-
-        // Exclude "Duplicate" — requires linking to another issue,
-        // which can't be done from a simple status change.
-        let is_duplicate =
-            |s: &crate::gitlab::types::WorkItemStatus| s.name.to_lowercase().contains("duplicate");
-
-        // Filter then sort by category priority so "done" statuses get shorter codes.
-        let mut sorted_indices: Vec<usize> = (0..statuses.len())
-            .filter(|&i| !is_duplicate(&statuses[i]))
-            .collect();
-        sorted_indices.sort_by_key(|&i| match statuses[i].category.as_deref() {
-            Some("done") => 0,
-            Some("active" | "opened") => 1,
-            Some("canceled") => 2,
-            _ => 3,
-        });
-        let sorted_names: Vec<String> = sorted_indices
-            .iter()
-            .map(|&i| statuses[i].name.clone())
-            .collect();
-        let sorted_codes = chord_popup::generate_priority_codes(&sorted_names);
-
-        // Map codes back to original indices
-        let mut all_codes = vec![String::new(); statuses.len()];
-        for (sorted_pos, &orig_idx) in sorted_indices.iter().enumerate() {
-            all_codes[orig_idx].clone_from(&sorted_codes[sorted_pos]);
-        }
-        let all_names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
-
-        if close_only {
-            let is_close_category = |s: &crate::gitlab::types::WorkItemStatus| {
-                s.category
-                    .as_deref()
-                    .is_some_and(|c| matches!(c, "done" | "canceled" | "closed"))
-            };
-
-            // Collect close statuses with their pre-computed codes
-            let mut close_items: Vec<(usize, &str)> = statuses
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| is_close_category(s))
-                .map(|(i, s)| (i, s.category.as_deref().unwrap_or("")))
-                .collect();
-
-            if close_items.is_empty() {
-                // No close-category statuses — fall back to simple close/reopen
-                let item_state = self
-                    .ui.views.issue_list
-                    .selected_issue(&self.data.issues)
-                    .or_else(|| self.current_detail_issue())
-                    .map_or("opened", |i| i.issue.state.as_str());
-                let action = if item_state == "opened" {
-                    ConfirmAction::CloseIssue(issue_id, iid)
-                } else {
-                    ConfirmAction::ReopenIssue(issue_id, iid)
-                };
-                self.ui.overlay = Overlay::Confirm(action);
-                return;
-            }
-
-            // Sort: "done" first so it gets priority in display
-            close_items.sort_by_key(|(_, cat)| match *cat {
-                "done" => 0,
-                "canceled" => 1,
-                _ => 2,
-            });
-
-            let options: Vec<(String, String)> = close_items
-                .iter()
-                .map(|&(i, _)| (all_codes[i].clone(), all_names[i].clone()))
-                .collect();
-            let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
-
-            self.ui.chord_state = Some(
-                chord_popup::ChordState::from_options("Close As", options, max_code_len)
-                    .with_kind(chord_popup::ChordKind::Status),
-            );
-        } else {
-            let options: Vec<(String, String)> = all_codes
-                .into_iter()
-                .zip(all_names)
-                .filter(|(code, _)| !code.is_empty())
-                .collect();
-            let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
-
-            self.ui.chord_state = Some(
-                chord_popup::ChordState::from_options("Set Status", options, max_code_len)
-                    .with_kind(chord_popup::ChordKind::Status),
-            );
-        }
-        self.ui.overlay = Overlay::Chord(ChordContext::Status(project.to_string(), issue_id, iid));
     }
 
     pub(super) fn set_issue_status(&mut self, project: &str, issue_id: u64, iid: u64, status_name: &str) {

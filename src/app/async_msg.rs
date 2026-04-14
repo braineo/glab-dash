@@ -160,8 +160,13 @@ impl App {
                             self.ui.pending_cmds.push(Cmd::PersistStatuses {
                                 project: project.clone(),
                             });
-                            if !is_background {
-                                self.show_status_chord(&project, issue_id, iid, close_only);
+                            if !is_background
+                                && let Some(statuses) = self.data.work_item_statuses.get(&project)
+                            {
+                                TrackedIssue::build_status_chord(
+                                    &project, issue_id, iid, close_only, statuses,
+                                    &self.data, &mut self.ui,
+                                );
                             }
                         }
                     }
