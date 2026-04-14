@@ -39,9 +39,9 @@ pub enum Overlay {
     None,
     Help,
     FilterEditor,
-    Confirm(ConfirmAction),
-    Picker(PickerContext),
-    Chord(ChordContext),
+    Confirm,
+    Picker,
+    Chord,
     LabelEditor,
     CommentInput,
     Error(String),
@@ -56,26 +56,6 @@ pub enum FocusedItem {
     Mr { project: String, iid: u64 },
 }
 
-#[derive(Debug, Clone)]
-pub enum ConfirmAction {
-    /// (issue_id, iid) — iid used only for confirm dialog text
-    CloseIssue(u64, u64),
-    /// (issue_id, iid) — iid used only for confirm dialog text
-    ReopenIssue(u64, u64),
-    CloseMr(String, u64),
-    ApproveMr(String, u64),
-    MergeMr(String, u64),
-    QuitApp,
-}
-
-#[derive(Debug)]
-pub enum PickerContext {
-    Assignee,
-    Team,
-    /// Reply to a discussion thread; stores thread metadata parallel to picker items.
-    ReplyThread(Vec<ThreadPickerInfo>),
-}
-
 /// Metadata for a single thread shown in the reply picker.
 #[derive(Debug)]
 pub struct ThreadPickerInfo {
@@ -85,26 +65,6 @@ pub struct ThreadPickerInfo {
     pub last_author: Option<String>,
     pub last_preview: Option<String>,
     pub reply_count: usize,
-}
-
-/// Context for the chord popup overlay (what action to perform on selection).
-#[derive(Debug)]
-pub enum ChordContext {
-    /// Set issue status: (`project_path`, `issue_db_id`, `issue_iid`)
-    Status(String, u64, u64),
-    Assignee,
-    /// Move issue to iteration: (`issue_index` in self.issues)
-    Iteration(usize),
-    /// Sort: pick a field
-    SortField,
-    /// Sort: pick direction for chosen field (field_name, optional label_scope)
-    SortDirection(String, Option<String>),
-    /// Filter menu: presets, existing conditions, add/clear
-    FilterMenu,
-    /// Filter: pick a field for new condition
-    FilterField,
-    /// Filter: pick an operator for chosen field
-    FilterOp(crate::filter::Field),
 }
 
 /// Messages from async operations
@@ -168,6 +128,13 @@ pub struct AppData {
 }
 
 /// UI layer — views, overlays, TEA accumulators.
+/// Callback invoked when a chord popup selection completes.
+pub type ChordCallback = Box<dyn FnOnce(String, &mut App)>;
+/// Callback invoked when a picker selection completes.
+pub type PickerCallback = Box<dyn FnOnce(Vec<String>, &mut App)>;
+/// Callback invoked when a confirm dialog is accepted.
+pub type ConfirmCallback = Box<dyn FnOnce(&mut App)>;
+
 pub struct UiState {
     pub view: View,
     pub view_stack: Vec<View>,
@@ -176,7 +143,12 @@ pub struct UiState {
     pub focused: Option<FocusedItem>,
     pub active_team: Option<usize>,
     pub chord_state: Option<crate::ui::components::chord_popup::ChordState>,
+    pub chord_on_complete: Option<ChordCallback>,
     pub picker_state: Option<crate::ui::components::picker::PickerState>,
+    pub picker_on_complete: Option<PickerCallback>,
+    pub confirm_title: String,
+    pub confirm_message: String,
+    pub confirm_on_accept: Option<ConfirmCallback>,
     pub label_editor_state: Option<crate::ui::components::label_editor::LabelEditorState>,
     pub filter_editor_state: filter_editor::FilterEditorState,
     pub comment_input: crate::ui::components::input::CommentInput,
@@ -239,7 +211,12 @@ impl App {
                 focused: None,
                 active_team: None,
                 chord_state: None,
+                chord_on_complete: None,
                 picker_state: None,
+                picker_on_complete: None,
+                confirm_title: String::new(),
+                confirm_message: String::new(),
+                confirm_on_accept: None,
                 label_editor_state: None,
                 filter_editor_state: filter_editor::FilterEditorState::default(),
                 comment_input: crate::ui::components::input::CommentInput::default(),

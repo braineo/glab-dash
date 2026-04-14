@@ -1,11 +1,11 @@
-//! Filter and sort methods: active filter access, sort/filter UI, chord result routing.
+//! Filter and sort methods: active filter access, sort/filter UI, chord callbacks.
 
 use crate::cmd::Cmd;
 use crate::filter::{Field, FilterCondition, Op};
 use crate::ui::components::chord_popup;
 use crate::ui::views::filter_editor;
 use crate::ui::views::list_model::UserFilter;
-use super::{App, ChordContext, Overlay, View};
+use super::{App, Overlay, View};
 
 impl App {
     /// Returns a mutable reference to the `UserFilter` for the current view.
@@ -69,10 +69,13 @@ impl App {
         }
 
         self.ui.chord_state = Some(chord_popup::ChordState::new_for_names("Sort by", labels));
-        self.ui.overlay = Overlay::Chord(ChordContext::SortField);
+        self.ui.chord_on_complete = Some(Box::new(|value, app| {
+            app.handle_sort_field_chosen(&value);
+        }));
+        self.ui.overlay = Overlay::Chord;
     }
 
-    fn handle_sort_field_chosen(&mut self, value: &str) {
+    pub(super) fn handle_sort_field_chosen(&mut self, value: &str) {
         // Clear sort — apply immediately
         if value == "⊘ Clear sort" {
             self.apply_sort_specs(Vec::new());
@@ -97,10 +100,15 @@ impl App {
             &format!("Sort {value}"),
             labels,
         ));
-        self.ui.overlay = Overlay::Chord(ChordContext::SortDirection(field_name, label_scope));
+        let field_name_clone = field_name.clone();
+        let label_scope_clone = label_scope.clone();
+        self.ui.chord_on_complete = Some(Box::new(move |value, app| {
+            app.handle_sort_direction_chosen(&field_name_clone, label_scope_clone.as_deref(), &value);
+        }));
+        self.ui.overlay = Overlay::Chord;
     }
 
-    fn handle_sort_direction_chosen(
+    pub(super) fn handle_sort_direction_chosen(
         &mut self,
         field_name: &str,
         label_scope: Option<&str>,
@@ -210,10 +218,13 @@ impl App {
         }
 
         self.ui.chord_state = Some(chord_popup::ChordState::new_for_names("Filter", labels));
-        self.ui.overlay = Overlay::Chord(ChordContext::FilterMenu);
+        self.ui.chord_on_complete = Some(Box::new(|value, app| {
+            app.handle_filter_menu_chosen(&value);
+        }));
+        self.ui.overlay = Overlay::Chord;
     }
 
-    fn handle_filter_menu_chosen(&mut self, value: &str) {
+    pub(super) fn handle_filter_menu_chosen(&mut self, value: &str) {
         if value == "+ Add condition" {
             self.show_filter_field_chord();
             return;
@@ -248,10 +259,13 @@ impl App {
             "Filter Field",
             labels,
         ));
-        self.ui.overlay = Overlay::Chord(ChordContext::FilterField);
+        self.ui.chord_on_complete = Some(Box::new(|value, app| {
+            app.handle_filter_field_chosen(&value);
+        }));
+        self.ui.overlay = Overlay::Chord;
     }
 
-    fn handle_filter_field_chosen(&mut self, value: &str) {
+    pub(super) fn handle_filter_field_chosen(&mut self, value: &str) {
         let Some(field) = Field::from_str(value) else {
             return;
         };
@@ -274,10 +288,13 @@ impl App {
             &format!("{value}:"),
             labels,
         ));
-        self.ui.overlay = Overlay::Chord(ChordContext::FilterOp(field));
+        self.ui.chord_on_complete = Some(Box::new(move |value, app| {
+            app.handle_filter_op_chosen(field, &value);
+        }));
+        self.ui.overlay = Overlay::Chord;
     }
 
-    fn handle_filter_op_chosen(&mut self, field: Field, value: &str) {
+    pub(super) fn handle_filter_op_chosen(&mut self, field: Field, value: &str) {
         // Parse op from the display label (e.g., "equals (=)" → Eq)
         let op = if value.starts_with("equals") {
             Op::Eq
@@ -337,72 +354,6 @@ impl App {
                 names
             }
             _ => Vec::new(),
-        }
-    }
-
-    pub(super) fn handle_chord_result(&mut self, value: &str) {
-        let context = std::mem::replace(&mut self.ui.overlay, Overlay::None);
-        match context {
-            Overlay::Chord(ChordContext::Status(project, issue_id, iid)) => {
-                self.set_issue_status(&project, issue_id, iid, value);
-            }
-            Overlay::Chord(ChordContext::Assignee) => {
-                self.dispatch_update_assignee(value);
-            }
-            Overlay::Chord(ChordContext::Iteration(issue_idx)) => {
-                self.apply_iteration_move(issue_idx, value);
-            }
-            Overlay::Chord(ChordContext::SortField) => {
-                self.handle_sort_field_chosen(value);
-            }
-            Overlay::Chord(ChordContext::SortDirection(field, scope)) => {
-                self.handle_sort_direction_chosen(&field, scope.as_deref(), value);
-            }
-            Overlay::Chord(ChordContext::FilterMenu) => {
-                self.handle_filter_menu_chosen(value);
-            }
-            Overlay::Chord(ChordContext::FilterField) => {
-                self.handle_filter_field_chosen(value);
-            }
-            Overlay::Chord(ChordContext::FilterOp(field)) => {
-                self.handle_filter_op_chosen(field, value);
-            }
-            _ => {}
-        }
-    }
-
-    pub(super) fn handle_picker_result(&mut self, values: &[String]) {
-        // Determine what we picked for based on overlay context
-        let context = std::mem::replace(&mut self.ui.overlay, Overlay::None);
-        match context {
-            Overlay::Picker(super::PickerContext::Assignee) => {
-                if let Some(username) = values.first() {
-                    self.dispatch_update_assignee(username);
-                }
-            }
-            Overlay::Picker(super::PickerContext::Team) => {
-                if let Some(name) = values.first() {
-                    if name == "All" {
-                        self.ui.active_team = None;
-                    } else {
-                        self.ui.active_team = self.ctx.config.teams.iter().position(|t| t.name == *name);
-                    }
-                    self.ui.dirty.issues = true;
-                    self.ui.dirty.mrs = true;
-                    self.ui.dirty.selection = true;
-                }
-            }
-            Overlay::Picker(super::PickerContext::ReplyThread(infos)) => {
-                if let (Some(ps), Some(picked_label)) = (&self.ui.picker_state, values.first())
-                    && let Some(idx) = ps.items.iter().position(|item| item == picked_label)
-                    && let Some(info) = infos.get(idx)
-                {
-                    self.ui.reply_discussion_id = Some(info.discussion_id.clone());
-                    self.ui.comment_input = crate::ui::components::input::CommentInput::default();
-                    self.ui.overlay = Overlay::CommentInput;
-                }
-            }
-            _ => {}
         }
     }
 }

@@ -1,11 +1,10 @@
-//! Action methods: browser, labels, assignee, comment, status, confirm, detail navigation.
+//! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
-use crate::cmd::Cmd;
 use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
 use crate::ui::components::picker;
 
 use super::{
-    App, ConfirmAction, FocusedItem, Overlay, PickerContext, View,
+    App, FocusedItem, Overlay, View,
     build_thread_picker_display,
 };
 
@@ -19,10 +18,20 @@ impl App {
         if !infos.is_empty() {
             let (labels, subtitles) = build_thread_picker_display(&infos);
             self.ui.picker_state = Some(
-                picker::PickerState::new("Reply to thread", labels, false)
+                picker::PickerState::new("Reply to thread", labels.clone(), false)
                     .with_subtitles(subtitles),
             );
-            self.ui.overlay = Overlay::Picker(PickerContext::ReplyThread(infos));
+            self.ui.picker_on_complete = Some(Box::new(move |values, app| {
+                if let Some(picked_label) = values.first()
+                    && let Some(idx) = labels.iter().position(|item| item == picked_label)
+                    && let Some(info) = infos.get(idx)
+                {
+                    app.ui.reply_discussion_id = Some(info.discussion_id.clone());
+                    app.ui.comment_input = crate::ui::components::input::CommentInput::default();
+                    app.ui.overlay = Overlay::CommentInput;
+                }
+            }));
+            self.ui.overlay = Overlay::Picker;
         }
     }
 
@@ -48,8 +57,8 @@ impl App {
             self.data.issues[pos].issue.custom_status = Some(status_name.to_string());
             self.ui.dirty.issues = true;
         }
-        self.ui.pending_cmds.push(Cmd::PersistIssues);
-        self.ui.pending_cmds.push(Cmd::SpawnSetStatus {
+        self.ui.pending_cmds.push(crate::cmd::Cmd::PersistIssues);
+        self.ui.pending_cmds.push(crate::cmd::Cmd::SpawnSetStatus {
             project: project.to_string(),
             issue_id,
             iid,
@@ -91,7 +100,7 @@ impl App {
             *self.data.label_usage.entry(label.clone()).or_insert(0) += 1;
         }
         self.dispatch_update_labels(labels);
-        self.ui.pending_cmds.push(Cmd::PersistLabelUsage);
+        self.ui.pending_cmds.push(crate::cmd::Cmd::PersistLabelUsage);
     }
 
     /// Dispatch label update to the focused issue or MR.
@@ -195,71 +204,12 @@ impl App {
         self.ui.dirty.selection = true;
     }
 
-
-    pub(super) fn execute_confirm(&mut self, action: ConfirmAction) {
-        // Optimistic updates — set dirty flags, reconcile will refilter
-        match &action {
-            ConfirmAction::CloseIssue(issue_id, _) => {
-                if let Some(pos) = self.data.issues.iter().position(|i| i.issue.id == *issue_id) {
-                    self.data.issues[pos].issue.state = "closed".to_string();
-                    self.data.issues[pos].issue.updated_at = chrono::Utc::now();
-                    self.ui.dirty.issues = true;
-                    self.ui.pending_cmds.push(Cmd::PersistIssues);
-                }
-            }
-            ConfirmAction::ReopenIssue(issue_id, _) => {
-                if let Some(pos) = self.data.issues.iter().position(|i| i.issue.id == *issue_id) {
-                    self.data.issues[pos].issue.state = "opened".to_string();
-                    self.data.issues[pos].issue.updated_at = chrono::Utc::now();
-                    self.ui.dirty.issues = true;
-                    self.ui.pending_cmds.push(Cmd::PersistIssues);
-                }
-            }
-            ConfirmAction::CloseMr(project, iid) => {
-                if let Some(pos) = self
-                    .data.mrs
-                    .iter()
-                    .position(|m| m.project_path == *project && m.mr.iid == *iid)
-                {
-                    self.data.mrs[pos].mr.state = "closed".to_string();
-                    self.data.mrs[pos].mr.updated_at = chrono::Utc::now();
-                    self.ui.dirty.mrs = true;
-                    self.ui.pending_cmds.push(Cmd::PersistMrs);
-                }
-            }
-            ConfirmAction::MergeMr(project, iid) => {
-                if let Some(pos) = self
-                    .data.mrs
-                    .iter()
-                    .position(|m| m.project_path == *project && m.mr.iid == *iid)
-                {
-                    self.data.mrs[pos].mr.state = "merged".to_string();
-                    self.data.mrs[pos].mr.updated_at = chrono::Utc::now();
-                    self.ui.dirty.mrs = true;
-                    self.ui.pending_cmds.push(Cmd::PersistMrs);
-                }
-            }
-            _ => {}
-        }
-
-        // Spawn API call via Cmd
-        let spawn_cmd = match action {
-            ConfirmAction::CloseIssue(issue_id, _) => Cmd::SpawnCloseIssue { issue_id },
-            ConfirmAction::ReopenIssue(issue_id, _) => Cmd::SpawnReopenIssue { issue_id },
-            ConfirmAction::CloseMr(project, iid) => Cmd::SpawnCloseMr { project, iid },
-            ConfirmAction::ApproveMr(project, iid) => Cmd::SpawnApproveMr { project, iid },
-            ConfirmAction::MergeMr(project, iid) => Cmd::SpawnMergeMr { project, iid },
-            ConfirmAction::QuitApp => unreachable!(),
-        };
-        self.ui.pending_cmds.push(spawn_cmd);
-    }
-
     pub(super) fn apply_iteration_move(&mut self, issue_idx: usize, choice: &str) {
-        let target = if choice.starts_with('◁') {
+        let target = if choice.starts_with('\u{25C1}') {
             self.ui.views.planning.prev_iteration.clone()
-        } else if choice.starts_with('●') {
+        } else if choice.starts_with('\u{25CF}') {
             self.ui.views.planning.current_iteration.clone()
-        } else if choice.starts_with('▷') {
+        } else if choice.starts_with('\u{25B7}') {
             self.ui.views.planning.next_iteration.clone()
         } else {
             // Remove iteration
@@ -275,11 +225,11 @@ impl App {
         self.ui.dirty.issues = true;
 
         let target_gid = target.as_ref().map(|i| i.id.clone());
-        self.ui.pending_cmds.push(Cmd::SpawnMoveIteration {
+        self.ui.pending_cmds.push(crate::cmd::Cmd::SpawnMoveIteration {
             issue_id,
             target_gid,
             old_iteration,
         });
-        self.ui.pending_cmds.push(Cmd::FetchHealthData);
+        self.ui.pending_cmds.push(crate::cmd::Cmd::FetchHealthData);
     }
 }

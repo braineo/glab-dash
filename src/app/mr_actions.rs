@@ -2,12 +2,12 @@
 
 use crossterm::event::KeyEvent;
 
-use crate::cmd::EventResult;
+use crate::cmd::{Cmd, EventResult};
 use crate::gitlab::types::{TrackedMergeRequest, User};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
 
-use super::{AppCtx, AppData, ChordContext, ConfirmAction, Overlay, PickerContext, UiState, View};
+use super::{AppCtx, AppData, Overlay, UiState, View};
 
 impl TrackedMergeRequest {
     pub fn handle_action_key(
@@ -31,17 +31,52 @@ impl TrackedMergeRequest {
             KeyAction::ToggleState => {
                 let project = self.project_path.clone();
                 let iid = self.mr.iid;
-                ui.overlay = Overlay::Confirm(ConfirmAction::CloseMr(project, iid));
+                ui.confirm_title = "Close MR".to_string();
+                ui.confirm_message = format!("Close MR !{iid}?");
+                ui.confirm_on_accept = Some(Box::new(move |app| {
+                    if let Some(pos) = app
+                        .data.mrs
+                        .iter()
+                        .position(|m| m.project_path == project && m.mr.iid == iid)
+                    {
+                        app.data.mrs[pos].mr.state = "closed".to_string();
+                        app.data.mrs[pos].mr.updated_at = chrono::Utc::now();
+                        app.ui.dirty.mrs = true;
+                        app.ui.pending_cmds.push(Cmd::PersistMrs);
+                    }
+                    app.ui.pending_cmds.push(Cmd::SpawnCloseMr { project, iid });
+                }));
+                ui.overlay = Overlay::Confirm;
             }
             KeyAction::Approve => {
                 let project = self.project_path.clone();
                 let iid = self.mr.iid;
-                ui.overlay = Overlay::Confirm(ConfirmAction::ApproveMr(project, iid));
+                ui.confirm_title = "Approve MR".to_string();
+                ui.confirm_message = format!("Approve MR !{iid}?");
+                ui.confirm_on_accept = Some(Box::new(move |app| {
+                    app.ui.pending_cmds.push(Cmd::SpawnApproveMr { project, iid });
+                }));
+                ui.overlay = Overlay::Confirm;
             }
             KeyAction::Merge => {
                 let project = self.project_path.clone();
                 let iid = self.mr.iid;
-                ui.overlay = Overlay::Confirm(ConfirmAction::MergeMr(project, iid));
+                ui.confirm_title = "Merge MR".to_string();
+                ui.confirm_message = format!("Merge MR !{iid}?");
+                ui.confirm_on_accept = Some(Box::new(move |app| {
+                    if let Some(pos) = app
+                        .data.mrs
+                        .iter()
+                        .position(|m| m.project_path == project && m.mr.iid == iid)
+                    {
+                        app.data.mrs[pos].mr.state = "merged".to_string();
+                        app.data.mrs[pos].mr.updated_at = chrono::Utc::now();
+                        app.ui.dirty.mrs = true;
+                        app.ui.pending_cmds.push(Cmd::PersistMrs);
+                    }
+                    app.ui.pending_cmds.push(Cmd::SpawnMergeMr { project, iid });
+                }));
+                ui.overlay = Overlay::Confirm;
             }
             KeyAction::EditLabels => {
                 let label_names: Vec<String> =
@@ -64,11 +99,19 @@ impl TrackedMergeRequest {
                     ui.picker_state = Some(
                         crate::ui::components::picker::PickerState::new("Assignee", members, false),
                     );
-                    ui.overlay = Overlay::Picker(PickerContext::Assignee);
+                    ui.picker_on_complete = Some(Box::new(|values, app| {
+                        if let Some(username) = values.first() {
+                            app.dispatch_update_assignee(username);
+                        }
+                    }));
+                    ui.overlay = Overlay::Picker;
                 } else {
                     ui.chord_state =
                         Some(chord_popup::ChordState::new_for_names("Set Assignee", members));
-                    ui.overlay = Overlay::Chord(ChordContext::Assignee);
+                    ui.chord_on_complete = Some(Box::new(|value, app| {
+                        app.dispatch_update_assignee(&value);
+                    }));
+                    ui.overlay = Overlay::Chord;
                 }
             }
             KeyAction::Comment => {

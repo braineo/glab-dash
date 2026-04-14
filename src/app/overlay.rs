@@ -7,7 +7,7 @@ use crate::ui::components::{chord_popup, input, label_editor, picker};
 use crate::ui::keys;
 use crate::ui::views::filter_editor;
 
-use super::{App, ConfirmAction, Overlay};
+use super::{App, Overlay};
 
 impl App {
     /// Overlay focus: if an overlay is active, it handles the key and
@@ -28,25 +28,25 @@ impl App {
                 EventResult::Consumed
             }
 
-            Overlay::Confirm(action) => {
-                let action = action.clone();
+            Overlay::Confirm => {
                 match key.code {
                     KeyCode::Char('y' | 'Y') => {
-                        if matches!(action, ConfirmAction::QuitApp) {
-                            return EventResult::Quit;
-                        }
-                        self.execute_confirm(action);
                         self.ui.overlay = Overlay::None;
+                        match self.ui.confirm_on_accept.take() {
+                            Some(cb) => cb(self),
+                            None => return EventResult::Quit, // QuitApp
+                        }
                     }
                     KeyCode::Char('n') | KeyCode::Esc => {
                         self.ui.overlay = Overlay::None;
+                        self.ui.confirm_on_accept = None;
                     }
                     _ => {}
                 }
                 EventResult::Consumed
             }
 
-            Overlay::Chord(_) => {
+            Overlay::Chord => {
                 let Some(ref mut cs) = self.ui.chord_state else {
                     return EventResult::Bubble;
                 };
@@ -54,17 +54,21 @@ impl App {
                     chord_popup::ChordAction::Continue => {}
                     chord_popup::ChordAction::Cancel => {
                         self.ui.chord_state = None;
+                        self.ui.chord_on_complete = None;
                         self.ui.overlay = Overlay::None;
                     }
                     chord_popup::ChordAction::Selected(value) => {
                         self.ui.chord_state = None;
-                        self.handle_chord_result(&value);
+                        self.ui.overlay = Overlay::None;
+                        if let Some(cb) = self.ui.chord_on_complete.take() {
+                            cb(value, self);
+                        }
                     }
                 }
                 EventResult::Consumed
             }
 
-            Overlay::Picker(_) => {
+            Overlay::Picker => {
                 let Some(ref mut ps) = self.ui.picker_state else {
                     return EventResult::Bubble;
                 };
@@ -72,14 +76,15 @@ impl App {
                     picker::PickerAction::Continue => {}
                     picker::PickerAction::Cancel => {
                         self.ui.picker_state = None;
+                        self.ui.picker_on_complete = None;
                         self.ui.overlay = Overlay::None;
                     }
                     picker::PickerAction::Picked(values) => {
-                        self.handle_picker_result(&values);
-                        if !matches!(self.ui.overlay, Overlay::CommentInput) {
-                            self.ui.overlay = Overlay::None;
-                        }
                         self.ui.picker_state = None;
+                        self.ui.overlay = Overlay::None;
+                        if let Some(cb) = self.ui.picker_on_complete.take() {
+                            cb(values, self);
+                        }
                     }
                 }
                 EventResult::Consumed
