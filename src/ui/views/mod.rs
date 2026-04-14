@@ -21,4 +21,3 @@ pub struct Views {
     pub board: dashboard::IterationBoardState,
     pub health: Option<dashboard::IterationHealth>,
 }
-

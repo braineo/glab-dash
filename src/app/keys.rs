@@ -43,15 +43,28 @@ impl App {
         // Disjoint borrows: &data (immutable) + &ctx (immutable) + &mut ui (mutable)
         match &focused {
             FocusedItem::Issue { id, .. } => {
-                let Some(issue) = self.data.issues.iter().find(|i| i.issue.id == *id)
-                    .or_else(|| self.data.shadow_work_cache.iter().find(|i| i.issue.id == *id))
+                let Some(issue) =
+                    self.data
+                        .issues
+                        .iter()
+                        .find(|i| i.issue.id == *id)
+                        .or_else(|| {
+                            self.data
+                                .shadow_work_cache
+                                .iter()
+                                .find(|i| i.issue.id == *id)
+                        })
                 else {
                     return EventResult::Bubble;
                 };
                 issue.handle_action_key(key, &self.ctx, &self.data, &mut self.ui)
             }
             FocusedItem::Mr { project, iid } => {
-                let Some(mr) = self.data.mrs.iter().find(|m| m.mr.iid == *iid && m.project_path == *project)
+                let Some(mr) = self
+                    .data
+                    .mrs
+                    .iter()
+                    .find(|m| m.mr.iid == *iid && m.project_path == *project)
                 else {
                     return EventResult::Bubble;
                 };
@@ -66,7 +79,8 @@ impl App {
         // Global bindings (q, ?, Esc, E, t)
         if let Some(action) = keybindings::match_group(keybindings::GLOBAL_BINDINGS, key) {
             self.execute_global_action(action);
-            return matches!(action, KeyAction::Back) && self.ui.view_stack.is_empty()
+            return matches!(action, KeyAction::Back)
+                && self.ui.view_stack.is_empty()
                 && matches!(self.ui.overlay, Overlay::Confirm);
         }
         // Global navigation (1-4)
@@ -156,13 +170,18 @@ impl App {
             KeyAction::SwitchTeam if !self.ctx.config.teams.is_empty() => {
                 let mut names: Vec<String> = vec!["All".to_string()];
                 names.extend(self.ctx.config.teams.iter().map(|t| t.name.clone()));
-                self.ui.picker_state = Some(crate::ui::components::picker::PickerState::new("Switch Team", names, false));
+                self.ui.picker_state = Some(crate::ui::components::picker::PickerState::new(
+                    "Switch Team",
+                    names,
+                    false,
+                ));
                 self.ui.picker_on_complete = Some(Box::new(|values, app| {
                     if let Some(name) = values.first() {
                         if name == "All" {
                             app.ui.active_team = None;
                         } else {
-                            app.ui.active_team = app.ctx.config.teams.iter().position(|t| t.name == *name);
+                            app.ui.active_team =
+                                app.ctx.config.teams.iter().position(|t| t.name == *name);
                         }
                         app.ui.dirty.issues = true;
                         app.ui.dirty.mrs = true;

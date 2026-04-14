@@ -35,7 +35,8 @@ impl TrackedMergeRequest {
                 ui.confirm_message = format!("Close MR !{iid}?");
                 ui.confirm_on_accept = Some(Box::new(move |app| {
                     if let Some(pos) = app
-                        .data.mrs
+                        .data
+                        .mrs
                         .iter()
                         .position(|m| m.project_path == project && m.mr.iid == iid)
                     {
@@ -54,7 +55,9 @@ impl TrackedMergeRequest {
                 ui.confirm_title = "Approve MR".to_string();
                 ui.confirm_message = format!("Approve MR !{iid}?");
                 ui.confirm_on_accept = Some(Box::new(move |app| {
-                    app.ui.pending_cmds.push(Cmd::SpawnApproveMr { project, iid });
+                    app.ui
+                        .pending_cmds
+                        .push(Cmd::SpawnApproveMr { project, iid });
                 }));
                 ui.overlay = Overlay::Confirm;
             }
@@ -65,7 +68,8 @@ impl TrackedMergeRequest {
                 ui.confirm_message = format!("Merge MR !{iid}?");
                 ui.confirm_on_accept = Some(Box::new(move |app| {
                     if let Some(pos) = app
-                        .data.mrs
+                        .data
+                        .mrs
                         .iter()
                         .position(|m| m.project_path == project && m.mr.iid == iid)
                     {
@@ -79,8 +83,7 @@ impl TrackedMergeRequest {
                 ui.overlay = Overlay::Confirm;
             }
             KeyAction::EditLabels => {
-                let label_names: Vec<String> =
-                    data.labels.iter().map(|l| l.name.clone()).collect();
+                let label_names: Vec<String> = data.labels.iter().map(|l| l.name.clone()).collect();
                 let issue_labels: Vec<Vec<String>> =
                     data.issues.iter().map(|i| i.issue.labels.clone()).collect();
                 ui.label_editor_state = Some(label_editor::LabelEditorState::new(
@@ -96,9 +99,9 @@ impl TrackedMergeRequest {
                 let members = ctx.config.all_members();
                 let is_detail = matches!(ui.view, View::MrDetail);
                 if is_detail {
-                    ui.picker_state = Some(
-                        crate::ui::components::picker::PickerState::new("Assignee", members, false),
-                    );
+                    ui.picker_state = Some(crate::ui::components::picker::PickerState::new(
+                        "Assignee", members, false,
+                    ));
                     ui.picker_on_complete = Some(Box::new(|values, app| {
                         if let Some(username) = values.first() {
                             app.dispatch_update_assignee(username);
@@ -106,8 +109,10 @@ impl TrackedMergeRequest {
                     }));
                     ui.overlay = Overlay::Picker;
                 } else {
-                    ui.chord_state =
-                        Some(chord_popup::ChordState::new_for_names("Set Assignee", members));
+                    ui.chord_state = Some(chord_popup::ChordState::new_for_names(
+                        "Set Assignee",
+                        members,
+                    ));
                     ui.chord_on_complete = Some(Box::new(|value, app| {
                         app.dispatch_update_assignee(&value);
                     }));
@@ -180,7 +185,13 @@ impl TrackedMergeRequest {
     }
 
     /// Submit a comment or reply.
-    pub fn submit_comment(&self, body: &str, reply_discussion_id: Option<String>, ctx: &AppCtx, ui: &mut UiState) {
+    pub fn submit_comment(
+        &self,
+        body: &str,
+        reply_discussion_id: Option<String>,
+        ctx: &AppCtx,
+        ui: &mut UiState,
+    ) {
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         let body = body.to_string();
@@ -191,7 +202,9 @@ impl TrackedMergeRequest {
         tokio::spawn(async move {
             let create_result = match &reply_discussion_id {
                 Some(disc_id) => {
-                    client.reply_to_mr_discussion(&project, iid, disc_id, &body).await
+                    client
+                        .reply_to_mr_discussion(&project, iid, disc_id, &body)
+                        .await
                 }
                 None => client.create_mr_note(&project, iid, &body).await,
             };

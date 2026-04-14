@@ -59,11 +59,23 @@ impl App {
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
-                    issue_detail::render(frame, chunks[1], &item, &self.ui.views.issue_detail, &ctx);
+                    issue_detail::render(
+                        frame,
+                        chunks[1],
+                        &item,
+                        &self.ui.views.issue_detail,
+                        &ctx,
+                    );
                 }
             }
             View::MrList => {
-                mr_list::render(frame, chunks[1], &mut self.ui.views.mr_list, &self.data.mrs, &ctx);
+                mr_list::render(
+                    frame,
+                    chunks[1],
+                    &mut self.ui.views.mr_list,
+                    &self.data.mrs,
+                    &ctx,
+                );
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
@@ -85,7 +97,8 @@ impl App {
 
         // Status bar
         let team_name = self
-            .ui.active_team
+            .ui
+            .active_team
             .and_then(|idx| self.ctx.config.teams.get(idx))
             .map_or("all", |t| t.name.as_str());
         let view_name = match self.ui.view {
@@ -100,7 +113,9 @@ impl App {
             View::IssueList => self.ui.views.issue_list.list.len(),
             View::MrList => self.ui.views.mr_list.list.len(),
             View::Planning => self
-                .ui.views.planning
+                .ui
+                .views
+                .planning
                 .columns
                 .iter()
                 .map(|c| c.list.len())
@@ -143,7 +158,12 @@ impl App {
                 filter_editor::render(frame, area, &mut self.ui.filter_editor_state, &ctx);
             }
             Overlay::Confirm => {
-                confirm_dialog::render(frame, area, &self.ui.confirm_title, &self.ui.confirm_message);
+                confirm_dialog::render(
+                    frame,
+                    area,
+                    &self.ui.confirm_title,
+                    &self.ui.confirm_message,
+                );
             }
             Overlay::Picker => {
                 if let Some(ref mut ps) = self.ui.picker_state {
@@ -158,7 +178,12 @@ impl App {
                 } else {
                     "Comment (Enter submit, C-j newline)"
                 };
-                crate::ui::components::input::render(frame, popup, &mut self.ui.comment_input, title);
+                crate::ui::components::input::render(
+                    frame,
+                    popup,
+                    &mut self.ui.comment_input,
+                    title,
+                );
                 crate::ui::components::autocomplete::render(frame, popup, &self.ui.autocomplete);
             }
             Overlay::Chord => {

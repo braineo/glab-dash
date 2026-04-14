@@ -627,4 +627,3 @@ pub fn binding_groups_for_view(view: View) -> Vec<&'static BindingGroup> {
 pub fn match_group(bindings: &[Binding], key: &KeyEvent) -> Option<KeyAction> {
     bindings.iter().find(|b| b.matches(key)).map(|b| b.action)
 }
-

@@ -13,7 +13,8 @@ impl App {
                     self.merge_issues(issues, incremental);
                     // Snapshot all issues (open + closed) for DB persistence
                     // before filtering to open-only in memory.
-                    self.ui.pending_cmds
+                    self.ui
+                        .pending_cmds
                         .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
                     self.data.issues.retain(|i| i.issue.state == "opened");
                     let now = Self::now_secs();
@@ -35,7 +36,8 @@ impl App {
                     self.merge_mrs(mrs, incremental);
                     // Snapshot all MRs (open + closed) for DB persistence
                     // before filtering to open-only in memory.
-                    self.ui.pending_cmds
+                    self.ui
+                        .pending_cmds
                         .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
                     self.data.mrs.retain(|m| m.mr.state == "opened");
                     let now = Self::now_secs();
@@ -83,7 +85,9 @@ impl App {
                 self.ui.loading = false;
                 match result {
                     Ok(issue) => {
-                        if let Some(pos) = self.data.issues.iter().position(|e| e.issue.id == issue.id) {
+                        if let Some(pos) =
+                            self.data.issues.iter().position(|e| e.issue.id == issue.id)
+                        {
                             self.data.issues[pos].issue = issue;
                         }
                         self.ui.error = None;
@@ -98,7 +102,8 @@ impl App {
                 match result {
                     Ok(mr) => {
                         if let Some(pos) = self
-                            .data.mrs
+                            .data
+                            .mrs
                             .iter()
                             .position(|e| e.mr.iid == mr.iid && e.project_path == project_path)
                         {
@@ -116,7 +121,8 @@ impl App {
                 match result {
                     Ok((project_path, iid, status_name)) => {
                         if let Some(pos) = self
-                            .data.issues
+                            .data
+                            .issues
                             .iter()
                             .position(|e| e.issue.iid == iid && e.project_path == project_path)
                         {
@@ -144,13 +150,22 @@ impl App {
                         if statuses.is_empty() && !is_background {
                             // No custom statuses — fall back to open/close toggle
                             let item_state = self
-                                .ui.views.issue_list
+                                .ui
+                                .views
+                                .issue_list
                                 .selected_issue(&self.data.issues)
                                 .or_else(|| self.current_detail_issue())
                                 .map_or("opened".to_string(), |i| i.issue.state.clone());
-                            TrackedIssue::show_close_reopen_confirm(issue_id, iid, &item_state, &mut self.ui);
+                            TrackedIssue::show_close_reopen_confirm(
+                                issue_id,
+                                iid,
+                                &item_state,
+                                &mut self.ui,
+                            );
                         } else if !statuses.is_empty() {
-                            self.data.work_item_statuses.insert(project.clone(), statuses);
+                            self.data
+                                .work_item_statuses
+                                .insert(project.clone(), statuses);
                             self.ui.dirty.statuses = true;
                             self.ui.pending_cmds.push(Cmd::PersistStatuses {
                                 project: project.clone(),
@@ -159,8 +174,13 @@ impl App {
                                 && let Some(statuses) = self.data.work_item_statuses.get(&project)
                             {
                                 TrackedIssue::build_status_chord(
-                                    &project, issue_id, iid, close_only, statuses,
-                                    &self.data, &mut self.ui,
+                                    &project,
+                                    issue_id,
+                                    iid,
+                                    close_only,
+                                    statuses,
+                                    &self.data,
+                                    &mut self.ui,
                                 );
                             }
                         }
@@ -193,7 +213,9 @@ impl App {
                     }
                     Err(e) => {
                         // Revert the optimistic update
-                        if let Some(pos) = self.data.issues.iter().position(|i| i.issue.id == issue_id) {
+                        if let Some(pos) =
+                            self.data.issues.iter().position(|i| i.issue.id == issue_id)
+                        {
                             self.data.issues[pos].issue.iteration = old_iteration;
                             self.ui.dirty.issues = true;
                         }
@@ -217,7 +239,12 @@ impl App {
     fn merge_issues(&mut self, issues: Vec<TrackedIssue>, incremental: bool) {
         if incremental {
             for item in issues {
-                if let Some(pos) = self.data.issues.iter().position(|i| i.issue.id == item.issue.id) {
+                if let Some(pos) = self
+                    .data
+                    .issues
+                    .iter()
+                    .position(|i| i.issue.id == item.issue.id)
+                {
                     if self.data.issues[pos].issue.updated_at <= item.issue.updated_at {
                         self.data.issues[pos] = item;
                     }
@@ -229,7 +256,8 @@ impl App {
             let mut new_issues = issues;
             for new_iss in &mut new_issues {
                 if let Some(pos) = self
-                    .data.issues
+                    .data
+                    .issues
                     .iter()
                     .position(|i| i.issue.id == new_iss.issue.id)
                 {

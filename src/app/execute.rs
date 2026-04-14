@@ -56,7 +56,8 @@ impl App {
             }
             Cmd::PersistUnplannedWork => {
                 let _ = self
-                    .ctx.db
+                    .ctx
+                    .db
                     .set_kv("unplanned_work_dates", &self.data.unplanned_work_cache);
             }
             Cmd::PersistLabelUsage => {
