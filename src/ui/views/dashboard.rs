@@ -5,11 +5,15 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table};
 
+use crossterm::event::{KeyCode, KeyEvent};
+
+use crate::cmd::{Cmd, Dirty, EventResult};
 use crate::config::{Config, KanbanColumnConfig};
 use crate::gitlab::types::{Iteration, TrackedIssue, TrackedMergeRequest, WorkItemStatus};
+use crate::keybindings::{self, KeyAction};
 use crate::sort;
 use crate::ui::styles;
-use crate::ui::views::list_model::{ItemList, UserFilter};
+use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
 
 use std::collections::HashMap;
 
@@ -71,6 +75,25 @@ pub struct IterationHealth {
 }
 
 impl IterationHealth {
+    /// Health panel handles list nav in the active tab.
+    pub fn handle_key(
+        &mut self,
+        key: &KeyEvent,
+        dirty: &mut Dirty,
+        needs_redraw: &mut bool,
+    ) -> EventResult {
+        // Active tab's list handles nav
+        if let Some(moved) = self.active_list_mut().handle_nav_key(key) {
+            if moved {
+                dirty.selection = true;
+            } else {
+                *needs_redraw = false;
+            }
+            return EventResult::Consumed;
+        }
+        EventResult::Bubble
+    }
+
     pub fn active_list(&self) -> &ItemList<TrackedIssue> {
         match self.active_tab {
             HealthTab::UnplannedWork => &self.unplanned_work,
@@ -132,6 +155,110 @@ pub struct IterationBoardState {
 }
 
 impl IterationBoardState {
+    // ── Key handling ────────────────────────────────────────────────
+
+    /// Dashboard key handler. Delegates to focused child (health or column),
+    /// then handles board-level keys (column nav, tab toggle, filter, search).
+    pub fn handle_key(
+        &mut self,
+        key: &KeyEvent,
+        mut health: Option<&mut IterationHealth>,
+        dirty: &mut Dirty,
+        cmds: &mut Vec<Cmd>,
+        needs_redraw: &mut bool,
+    ) -> EventResult {
+        // Filter bar
+        if self.filter.bar_focused {
+            match self.filter.handle_bar_key(key) {
+                FilterBarAction::Deleted => {
+                    dirty.view_state = true;
+                    cmds.push(Cmd::PersistViewState);
+                }
+                FilterBarAction::Unfocused | FilterBarAction::Consumed => {}
+            }
+            return EventResult::Consumed;
+        }
+
+        // Fuzzy search
+        if self.filter.is_searching() {
+            if self.filter.handle_fuzzy_input(key) == Some(true) {
+                dirty.view_state = true;
+            }
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        // 1. Focused child: health panel or board column
+        let child_result = if self.health_focused {
+            health.as_mut().map_or(EventResult::Bubble, |h| {
+                h.handle_key(key, dirty, needs_redraw)
+            })
+        } else {
+            self.columns
+                .get_mut(self.focused_column)
+                .and_then(|col| {
+                    let moved = col.list.handle_nav_key(key)?;
+                    if moved {
+                        dirty.selection = true;
+                    } else {
+                        *needs_redraw = false;
+                    }
+                    Some(EventResult::Consumed)
+                })
+                .unwrap_or(EventResult::Bubble)
+        };
+        if child_result.handled() {
+            return child_result;
+        }
+
+        // 2. Board-level: column/tab nav
+        if let Some(action) = keybindings::match_group(keybindings::BOARD_NAV_BINDINGS, key) {
+            match action {
+                KeyAction::ToggleDashboardFocus => {
+                    self.health_focused = !self.health_focused;
+                    dirty.selection = true;
+                }
+                KeyAction::ColumnLeft => {
+                    if self.health_focused {
+                        if let Some(h) = health.as_mut() {
+                            h.active_tab = h.active_tab.prev();
+                            h.active_list_mut().table_state.select(Some(0));
+                        }
+                    } else if !self.columns.is_empty() {
+                        self.focused_column = self.focused_column.saturating_sub(1);
+                    }
+                    dirty.selection = true;
+                }
+                KeyAction::ColumnRight => {
+                    if self.health_focused {
+                        if let Some(h) = health.as_mut() {
+                            h.active_tab = h.active_tab.next();
+                            h.active_list_mut().table_state.select(Some(0));
+                        }
+                    } else if !self.columns.is_empty()
+                        && self.focused_column + 1 < self.columns.len()
+                    {
+                        self.focused_column += 1;
+                    }
+                    dirty.selection = true;
+                }
+                _ => return EventResult::Bubble,
+            }
+            return EventResult::Consumed;
+        }
+
+        // 3. Start search
+        if key.code == KeyCode::Char('/') {
+            self.filter.start_search();
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        EventResult::Bubble
+    }
+
+    // ── Column management ───────────────────────────────────────────
+
     /// Build columns from config `kanban_columns` if present, otherwise one column per status.
     pub fn build_columns(
         &mut self,

@@ -4,10 +4,14 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
+use crossterm::event::{KeyCode, KeyEvent};
+
+use crate::cmd::{Cmd, Dirty, EventResult};
 use crate::config::Config;
 use crate::gitlab::types::{Iteration, TrackedIssue};
+use crate::keybindings::{self, KeyAction};
 use crate::sort;
-use crate::ui::views::list_model::{ItemList, UserFilter};
+use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
 use crate::ui::{RenderCtx, components, styles};
 
 use std::collections::HashMap;
@@ -53,6 +57,82 @@ impl Default for PlanningViewState {
 }
 
 impl PlanningViewState {
+    // ── Key handling ────────────────────────────────────────────────
+
+    pub fn handle_key(
+        &mut self,
+        key: &KeyEvent,
+        dirty: &mut Dirty,
+        cmds: &mut Vec<Cmd>,
+        needs_redraw: &mut bool,
+    ) -> EventResult {
+        // Active column's filter bar
+        let col = &mut self.columns[self.focused_column];
+        if col.filter.bar_focused {
+            match col.filter.handle_bar_key(key) {
+                FilterBarAction::Deleted => {
+                    dirty.view_state = true;
+                    cmds.push(Cmd::PersistViewState);
+                }
+                FilterBarAction::Unfocused | FilterBarAction::Consumed => {}
+            }
+            return EventResult::Consumed;
+        }
+
+        // Active column's fuzzy search
+        if col.filter.is_searching() {
+            if col.filter.handle_fuzzy_input(key) == Some(true) {
+                dirty.view_state = true;
+            }
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        // Focused column's list handles nav
+        if let Some(moved) = col.list.handle_nav_key(key) {
+            if moved {
+                dirty.selection = true;
+            } else {
+                *needs_redraw = false;
+            }
+            return EventResult::Consumed;
+        }
+
+        // Planning-level: column nav, toggle, layout
+        if let Some(action) = keybindings::match_group(keybindings::PLANNING_NAV_BINDINGS, key) {
+            match action {
+                KeyAction::ColumnLeft => self.move_focus_left(),
+                KeyAction::ColumnRight => self.move_focus_right(),
+                KeyAction::ToggleColumnPrev => {
+                    self.column_visible[0] = !self.column_visible[0];
+                    self.clamp_focus();
+                }
+                KeyAction::ToggleColumnNext => {
+                    self.column_visible[2] = !self.column_visible[2];
+                    self.clamp_focus();
+                }
+                KeyAction::ToggleLayout => {
+                    self.toggle_layout();
+                    dirty.issues = true;
+                }
+                _ => return EventResult::Bubble,
+            }
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        // Start search
+        if key.code == KeyCode::Char('/') {
+            self.columns[self.focused_column].filter.start_search();
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        EventResult::Bubble
+    }
+
+    // ── Query ───────────────────────────────────────────────────────
+
     pub fn selected_issue<'a>(&self, issues: &'a [TrackedIssue]) -> Option<&'a TrackedIssue> {
         self.columns[self.focused_column].list.selected_item(issues)
     }
