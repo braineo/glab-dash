@@ -42,24 +42,6 @@ pub enum ChordAction {
 }
 
 impl ChordState {
-    /// Create a chord with sequential home-row key codes (fixed-length).
-    pub fn new(title: &str, labels: Vec<String>) -> Self {
-        let code_len = if labels.len() <= CHORD_KEYS.len() {
-            1
-        } else {
-            2
-        };
-        let codes = generate_codes(labels.len(), code_len);
-        let options = codes.into_iter().zip(labels).collect();
-        Self {
-            title: title.to_string(),
-            options,
-            input: String::new(),
-            max_code_len: code_len,
-            kind: ChordKind::Generic,
-        }
-    }
-
     /// Create a chord with cascading name-derived keys (avy/easymotion style).
     ///
     /// - Unique first letter → 1-char code (instant select)

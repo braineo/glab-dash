@@ -138,49 +138,6 @@ impl App {
         });
     }
 
-    /// Fetch work-item statuses and show a chord popup.
-    /// `close_only`: when true, filter to close-category statuses (for `x` key).
-    pub(super) fn fetch_statuses_and_show_chord(
-        &mut self,
-        project: &str,
-        issue_id: u64,
-        iid: u64,
-        close_only: bool,
-    ) {
-        // If we already have cached statuses for this project, show chord immediately
-        if let Some(statuses) = self.data.work_item_statuses.get(project) {
-            if statuses.is_empty() {
-                // No custom statuses — fall back to open/close toggle
-                let item_state = self
-                    .ui.views.issue_list
-                    .selected_issue(&self.data.issues)
-                    .or_else(|| self.current_detail_issue())
-                    .map_or("opened", |i| i.issue.state.as_str());
-                let action = if item_state == "opened" {
-                    super::ConfirmAction::CloseIssue(issue_id, iid)
-                } else {
-                    super::ConfirmAction::ReopenIssue(issue_id, iid)
-                };
-                self.ui.overlay = super::Overlay::Confirm(action);
-            } else {
-                self.show_status_chord(project, issue_id, iid, close_only);
-            }
-            return;
-        }
-
-        // Fetch statuses from GitLab
-        let client = self.ctx.client.clone();
-        let tx = self.ctx.async_tx.clone();
-        let project = project.to_string();
-        self.ui.loading = true;
-        tokio::spawn(async move {
-            let result = client.fetch_work_item_statuses(&project).await;
-            let _ = tx.send(AsyncMsg::StatusesLoaded(
-                result, project, issue_id, iid, close_only,
-            ));
-        });
-    }
-
     pub(super) fn fetch_notes_for_mr(&self, project: &str, iid: u64) {
         let client = self.ctx.client.clone();
         let project = project.to_string();

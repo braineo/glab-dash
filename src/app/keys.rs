@@ -33,26 +33,31 @@ impl App {
         self.dispatch_global(&key)
     }
 
-    /// Focused item handles item-specific actions (s/l/a/c/x/i/o for issues,
-    /// plus A/M for MRs).  No focused item → everything bubbles.
+    /// Focused item handles item-specific actions.  The domain type
+    /// (`TrackedIssue` / `TrackedMergeRequest`) owns its key handling.
     fn dispatch_focused_item(&mut self, key: &KeyEvent) -> EventResult {
-        let bindings: &[keybindings::Binding] = match &self.ui.focused {
-            Some(FocusedItem::Issue { .. }) => keybindings::ISSUE_ACTION_BINDINGS,
-            Some(FocusedItem::Mr { .. }) => keybindings::MR_ACTION_BINDINGS,
+        let focused = match &self.ui.focused {
+            Some(f) => f.clone(),
             None => return EventResult::Bubble,
         };
-        if let Some(action) = keybindings::match_group(bindings, key) {
-            self.execute_item_action(action);
-            return EventResult::Consumed;
+        // Disjoint borrows: &data (immutable) + &ctx (immutable) + &mut ui (mutable)
+        match &focused {
+            FocusedItem::Issue { id, .. } => {
+                let Some(issue) = self.data.issues.iter().find(|i| i.issue.id == *id)
+                    .or_else(|| self.data.shadow_work_cache.iter().find(|i| i.issue.id == *id))
+                else {
+                    return EventResult::Bubble;
+                };
+                issue.handle_action_key(key, &self.ctx, &self.data, &mut self.ui)
+            }
+            FocusedItem::Mr { project, iid } => {
+                let Some(mr) = self.data.mrs.iter().find(|m| m.mr.iid == *iid && m.project_path == *project)
+                else {
+                    return EventResult::Bubble;
+                };
+                mr.handle_action_key(key, &self.ctx, &self.data, &mut self.ui)
+            }
         }
-        // `o` (OpenBrowser) is in LIST_NAV_BINDINGS but is item-scoped
-        if keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
-            == Some(KeyAction::OpenBrowser)
-        {
-            self.action_open_browser();
-            return EventResult::Consumed;
-        }
-        EventResult::Bubble
     }
 
     /// Global bindings: navigation (1-4), quit (q/Esc), help (?), team (t),
@@ -123,37 +128,6 @@ impl App {
                 &mut self.ui.pending_cmds,
                 &mut self.ui.needs_redraw,
             ),
-        }
-    }
-
-    // ── Action execution ─────────────────────────────────────────────
-
-    /// Execute an item action (called from `dispatch_focused_item`).
-    fn execute_item_action(&mut self, action: KeyAction) {
-        match action {
-            KeyAction::SetStatus => self.do_set_status(),
-            KeyAction::ToggleState => self.do_toggle_state(),
-            KeyAction::EditLabels => self.action_edit_labels(),
-            KeyAction::EditAssignee => self.action_edit_assignee(),
-            KeyAction::Comment => self.action_open_comment(),
-            KeyAction::MoveIteration => self.show_iteration_chord(),
-            KeyAction::Approve => {
-                if let Some(FocusedItem::Mr {
-                    ref project, iid, ..
-                }) = self.ui.focused
-                {
-                    self.ui.overlay = Overlay::Confirm(super::ConfirmAction::ApproveMr(project.clone(), iid));
-                }
-            }
-            KeyAction::Merge => {
-                if let Some(FocusedItem::Mr {
-                    ref project, iid, ..
-                }) = self.ui.focused
-                {
-                    self.ui.overlay = Overlay::Confirm(super::ConfirmAction::MergeMr(project.clone(), iid));
-                }
-            }
-            _ => {}
         }
     }
 
