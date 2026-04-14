@@ -4,7 +4,9 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
+use crate::cmd::EventResult;
 use crate::gitlab::types::{Discussion, TrackedMergeRequest};
+use crate::keybindings::{self, KeyAction};
 use crate::ui::{markdown, styles};
 
 #[derive(Default)]
@@ -15,6 +17,18 @@ pub struct MrDetailState {
 }
 
 impl MrDetailState {
+    pub fn handle_key(&mut self, key: &crossterm::event::KeyEvent) -> EventResult {
+        let Some(action) = keybindings::match_group(keybindings::DETAIL_NAV_BINDINGS, key) else {
+            return EventResult::Bubble;
+        };
+        match action {
+            KeyAction::MoveDown => self.scroll_down(),
+            KeyAction::MoveUp => self.scroll_up(),
+            _ => return EventResult::Bubble,
+        }
+        EventResult::Consumed
+    }
+
     pub fn scroll_down(&mut self) {
         self.scroll = self.scroll.saturating_add(3);
     }
