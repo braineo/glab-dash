@@ -421,6 +421,9 @@ impl App {
             return;
         }
 
+        if d.labels {
+            self.rebuild_label_color_map();
+        }
         if d.issues || d.view_state {
             self.refilter_issues();
         }
@@ -438,6 +441,9 @@ impl App {
         }
         if d.issues || d.mrs || d.iterations || d.selection || d.view_state || d.statuses {
             self.refresh_focused();
+        }
+        if d.issues {
+            self.refresh_shadow_work();
         }
         if d.issues || d.iterations || d.statuses {
             self.compute_iteration_health();
@@ -459,8 +465,14 @@ impl App {
             Cmd::PersistIssues => {
                 let _ = self.db.upsert_issues(&self.issues);
             }
+            Cmd::PersistIssuesFull(ref issues) => {
+                let _ = self.db.upsert_issues(issues);
+            }
             Cmd::PersistMrs => {
                 let _ = self.db.upsert_mrs(&self.mrs);
+            }
+            Cmd::PersistMrsFull(ref mrs) => {
+                let _ = self.db.upsert_mrs(mrs);
             }
             Cmd::PersistLabels => {
                 let _ = self.db.upsert_labels(&self.labels);
@@ -494,6 +506,9 @@ impl App {
             }
             Cmd::PersistLabelUsage => {
                 let _ = self.db.set_kv("label_usage", &self.label_usage);
+            }
+            Cmd::PersistLastFetchedAt(ts) => {
+                let _ = self.db.set_kv("last_fetched_at", &ts);
             }
 
             // ── API fetches ──────────────────────────────────────────
@@ -931,14 +946,14 @@ impl App {
             AsyncMsg::IssuesLoaded(result, incremental) => match result {
                 Ok(issues) => {
                     self.merge_issues(issues, incremental);
-                    // Persist ALL issues (open + closed) to DB, then filter
-                    // in-memory to open-only for display.
-                    let _ = self.db.upsert_issues(&self.issues);
+                    // Snapshot all issues (open + closed) for DB persistence
+                    // before filtering to open-only in memory.
+                    self.pending_cmds
+                        .push(Cmd::PersistIssuesFull(self.issues.clone()));
                     self.issues.retain(|i| i.issue.state == "opened");
-                    self.refresh_shadow_work();
                     let now = Self::now_secs();
                     self.last_fetched_at = Some(now);
-                    let _ = self.db.set_kv("last_fetched_at", &now);
+                    self.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
                     self.error = None;
                     self.record_fetch_done();
                     self.dirty.issues = true;
@@ -953,12 +968,14 @@ impl App {
                 Ok((tracking, external)) => {
                     let mrs: Vec<_> = tracking.into_iter().chain(external).collect();
                     self.merge_mrs(mrs, incremental);
-                    // Persist ALL MRs to DB, then filter in-memory to open-only
-                    let _ = self.db.upsert_mrs(&self.mrs);
+                    // Snapshot all MRs (open + closed) for DB persistence
+                    // before filtering to open-only in memory.
+                    self.pending_cmds
+                        .push(Cmd::PersistMrsFull(self.mrs.clone()));
                     self.mrs.retain(|m| m.mr.state == "opened");
                     let now = Self::now_secs();
                     self.last_fetched_at = Some(now);
-                    let _ = self.db.set_kv("last_fetched_at", &now);
+                    self.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
                     self.record_fetch_done();
                     self.error = None;
                     self.dirty.mrs = true;
@@ -1050,7 +1067,6 @@ impl App {
             AsyncMsg::LabelsLoaded(result) => {
                 if let Ok(labels) = result {
                     self.labels = labels;
-                    self.rebuild_label_color_map();
                     self.dirty.labels = true;
                     self.pending_cmds.push(Cmd::PersistLabels);
                 }

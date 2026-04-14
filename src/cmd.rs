@@ -1,4 +1,4 @@
-use crate::gitlab::types::Iteration;
+use crate::gitlab::types::{Iteration, TrackedIssue, TrackedMergeRequest};
 
 /// Side-effect descriptors returned from update logic.
 ///
@@ -17,6 +17,12 @@ pub enum Cmd {
     // ── Persistence (targeted SQLite writes) ─────────────────────────
     PersistIssues,
     PersistMrs,
+    /// Persist a snapshot of all issues (open + closed) taken before the
+    /// in-memory open-only filter.  Used by `IssuesLoaded` so closed issues
+    /// accumulate in the DB for shadow-work queries.
+    PersistIssuesFull(Vec<TrackedIssue>),
+    /// Same as `PersistIssuesFull` but for merge requests.
+    PersistMrsFull(Vec<TrackedMergeRequest>),
     PersistLabels,
     PersistIterations,
     PersistStatuses {
@@ -25,6 +31,7 @@ pub enum Cmd {
     PersistViewState,
     PersistUnplannedWork,
     PersistLabelUsage,
+    PersistLastFetchedAt(u64),
 
     // ── API fetches ──────────────────────────────────────────────────
     FetchAll,
