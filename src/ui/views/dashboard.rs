@@ -1360,6 +1360,15 @@ pub fn compute_health(
             }
         }
     }
+    unplanned_work.indices.sort_by(|&a, &b| {
+        let added_a = unplanned_work_cache
+            .get(&issues[a].issue.id)
+            .unwrap_or(&issues[a].issue.created_at);
+        let added_b = unplanned_work_cache
+            .get(&issues[b].issue.id)
+            .unwrap_or(&issues[b].issue.created_at);
+        added_b.cmp(added_a)
+    });
     unplanned_work.clamp_selection();
 
     // Shadow work: closed issues updated during iteration but not in it (indices into `shadow_work_cache`).
@@ -1379,6 +1388,13 @@ pub fn compute_health(
             shadow_work.indices.push(i);
         }
     }
+    shadow_work.indices.sort_by(|&a, &b| {
+        let issue_a = &shadow_work_cache[a].issue;
+        let issue_b = &shadow_work_cache[b].issue;
+        let closed_a = issue_a.closed_at.unwrap_or(issue_a.updated_at);
+        let closed_b = issue_b.closed_at.unwrap_or(issue_b.updated_at);
+        closed_b.cmp(&closed_a)
+    });
     shadow_work.clamp_selection();
 
     // At risk: iteration issues with "active" category status, not updated in 5+ days (indices into `issues`)
@@ -1405,6 +1421,11 @@ pub fn compute_health(
             at_risk.indices.push(i);
         }
     }
+    at_risk.indices.sort_by(|&a, &b| {
+        let issue_a = &issues[a].issue;
+        let issue_b = &issues[b].issue;
+        issue_a.updated_at.cmp(&issue_b.updated_at)
+    });
     at_risk.clamp_selection();
 
     // Preserve tab + selection state from previous health
