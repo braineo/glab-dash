@@ -146,6 +146,16 @@ pub enum FetchState {
     Done,
 }
 
+pub struct Views {
+    pub issue_list: issue_list::IssueListState,
+    pub mr_list: mr_list::MrListState,
+    pub issue_detail: issue_detail::IssueDetailState,
+    pub mr_detail: mr_detail::MrDetailState,
+    pub planning: planning::PlanningViewState,
+    pub board: dashboard::IterationBoardState,
+    pub health: Option<dashboard::IterationHealth>,
+}
+
 pub struct App {
     pub config: Config,
     pub client: GitLabClient,
@@ -168,10 +178,7 @@ pub struct App {
     pub error: Option<String>,
 
     // View-specific state
-    pub issue_list_state: issue_list::IssueListState,
-    pub mr_list_state: mr_list::MrListState,
-    pub issue_detail_state: issue_detail::IssueDetailState,
-    pub mr_detail_state: mr_detail::MrDetailState,
+    pub views: Views,
     pub filter_editor_state: filter_editor::FilterEditorState,
     pub picker_state: Option<picker::PickerState>,
     pub comment_input: crate::ui::components::input::CommentInput,
@@ -202,14 +209,9 @@ pub struct App {
     pub label_sort_orders: std::collections::HashMap<String, Vec<String>>,
 
     // Planning view
-    pub planning_state: planning::PlanningViewState,
     pub iterations: Vec<Iteration>,
 
-    // Iteration board on dashboard
-    pub iteration_board_state: dashboard::IterationBoardState,
-
     // Iteration health
-    pub iteration_health: Option<dashboard::IterationHealth>,
     pub unplanned_work_cache: std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>,
     pub shadow_work_cache: Vec<TrackedIssue>,
     pub unplanned_work_state: FetchState,
@@ -251,10 +253,15 @@ impl App {
             loading: false,
             loading_msg: "",
             error: None,
-            issue_list_state: issue_list::IssueListState::default(),
-            mr_list_state: mr_list::MrListState::default(),
-            issue_detail_state: issue_detail::IssueDetailState::default(),
-            mr_detail_state: mr_detail::MrDetailState::default(),
+            views: Views {
+                issue_list: issue_list::IssueListState::default(),
+                mr_list: mr_list::MrListState::default(),
+                issue_detail: issue_detail::IssueDetailState::default(),
+                mr_detail: mr_detail::MrDetailState::default(),
+                planning: planning::PlanningViewState::default(),
+                board: dashboard::IterationBoardState::default(),
+                health: None,
+            },
             filter_editor_state: filter_editor::FilterEditorState::default(),
             picker_state: None,
             comment_input: crate::ui::components::input::CommentInput::default(),
@@ -269,10 +276,7 @@ impl App {
             label_editor_state: None,
             label_usage: std::collections::HashMap::new(),
             label_sort_orders,
-            planning_state: planning::PlanningViewState::default(),
             iterations: Vec::new(),
-            iteration_board_state: dashboard::IterationBoardState::default(),
-            iteration_health: None,
             unplanned_work_cache: std::collections::HashMap::new(),
             shadow_work_cache: Vec::new(),
             unplanned_work_state: FetchState::default(),
@@ -302,14 +306,14 @@ impl App {
 
         // Restore persisted view state (filters, sorts, fuzzy queries)
         if let Ok(Some(vs)) = self.db.get_kv::<ViewState>("issue_view_state") {
-            self.issue_list_state.filter.conditions = vs.conditions;
-            self.issue_list_state.filter.sort_specs = vs.sort_specs;
-            self.issue_list_state.filter.fuzzy_query = vs.fuzzy_query;
+            self.views.issue_list.filter.conditions = vs.conditions;
+            self.views.issue_list.filter.sort_specs = vs.sort_specs;
+            self.views.issue_list.filter.fuzzy_query = vs.fuzzy_query;
         }
         if let Ok(Some(vs)) = self.db.get_kv::<ViewState>("mr_view_state") {
-            self.mr_list_state.filter.conditions = vs.conditions;
-            self.mr_list_state.filter.sort_specs = vs.sort_specs;
-            self.mr_list_state.filter.fuzzy_query = vs.fuzzy_query;
+            self.views.mr_list.filter.conditions = vs.conditions;
+            self.views.mr_list.filter.sort_specs = vs.sort_specs;
+            self.views.mr_list.filter.fuzzy_query = vs.fuzzy_query;
         }
 
         // Restore iterations (before health data so classify_iterations sees them)
@@ -339,7 +343,7 @@ impl App {
     fn refresh_focused(&mut self) {
         self.focused = match self.view {
             View::IssueList | View::IssueDetail => self
-                .issue_list_state
+                .views.issue_list
                 .selected_issue(&self.issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
@@ -347,7 +351,7 @@ impl App {
                     iid: item.issue.iid,
                 }),
             View::MrList | View::MrDetail => {
-                self.mr_list_state
+                self.views.mr_list
                     .selected_mr(&self.mrs)
                     .map(|item| FocusedItem::Mr {
                         project: item.project_path.clone(),
@@ -355,15 +359,15 @@ impl App {
                     })
             }
             View::Planning => self
-                .planning_state
+                .views.planning
                 .selected_issue(&self.issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
                     id: item.issue.id,
                     iid: item.issue.iid,
                 }),
-            View::Dashboard if self.iteration_board_state.health_focused => self
-                .iteration_health
+            View::Dashboard if self.views.board.health_focused => self
+                .views.health
                 .as_ref()
                 .and_then(|h| h.selected_issue(&self.issues, &self.shadow_work_cache))
                 .map(|item| FocusedItem::Issue {
@@ -372,7 +376,7 @@ impl App {
                     iid: item.issue.iid,
                 }),
             View::Dashboard => {
-                self.iteration_board_state
+                self.views.board
                     .selected_issue(&self.issues)
                     .map(|item| FocusedItem::Issue {
                         project: item.project_path.clone(),
@@ -487,14 +491,14 @@ impl App {
             }
             Cmd::PersistViewState => {
                 let ivs = ViewState {
-                    conditions: self.issue_list_state.filter.conditions.clone(),
-                    sort_specs: self.issue_list_state.filter.sort_specs.clone(),
-                    fuzzy_query: self.issue_list_state.filter.fuzzy_query.clone(),
+                    conditions: self.views.issue_list.filter.conditions.clone(),
+                    sort_specs: self.views.issue_list.filter.sort_specs.clone(),
+                    fuzzy_query: self.views.issue_list.filter.fuzzy_query.clone(),
                 };
                 let mvs = ViewState {
-                    conditions: self.mr_list_state.filter.conditions.clone(),
-                    sort_specs: self.mr_list_state.filter.sort_specs.clone(),
-                    fuzzy_query: self.mr_list_state.filter.fuzzy_query.clone(),
+                    conditions: self.views.mr_list.filter.conditions.clone(),
+                    sort_specs: self.views.mr_list.filter.sort_specs.clone(),
+                    fuzzy_query: self.views.mr_list.filter.fuzzy_query.clone(),
                 };
                 let _ = self.db.set_kv("issue_view_state", &ivs);
                 let _ = self.db.set_kv("mr_view_state", &mvs);
@@ -776,7 +780,7 @@ impl App {
             if statuses.is_empty() {
                 // No custom statuses — fall back to open/close toggle
                 let item_state = self
-                    .issue_list_state
+                    .views.issue_list
                     .selected_issue(&self.issues)
                     .or_else(|| self.current_detail_issue())
                     .map_or("opened", |i| i.issue.state.as_str());
@@ -857,7 +861,7 @@ impl App {
             if close_items.is_empty() {
                 // No close-category statuses — fall back to simple close/reopen
                 let item_state = self
-                    .issue_list_state
+                    .views.issue_list
                     .selected_issue(&self.issues)
                     .or_else(|| self.current_detail_issue())
                     .map_or("opened", |i| i.issue.state.as_str());
@@ -990,11 +994,11 @@ impl App {
                 match result {
                     Ok(discussions) => {
                         if self.view == View::IssueDetail {
-                            self.issue_detail_state.discussions = discussions;
-                            self.issue_detail_state.loading_notes = false;
+                            self.views.issue_detail.discussions = discussions;
+                            self.views.issue_detail.loading_notes = false;
                         } else if self.view == View::MrDetail {
-                            self.mr_detail_state.discussions = discussions;
-                            self.mr_detail_state.loading_notes = false;
+                            self.views.mr_detail.discussions = discussions;
+                            self.views.mr_detail.loading_notes = false;
                         }
                     }
                     Err(e) => {
@@ -1079,7 +1083,7 @@ impl App {
                         if statuses.is_empty() && !is_background {
                             // No custom statuses — fall back to open/close toggle
                             let item_state = self
-                                .issue_list_state
+                                .views.issue_list
                                 .selected_issue(&self.issues)
                                 .or_else(|| self.current_detail_issue())
                                 .map_or("opened", |i| i.issue.state.as_str());
@@ -1217,20 +1221,20 @@ impl App {
     pub fn refilter_issues(&mut self) {
         let me = self.config.me.clone();
         let members = self.active_team_members();
-        self.issue_list_state
+        self.views.issue_list
             .apply_filters(&self.issues, &me, &members, &self.label_sort_orders);
     }
 
     pub fn refilter_planning(&mut self) {
-        self.planning_state
+        self.views.planning
             .partition_issues(&self.issues, &self.label_sort_orders);
     }
 
     pub fn refilter_iteration_board(&mut self) {
-        let current_iter = self.planning_state.current_iteration.as_ref();
+        let current_iter = self.views.planning.current_iteration.as_ref();
         let me = self.config.me.clone();
         let members = self.active_team_members();
-        self.iteration_board_state.partition_issues(
+        self.views.board.partition_issues(
             &self.issues,
             current_iter,
             &self.label_sort_orders,
@@ -1248,7 +1252,7 @@ impl App {
         let new_current = current_pos.map(|pos| self.iterations[pos].clone());
 
         // Reset health caches if the current iteration changed
-        let iter_changed = match (&self.planning_state.current_iteration, &new_current) {
+        let iter_changed = match (&self.views.planning.current_iteration, &new_current) {
             (Some(old), Some(new)) => old.id != new.id,
             (None, Some(_)) | (Some(_), None) => true,
             (None, None) => false,
@@ -1257,16 +1261,16 @@ impl App {
             self.unplanned_work_cache.clear();
             self.shadow_work_cache.clear();
             self.unplanned_work_state = FetchState::Idle;
-            self.iteration_health = None;
+            self.views.health = None;
         }
 
-        self.planning_state.current_iteration = new_current;
+        self.views.planning.current_iteration = new_current;
 
-        self.planning_state.prev_iteration = current_pos
+        self.views.planning.prev_iteration = current_pos
             .and_then(|pos| pos.checked_sub(1))
             .map(|pos| self.iterations[pos].clone());
 
-        self.planning_state.next_iteration = current_pos
+        self.views.planning.next_iteration = current_pos
             .and_then(|pos| self.iterations.get(pos + 1))
             .cloned();
 
@@ -1287,7 +1291,7 @@ impl App {
             }
         }
         if !all_statuses.is_empty() {
-            self.iteration_board_state
+            self.views.board
                 .build_columns(&all_statuses, &self.config.kanban_columns);
         }
     }
@@ -1303,7 +1307,7 @@ impl App {
 
     /// Fetch "added to iteration" dates for unplanned work detection.
     fn fetch_unplanned_work_data(&mut self) {
-        let Some(current_iter) = self.planning_state.current_iteration.as_ref() else {
+        let Some(current_iter) = self.views.planning.current_iteration.as_ref() else {
             return;
         };
         let current_id = current_iter.id.clone();
@@ -1349,7 +1353,7 @@ impl App {
 
     /// Refresh shadow work cache from DB (closed issues in current iteration range).
     fn refresh_shadow_work(&mut self) {
-        let Some(iter) = self.planning_state.current_iteration.as_ref() else {
+        let Some(iter) = self.views.planning.current_iteration.as_ref() else {
             self.shadow_work_cache.clear();
             return;
         };
@@ -1369,7 +1373,7 @@ impl App {
 
     /// Trigger unplanned work fetch if conditions are met.
     fn maybe_fetch_health_data(&mut self) {
-        if self.planning_state.current_iteration.is_none() {
+        if self.views.planning.current_iteration.is_none() {
             return;
         }
         if self.unplanned_work_state != FetchState::InFlight {
@@ -1379,18 +1383,18 @@ impl App {
 
     /// Recompute iteration health metrics from current data.
     fn compute_iteration_health(&mut self) {
-        let Some(current_iter) = self.planning_state.current_iteration.as_ref() else {
-            self.iteration_health = None;
+        let Some(current_iter) = self.views.planning.current_iteration.as_ref() else {
+            self.views.health = None;
             return;
         };
 
-        self.iteration_health = Some(dashboard::compute_health(
+        self.views.health = Some(dashboard::compute_health(
             &self.issues,
             current_iter,
             &self.unplanned_work_cache,
             self.unplanned_work_state != FetchState::Done,
             &self.shadow_work_cache,
-            self.iteration_health.as_ref(),
+            self.views.health.as_ref(),
         ));
     }
 
@@ -1432,32 +1436,32 @@ impl App {
     fn refilter_mrs(&mut self) {
         let me = self.config.me.clone();
         let members = self.active_team_members();
-        self.mr_list_state
+        self.views.mr_list
             .apply_filters(&self.mrs, &me, &members, &self.label_sort_orders);
     }
 
     /// Returns a mutable reference to the `UserFilter` for the current view.
     fn active_filter_mut(&mut self) -> &mut UserFilter {
         match self.view {
-            View::IssueList | View::IssueDetail => &mut self.issue_list_state.filter,
-            View::MrList | View::MrDetail => &mut self.mr_list_state.filter,
+            View::IssueList | View::IssueDetail => &mut self.views.issue_list.filter,
+            View::MrList | View::MrDetail => &mut self.views.mr_list.filter,
             View::Planning => {
-                let col = self.planning_state.focused_column;
-                &mut self.planning_state.columns[col].filter
+                let col = self.views.planning.focused_column;
+                &mut self.views.planning.columns[col].filter
             }
-            View::Dashboard => &mut self.iteration_board_state.filter,
+            View::Dashboard => &mut self.views.board.filter,
         }
     }
 
     fn active_filter(&self) -> &UserFilter {
         match self.view {
-            View::IssueList | View::IssueDetail => &self.issue_list_state.filter,
-            View::MrList | View::MrDetail => &self.mr_list_state.filter,
+            View::IssueList | View::IssueDetail => &self.views.issue_list.filter,
+            View::MrList | View::MrDetail => &self.views.mr_list.filter,
             View::Planning => {
-                let col = self.planning_state.focused_column;
-                &self.planning_state.columns[col].filter
+                let col = self.views.planning.focused_column;
+                &self.views.planning.columns[col].filter
             }
-            View::Dashboard => &self.iteration_board_state.filter,
+            View::Dashboard => &self.views.board.filter,
         }
     }
 
@@ -1782,8 +1786,8 @@ impl App {
             // === Board / column navigation ===
             KeyAction::ToggleDashboardFocus => {
                 if self.view == View::Dashboard {
-                    self.iteration_board_state.health_focused =
-                        !self.iteration_board_state.health_focused;
+                    self.views.board.health_focused =
+                        !self.views.board.health_focused;
                     self.dirty.selection = true;
                 }
             }
@@ -1792,15 +1796,15 @@ impl App {
 
             // === Planning-specific ===
             KeyAction::ToggleColumnPrev => {
-                self.planning_state.column_visible[0] = !self.planning_state.column_visible[0];
-                self.planning_state.clamp_focus();
+                self.views.planning.column_visible[0] = !self.views.planning.column_visible[0];
+                self.views.planning.clamp_focus();
             }
             KeyAction::ToggleColumnNext => {
-                self.planning_state.column_visible[2] = !self.planning_state.column_visible[2];
-                self.planning_state.clamp_focus();
+                self.views.planning.column_visible[2] = !self.views.planning.column_visible[2];
+                self.views.planning.clamp_focus();
             }
             KeyAction::ToggleLayout => {
-                self.planning_state.toggle_layout();
+                self.views.planning.toggle_layout();
                 self.dirty.issues = true;
                 self.dirty.selection = true;
             }
@@ -1827,18 +1831,18 @@ impl App {
     /// Return a non-generic cursor for the active list, or `None` for detail views.
     fn active_list_cursor(&mut self) -> Option<ListCursor<'_>> {
         match self.view {
-            View::IssueList => Some(self.issue_list_state.list.cursor()),
-            View::MrList => Some(self.mr_list_state.list.cursor()),
+            View::IssueList => Some(self.views.issue_list.list.cursor()),
+            View::MrList => Some(self.views.mr_list.list.cursor()),
             View::Planning => {
-                let col = self.planning_state.focused_column;
-                Some(self.planning_state.columns[col].list.cursor())
+                let col = self.views.planning.focused_column;
+                Some(self.views.planning.columns[col].list.cursor())
             }
-            View::Dashboard if self.iteration_board_state.health_focused => {
-                self.iteration_health.as_mut().map(|h| h.active_list_mut().cursor())
+            View::Dashboard if self.views.board.health_focused => {
+                self.views.health.as_mut().map(|h| h.active_list_mut().cursor())
             }
             View::Dashboard => {
-                let col = self.iteration_board_state.focused_column;
-                self.iteration_board_state
+                let col = self.views.board.focused_column;
+                self.views.board
                     .columns
                     .get_mut(col)
                     .map(|c| c.list.cursor())
@@ -1861,8 +1865,8 @@ impl App {
 
     fn nav_down(&mut self) {
         match self.view {
-            View::IssueDetail => self.issue_detail_state.scroll_down(),
-            View::MrDetail => self.mr_detail_state.scroll_down(),
+            View::IssueDetail => self.views.issue_detail.scroll_down(),
+            View::MrDetail => self.views.mr_detail.scroll_down(),
             _ => {
                 self.nav(NavOp::Next);
                 return;
@@ -1873,8 +1877,8 @@ impl App {
 
     fn nav_up(&mut self) {
         match self.view {
-            View::IssueDetail => self.issue_detail_state.scroll_up(),
-            View::MrDetail => self.mr_detail_state.scroll_up(),
+            View::IssueDetail => self.views.issue_detail.scroll_up(),
+            View::MrDetail => self.views.mr_detail.scroll_up(),
             _ => {
                 self.nav(NavOp::Prev);
                 return;
@@ -1905,22 +1909,22 @@ impl App {
 
         if let Some(pos) = pos {
             if let Some(list_pos) = self
-                .issue_list_state
+                .views.issue_list
                 .list
                 .indices
                 .iter()
                 .position(|&i| i == pos)
             {
-                self.issue_list_state
+                self.views.issue_list
                     .list
                     .table_state
                     .select(Some(list_pos));
             } else {
-                self.issue_list_state.list.indices.push(pos);
-                self.issue_list_state
+                self.views.issue_list.list.indices.push(pos);
+                self.views.issue_list
                     .list
                     .table_state
-                    .select(Some(self.issue_list_state.list.indices.len() - 1));
+                    .select(Some(self.views.issue_list.list.indices.len() - 1));
             }
         }
     }
@@ -1928,32 +1932,32 @@ impl App {
     fn action_open_detail(&mut self) {
         match self.view {
             View::IssueList => {
-                if let Some(item) = self.issue_list_state.selected_issue(&self.issues) {
+                if let Some(item) = self.views.issue_list.selected_issue(&self.issues) {
                     let project = item.project_path.clone();
                     let iid = item.issue.iid;
-                    self.issue_detail_state.reset();
-                    self.issue_detail_state.loading_notes = true;
+                    self.views.issue_detail.reset();
+                    self.views.issue_detail.loading_notes = true;
                     self.fetch_notes_for_issue(&project, iid);
                     self.view_stack.push(View::IssueList);
                     self.view = View::IssueDetail;
                 }
             }
             View::MrList => {
-                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
+                if let Some(item) = self.views.mr_list.selected_mr(&self.mrs) {
                     let project = item.project_path.clone();
                     let iid = item.mr.iid;
-                    self.mr_detail_state.reset();
-                    self.mr_detail_state.loading_notes = true;
+                    self.views.mr_detail.reset();
+                    self.views.mr_detail.loading_notes = true;
                     self.fetch_notes_for_mr(&project, iid);
                     self.view_stack.push(View::MrList);
                     self.view = View::MrDetail;
                 }
             }
-            View::Dashboard if self.iteration_board_state.health_focused => {
+            View::Dashboard if self.views.board.health_focused => {
                 if let Some(FocusedItem::Issue { project, iid, .. }) = self.focused.clone() {
                     self.sync_issue_list_for_detail(&project, iid);
-                    self.issue_detail_state.reset();
-                    self.issue_detail_state.loading_notes = true;
+                    self.views.issue_detail.reset();
+                    self.views.issue_detail.loading_notes = true;
                     self.fetch_notes_for_issue(&project, iid);
                     self.view_stack.push(View::Dashboard);
                     self.view = View::IssueDetail;
@@ -1961,69 +1965,69 @@ impl App {
             }
             View::Dashboard => {
                 if let Some(item) = self
-                    .iteration_board_state
+                    .views.board
                     .selected_issue(&self.issues)
                     .cloned()
                 {
                     let project = item.project_path.clone();
                     let iid = item.issue.iid;
                     // Sync issue_list_state for detail view
-                    let col = self.iteration_board_state.focused_column;
+                    let col = self.views.board.focused_column;
                     if let Some(idx) = self
-                        .iteration_board_state
+                        .views.board
                         .columns
                         .get(col)
                         .and_then(|c| c.list.selected_index())
                     {
                         if let Some(pos) = self
-                            .issue_list_state
+                            .views.issue_list
                             .list
                             .indices
                             .iter()
                             .position(|&i| i == idx)
                         {
-                            self.issue_list_state.list.table_state.select(Some(pos));
+                            self.views.issue_list.list.table_state.select(Some(pos));
                         } else {
-                            self.issue_list_state.list.indices.push(idx);
-                            self.issue_list_state
+                            self.views.issue_list.list.indices.push(idx);
+                            self.views.issue_list
                                 .list
                                 .table_state
-                                .select(Some(self.issue_list_state.list.indices.len() - 1));
+                                .select(Some(self.views.issue_list.list.indices.len() - 1));
                         }
                     }
-                    self.issue_detail_state.reset();
-                    self.issue_detail_state.loading_notes = true;
+                    self.views.issue_detail.reset();
+                    self.views.issue_detail.loading_notes = true;
                     self.fetch_notes_for_issue(&project, iid);
                     self.view_stack.push(View::Dashboard);
                     self.view = View::IssueDetail;
                 }
             }
             View::Planning => {
-                if let Some(item) = self.planning_state.selected_issue(&self.issues).cloned() {
+                if let Some(item) = self.views.planning.selected_issue(&self.issues).cloned() {
                     let project = item.project_path.clone();
                     let iid = item.issue.iid;
-                    let col = self.planning_state.focused_column;
-                    if let Some(sel) = self.planning_state.columns[col].list.table_state.selected()
-                        && let Some(&idx) = self.planning_state.columns[col].list.indices.get(sel)
+                    let col = self.views.planning.focused_column;
+                    if let Some(sel) = self.views.planning.columns[col].list.table_state.selected()
+                        && let Some(&idx) = self.views.planning.columns[col].list.indices.get(sel)
                     {
                         if let Some(pos) = self
-                            .issue_list_state
+                            .views.issue_list
                             .list
                             .indices
                             .iter()
                             .position(|&i| i == idx)
                         {
-                            self.issue_list_state.list.table_state.select(Some(pos));
+                            self.views.issue_list.list.table_state.select(Some(pos));
                         } else {
-                            self.issue_list_state.list.indices.push(idx);
-                            self.issue_list_state
+                            self.views.issue_list.list.indices.push(idx);
+                            self.views.issue_list
                                 .list
                                 .table_state
-                                .select(Some(self.issue_list_state.list.indices.len() - 1));
+                                .select(Some(self.views.issue_list.list.indices.len() - 1));
                         }
                     }
-                    self.issue_detail_state.reset();
-                    self.issue_detail_state.loading_notes = true;
+                    self.views.issue_detail.reset();
+                    self.views.issue_detail.loading_notes = true;
                     self.fetch_notes_for_issue(&project, iid);
                     self.view_stack.push(View::Planning);
                     self.view = View::IssueDetail;
@@ -2180,7 +2184,7 @@ impl App {
             View::IssueList | View::IssueDetail => {
                 if let Some(item) = self
                     .current_detail_issue()
-                    .or_else(|| self.issue_list_state.selected_issue(&self.issues))
+                    .or_else(|| self.views.issue_list.selected_issue(&self.issues))
                 {
                     let _ = open::that_detached(&item.issue.web_url);
                 }
@@ -2188,14 +2192,14 @@ impl App {
             View::MrList | View::MrDetail => {
                 if let Some(item) = self
                     .current_detail_mr()
-                    .or_else(|| self.mr_list_state.selected_mr(&self.mrs))
+                    .or_else(|| self.views.mr_list.selected_mr(&self.mrs))
                 {
                     let _ = open::that_detached(&item.mr.web_url);
                 }
             }
-            View::Dashboard if self.iteration_board_state.health_focused => {
+            View::Dashboard if self.views.board.health_focused => {
                 if let Some(item) = self
-                    .iteration_health
+                    .views.health
                     .as_ref()
                     .and_then(|h| h.selected_issue(&self.issues, &self.shadow_work_cache))
                 {
@@ -2203,12 +2207,12 @@ impl App {
                 }
             }
             View::Dashboard => {
-                if let Some(item) = self.iteration_board_state.selected_issue(&self.issues) {
+                if let Some(item) = self.views.board.selected_issue(&self.issues) {
                     let _ = open::that_detached(&item.issue.web_url);
                 }
             }
             View::Planning => {
-                if let Some(item) = self.planning_state.selected_issue(&self.issues) {
+                if let Some(item) = self.views.planning.selected_issue(&self.issues) {
                     let _ = open::that(&item.issue.web_url);
                 }
             }
@@ -2219,26 +2223,26 @@ impl App {
         let label_names: Vec<String> = self.labels.iter().map(|l| l.name.clone()).collect();
         let current = match self.view {
             View::IssueList => self
-                .issue_list_state
+                .views.issue_list
                 .selected_issue(&self.issues)
                 .map(|i| i.issue.labels.clone()),
             View::IssueDetail => self.current_detail_issue().map(|i| i.issue.labels.clone()),
             View::MrList => self
-                .mr_list_state
+                .views.mr_list
                 .selected_mr(&self.mrs)
                 .map(|m| m.mr.labels.clone()),
             View::MrDetail => self.current_detail_mr().map(|m| m.mr.labels.clone()),
-            View::Dashboard if self.iteration_board_state.health_focused => self
-                .iteration_health
+            View::Dashboard if self.views.board.health_focused => self
+                .views.health
                 .as_ref()
                 .and_then(|h| h.selected_issue(&self.issues, &self.shadow_work_cache))
                 .map(|i| i.issue.labels.clone()),
             View::Dashboard => self
-                .iteration_board_state
+                .views.board
                 .selected_issue(&self.issues)
                 .map(|i| i.issue.labels.clone()),
             View::Planning => self
-                .planning_state
+                .views.planning
                 .selected_issue(&self.issues)
                 .map(|i| i.issue.labels.clone()),
         };
@@ -2284,8 +2288,8 @@ impl App {
 
     fn action_reply_thread(&mut self) {
         let infos = match self.view {
-            View::IssueDetail => self.issue_detail_state.thread_picker_items(),
-            View::MrDetail => self.mr_detail_state.thread_picker_items(),
+            View::IssueDetail => self.views.issue_detail.thread_picker_items(),
+            View::MrDetail => self.views.mr_detail.thread_picker_items(),
             _ => return,
         };
         if !infos.is_empty() {
@@ -2300,18 +2304,18 @@ impl App {
 
     fn action_column_left(&mut self) {
         match self.view {
-            View::Dashboard if self.iteration_board_state.health_focused => {
-                if let Some(ref mut health) = self.iteration_health {
+            View::Dashboard if self.views.board.health_focused => {
+                if let Some(ref mut health) = self.views.health {
                     health.active_tab = health.active_tab.prev();
                     health.active_list_mut().table_state.select(Some(0));
                 }
             }
-            View::Dashboard if !self.iteration_board_state.columns.is_empty() => {
-                self.iteration_board_state.focused_column =
-                    self.iteration_board_state.focused_column.saturating_sub(1);
+            View::Dashboard if !self.views.board.columns.is_empty() => {
+                self.views.board.focused_column =
+                    self.views.board.focused_column.saturating_sub(1);
             }
             View::Planning => {
-                self.planning_state.move_focus_left();
+                self.views.planning.move_focus_left();
             }
             _ => {}
         }
@@ -2320,21 +2324,21 @@ impl App {
 
     fn action_column_right(&mut self) {
         match self.view {
-            View::Dashboard if self.iteration_board_state.health_focused => {
-                if let Some(ref mut health) = self.iteration_health {
+            View::Dashboard if self.views.board.health_focused => {
+                if let Some(ref mut health) = self.views.health {
                     health.active_tab = health.active_tab.next();
                     health.active_list_mut().table_state.select(Some(0));
                 }
             }
             View::Dashboard
-                if !self.iteration_board_state.columns.is_empty()
-                    && self.iteration_board_state.focused_column + 1
-                        < self.iteration_board_state.columns.len() =>
+                if !self.views.board.columns.is_empty()
+                    && self.views.board.focused_column + 1
+                        < self.views.board.columns.len() =>
             {
-                self.iteration_board_state.focused_column += 1;
+                self.views.board.focused_column += 1;
             }
             View::Planning => {
-                self.planning_state.move_focus_right();
+                self.views.planning.move_focus_right();
             }
             _ => {}
         }
@@ -2382,13 +2386,13 @@ impl App {
 
         // Build choices: prev / current / next / remove
         let mut labels = Vec::new();
-        if let Some(iter) = &self.planning_state.prev_iteration {
+        if let Some(iter) = &self.views.planning.prev_iteration {
             labels.push(format!("◁ {}", planning::iteration_label(iter)));
         }
-        if let Some(iter) = &self.planning_state.current_iteration {
+        if let Some(iter) = &self.views.planning.current_iteration {
             labels.push(format!("● {}", planning::iteration_label(iter)));
         }
-        if let Some(iter) = &self.planning_state.next_iteration {
+        if let Some(iter) = &self.views.planning.next_iteration {
             labels.push(format!("▷ {}", planning::iteration_label(iter)));
         }
         labels.push("⊘ Remove iteration".to_string());
@@ -2399,11 +2403,11 @@ impl App {
 
     fn apply_iteration_move(&mut self, issue_idx: usize, choice: &str) {
         let target = if choice.starts_with('◁') {
-            self.planning_state.prev_iteration.clone()
+            self.views.planning.prev_iteration.clone()
         } else if choice.starts_with('●') {
-            self.planning_state.current_iteration.clone()
+            self.views.planning.current_iteration.clone()
         } else if choice.starts_with('▷') {
-            self.planning_state.next_iteration.clone()
+            self.views.planning.next_iteration.clone()
         } else {
             // Remove iteration
             None
@@ -2736,25 +2740,25 @@ impl App {
     fn selected_item_idx(&self) -> Option<(usize, String, u64, bool)> {
         match self.view {
             View::IssueList | View::IssueDetail => {
-                let idx = self.issue_list_state.list.selected_index()?;
+                let idx = self.views.issue_list.list.selected_index()?;
                 let item = self.issues.get(idx)?;
                 Some((idx, item.project_path.clone(), item.issue.iid, false))
             }
             View::Planning => {
-                let col = self.planning_state.focused_column;
-                let idx = self.planning_state.columns[col].list.selected_index()?;
+                let col = self.views.planning.focused_column;
+                let idx = self.views.planning.columns[col].list.selected_index()?;
                 let item = self.issues.get(idx)?;
                 Some((idx, item.project_path.clone(), item.issue.iid, false))
             }
             View::MrList | View::MrDetail => {
-                let idx = self.mr_list_state.list.selected_index()?;
+                let idx = self.views.mr_list.list.selected_index()?;
                 let item = self.mrs.get(idx)?;
                 Some((idx, item.project_path.clone(), item.mr.iid, true))
             }
             View::Dashboard => {
-                let col = self.iteration_board_state.focused_column;
+                let col = self.views.board.focused_column;
                 let idx = self
-                    .iteration_board_state
+                    .views.board
                     .columns
                     .get(col)
                     .and_then(|c| c.list.selected_index())?;
@@ -2913,9 +2917,9 @@ impl App {
         let (project, iid, is_mr) = match self.view {
             View::IssueList | View::Planning => {
                 let selected = if self.view == View::Planning {
-                    self.planning_state.selected_issue(&self.issues).cloned()
+                    self.views.planning.selected_issue(&self.issues).cloned()
                 } else {
-                    self.issue_list_state.selected_issue(&self.issues).cloned()
+                    self.views.issue_list.selected_issue(&self.issues).cloned()
                 };
                 if let Some(item) = selected {
                     (item.project_path.clone(), item.issue.iid, false)
@@ -2931,7 +2935,7 @@ impl App {
                 }
             }
             View::MrList => {
-                if let Some(item) = self.mr_list_state.selected_mr(&self.mrs) {
+                if let Some(item) = self.views.mr_list.selected_mr(&self.mrs) {
                     (item.project_path.clone(), item.mr.iid, true)
                 } else {
                     return;
@@ -3008,11 +3012,11 @@ impl App {
 
     fn current_detail_issue(&self) -> Option<&TrackedIssue> {
         // The detail view shows the issue that was selected when we opened it
-        self.issue_list_state.selected_issue(&self.issues)
+        self.views.issue_list.selected_issue(&self.issues)
     }
 
     fn current_detail_mr(&self) -> Option<&TrackedMergeRequest> {
-        self.mr_list_state.selected_mr(&self.mrs)
+        self.views.mr_list.selected_mr(&self.mrs)
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
@@ -3034,7 +3038,7 @@ impl App {
         // Render main view
         match self.view {
             View::Dashboard => {
-                let current_iter = self.planning_state.current_iteration.as_ref();
+                let current_iter = self.views.planning.current_iteration.as_ref();
                 dashboard::render(
                     frame,
                     chunks[1],
@@ -3043,9 +3047,9 @@ impl App {
                     &self.issues,
                     &self.mrs,
                     self.loading,
-                    &mut self.iteration_board_state,
+                    &mut self.views.board,
                     current_iter,
-                    self.iteration_health.as_mut(),
+                    self.views.health.as_mut(),
                     &self.shadow_work_cache,
                     &self.unplanned_work_cache,
                 );
@@ -3054,29 +3058,29 @@ impl App {
                 issue_list::render(
                     frame,
                     chunks[1],
-                    &mut self.issue_list_state,
+                    &mut self.views.issue_list,
                     &self.issues,
                     &ctx,
                 );
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
-                    issue_detail::render(frame, chunks[1], &item, &self.issue_detail_state, &ctx);
+                    issue_detail::render(frame, chunks[1], &item, &self.views.issue_detail, &ctx);
                 }
             }
             View::MrList => {
-                mr_list::render(frame, chunks[1], &mut self.mr_list_state, &self.mrs, &ctx);
+                mr_list::render(frame, chunks[1], &mut self.views.mr_list, &self.mrs, &ctx);
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(frame, chunks[1], &item, &self.mr_detail_state, &ctx);
+                    mr_detail::render(frame, chunks[1], &item, &self.views.mr_detail, &ctx);
                 }
             }
             View::Planning => {
                 planning::render(
                     frame,
                     chunks[1],
-                    &mut self.planning_state,
+                    &mut self.views.planning,
                     &self.issues,
                     &self.config,
                     self.active_team,
@@ -3099,10 +3103,10 @@ impl App {
             View::Planning => "Planning",
         };
         let item_count = match self.view {
-            View::IssueList => self.issue_list_state.list.len(),
-            View::MrList => self.mr_list_state.list.len(),
+            View::IssueList => self.views.issue_list.list.len(),
+            View::MrList => self.views.mr_list.list.len(),
             View::Planning => self
-                .planning_state
+                .views.planning
                 .columns
                 .iter()
                 .map(|c| c.list.len())
