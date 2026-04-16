@@ -12,3 +12,8 @@ lint:
 .PHONY: test
 test:
 	cargo test
+
+.PHONY: install
+install:
+	cargo build --release
+	cargo install --path .
