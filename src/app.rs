@@ -33,17 +33,32 @@ pub enum View {
     Planning,
 }
 
-#[derive(Debug)]
 pub enum Overlay {
     None,
     Help,
-    FilterEditor,
-    Confirm,
-    Picker,
-    Chord,
-    LabelEditor,
-    CommentInput,
     Error(String),
+    Confirm {
+        title: String,
+        message: String,
+        on_accept: Option<ConfirmCallback>,
+    },
+    Chord {
+        state: crate::ui::components::chord_popup::ChordState,
+        on_complete: ChordCallback,
+    },
+    Picker {
+        state: crate::ui::components::picker::PickerState,
+        on_complete: PickerCallback,
+    },
+    LabelEditor {
+        state: crate::ui::components::label_editor::LabelEditorState,
+    },
+    CommentInput {
+        input: crate::ui::components::input::CommentInput,
+        autocomplete: Box<crate::ui::components::autocomplete::AutocompleteState>,
+        reply_discussion_id: Option<String>,
+    },
+    FilterEditor(filter_editor::FilterEditorState),
 }
 
 /// The item currently under the cursor or open in detail view.
@@ -124,6 +139,8 @@ pub struct AppData {
     pub shadow_work_cache: Vec<TrackedIssue>,
     pub unplanned_work_cache: std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>,
     pub unplanned_work_state: FetchState,
+    pub issue_detail: crate::ui::views::issue_detail::IssueDetailState,
+    pub mr_detail: crate::ui::views::mr_detail::MrDetailState,
 }
 
 /// UI layer — views, overlays, TEA accumulators.
@@ -141,18 +158,6 @@ pub struct UiState {
     pub overlay: Overlay,
     pub focused: Option<FocusedItem>,
     pub active_team: Option<usize>,
-    pub chord_state: Option<crate::ui::components::chord_popup::ChordState>,
-    pub chord_on_complete: Option<ChordCallback>,
-    pub picker_state: Option<crate::ui::components::picker::PickerState>,
-    pub picker_on_complete: Option<PickerCallback>,
-    pub confirm_title: String,
-    pub confirm_message: String,
-    pub confirm_on_accept: Option<ConfirmCallback>,
-    pub label_editor_state: Option<crate::ui::components::label_editor::LabelEditorState>,
-    pub filter_editor_state: filter_editor::FilterEditorState,
-    pub comment_input: crate::ui::components::input::CommentInput,
-    pub autocomplete: crate::ui::components::autocomplete::AutocompleteState,
-    pub reply_discussion_id: Option<String>,
     pub loading: bool,
     pub loading_msg: &'static str,
     pub error: Option<String>,
@@ -201,6 +206,8 @@ impl App {
                 shadow_work_cache: Vec::new(),
                 unplanned_work_cache: std::collections::HashMap::new(),
                 unplanned_work_state: FetchState::default(),
+                issue_detail: crate::ui::views::issue_detail::IssueDetailState::default(),
+                mr_detail: crate::ui::views::mr_detail::MrDetailState::default(),
             },
             ui: UiState {
                 view: View::Dashboard,
@@ -209,18 +216,6 @@ impl App {
                 overlay: Overlay::None,
                 focused: None,
                 active_team: None,
-                chord_state: None,
-                chord_on_complete: None,
-                picker_state: None,
-                picker_on_complete: None,
-                confirm_title: String::new(),
-                confirm_message: String::new(),
-                confirm_on_accept: None,
-                label_editor_state: None,
-                filter_editor_state: filter_editor::FilterEditorState::default(),
-                comment_input: crate::ui::components::input::CommentInput::default(),
-                autocomplete: crate::ui::components::autocomplete::AutocompleteState::default(),
-                reply_discussion_id: None,
                 loading: false,
                 loading_msg: "",
                 error: None,
@@ -571,35 +566,4 @@ impl App {
             &self.data.label_sort_orders,
         );
     }
-}
-
-/// Build display labels and subtitles for the thread reply picker.
-fn build_thread_picker_display(infos: &[ThreadPickerInfo]) -> (Vec<String>, Vec<String>) {
-    let labels: Vec<String> = infos
-        .iter()
-        .map(|t| format!("@{}: {}", t.author, t.preview))
-        .collect();
-    let subtitles: Vec<String> = infos
-        .iter()
-        .map(|t| {
-            if t.reply_count > 0 {
-                let last_author = t.last_author.as_deref().unwrap_or("?");
-                let last_msg = t.last_preview.as_deref().unwrap_or("");
-                format!(
-                    "\u{21B3} @{}: {}  ({} {})",
-                    last_author,
-                    last_msg,
-                    t.reply_count,
-                    if t.reply_count == 1 {
-                        "reply"
-                    } else {
-                        "replies"
-                    }
-                )
-            } else {
-                String::new()
-            }
-        })
-        .collect();
-    (labels, subtitles)
 }

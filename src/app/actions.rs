@@ -1,37 +1,10 @@
 //! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
 use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
-use crate::ui::components::picker;
 
-use super::{App, FocusedItem, Overlay, View, build_thread_picker_display};
+use super::{App, FocusedItem, Overlay, View};
 
 impl App {
-    pub(super) fn action_reply_thread(&mut self) {
-        let infos = match self.ui.view {
-            View::IssueDetail => self.ui.views.issue_detail.thread_picker_items(),
-            View::MrDetail => self.ui.views.mr_detail.thread_picker_items(),
-            _ => return,
-        };
-        if !infos.is_empty() {
-            let (labels, subtitles) = build_thread_picker_display(&infos);
-            self.ui.picker_state = Some(
-                picker::PickerState::new("Reply to thread", labels.clone(), false)
-                    .with_subtitles(subtitles),
-            );
-            self.ui.picker_on_complete = Some(Box::new(move |values, app| {
-                if let Some(picked_label) = values.first()
-                    && let Some(idx) = labels.iter().position(|item| item == picked_label)
-                    && let Some(info) = infos.get(idx)
-                {
-                    app.ui.reply_discussion_id = Some(info.discussion_id.clone());
-                    app.ui.comment_input = crate::ui::components::input::CommentInput::default();
-                    app.ui.overlay = Overlay::CommentInput;
-                }
-            }));
-            self.ui.overlay = Overlay::Picker;
-        }
-    }
-
     pub(super) fn set_issue_status(
         &mut self,
         project: &str,
@@ -70,29 +43,6 @@ impl App {
             status_id,
             status_display: status_name.to_string(),
         });
-    }
-
-    pub(super) fn accept_completion(&mut self) {
-        let Some(item) = self.ui.autocomplete.selected_item().cloned() else {
-            return;
-        };
-        let trigger_pos = self.ui.autocomplete.trigger_pos;
-        let trigger_len =
-            crate::ui::components::autocomplete::AutocompleteState::trigger_char_len();
-        let text = self.ui.comment_input.text();
-        let cursor = self.ui.comment_input.cursor_byte_pos();
-
-        let mut new_value = String::with_capacity(text.len() + item.insert.len());
-        new_value.push_str(&text[..trigger_pos + trigger_len]);
-        new_value.push_str(&item.insert);
-        new_value.push(' ');
-        new_value.push_str(&text[cursor..]);
-
-        let new_cursor = trigger_pos + trigger_len + item.insert.len() + 1;
-        self.ui
-            .comment_input
-            .set_text_and_cursor(&new_value, new_cursor);
-        self.ui.autocomplete.dismiss();
     }
 
     pub(super) fn show_error(&mut self, msg: String) {
@@ -155,8 +105,12 @@ impl App {
     }
 
     /// Dispatch comment submit to the focused issue or MR.
-    pub(super) fn dispatch_submit_comment(&mut self, body: &str) {
-        let reply_id = self.ui.reply_discussion_id.take();
+    pub(super) fn dispatch_submit_comment(
+        &mut self,
+        body: &str,
+        reply_discussion_id: Option<&str>,
+    ) {
+        let reply_id = reply_discussion_id.map(String::from);
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { id, .. }) => {
                 if let Some(issue) = self.data.issues.iter().find(|i| i.issue.id == id) {
@@ -179,7 +133,7 @@ impl App {
 
     /// Look up the issue shown in the detail view by its stored (project, iid).
     pub(super) fn current_detail_issue(&self) -> Option<&TrackedIssue> {
-        let d = &self.ui.views.issue_detail;
+        let d = &self.data.issue_detail;
         if d.project.is_empty() {
             return None;
         }
@@ -197,7 +151,7 @@ impl App {
 
     /// Look up the MR shown in the detail view by its stored (project, iid).
     pub(super) fn current_detail_mr(&self) -> Option<&TrackedMergeRequest> {
-        let d = &self.ui.views.mr_detail;
+        let d = &self.data.mr_detail;
         if d.project.is_empty() {
             return None;
         }
@@ -210,13 +164,13 @@ impl App {
     pub(super) fn action_open_detail(&mut self) {
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { project, iid, .. }) => {
-                self.ui.views.issue_detail.open(&project, iid);
+                self.data.issue_detail.open(&project, iid);
                 self.fetch_notes_for_issue(&project, iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::IssueDetail;
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                self.ui.views.mr_detail.open(&project, iid);
+                self.data.mr_detail.open(&project, iid);
                 self.fetch_notes_for_mr(&project, iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::MrDetail;

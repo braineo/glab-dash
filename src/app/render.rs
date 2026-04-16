@@ -59,13 +59,7 @@ impl App {
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
-                    issue_detail::render(
-                        frame,
-                        chunks[1],
-                        &item,
-                        &self.ui.views.issue_detail,
-                        &ctx,
-                    );
+                    issue_detail::render(frame, chunks[1], &item, &self.data.issue_detail, &ctx);
                 }
             }
             View::MrList => {
@@ -79,7 +73,7 @@ impl App {
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(frame, chunks[1], &item, &self.ui.views.mr_detail, &ctx);
+                    mr_detail::render(frame, chunks[1], &item, &self.data.mr_detail, &ctx);
                 }
             }
             View::Planning => {
@@ -149,52 +143,40 @@ impl App {
         );
 
         // Render overlay on top
-        match &self.ui.overlay {
+        match &mut self.ui.overlay {
             Overlay::None => {}
             Overlay::Help => {
                 help::render(frame, area, self.ui.view);
             }
-            Overlay::FilterEditor => {
-                filter_editor::render(frame, area, &mut self.ui.filter_editor_state, &ctx);
+            Overlay::FilterEditor(state) => {
+                filter_editor::render(frame, area, state, &ctx);
             }
-            Overlay::Confirm => {
-                confirm_dialog::render(
-                    frame,
-                    area,
-                    &self.ui.confirm_title,
-                    &self.ui.confirm_message,
-                );
+            Overlay::Confirm { title, message, .. } => {
+                confirm_dialog::render(frame, area, title, message);
             }
-            Overlay::Picker => {
-                if let Some(ref mut ps) = self.ui.picker_state {
-                    picker::render(frame, area, ps, &ctx);
-                }
+            Overlay::Picker { state, .. } => {
+                picker::render(frame, area, state, &ctx);
             }
-            Overlay::CommentInput => {
+            Overlay::CommentInput {
+                input,
+                autocomplete,
+                reply_discussion_id,
+            } => {
                 let popup = centered_rect(60, 40, area);
                 ratatui::widgets::Clear.render(popup, frame.buffer_mut());
-                let title = if self.ui.reply_discussion_id.is_some() {
+                let title = if reply_discussion_id.is_some() {
                     "Reply (Enter submit, C-j newline)"
                 } else {
                     "Comment (Enter submit, C-j newline)"
                 };
-                crate::ui::components::input::render(
-                    frame,
-                    popup,
-                    &mut self.ui.comment_input,
-                    title,
-                );
-                crate::ui::components::autocomplete::render(frame, popup, &self.ui.autocomplete);
+                crate::ui::components::input::render(frame, popup, input, title);
+                crate::ui::components::autocomplete::render(frame, popup, autocomplete);
             }
-            Overlay::Chord => {
-                if let Some(ref cs) = self.ui.chord_state {
-                    chord_popup::render(frame, area, cs);
-                }
+            Overlay::Chord { state, .. } => {
+                chord_popup::render(frame, area, state);
             }
-            Overlay::LabelEditor => {
-                if let Some(ref les) = self.ui.label_editor_state {
-                    label_editor::render(frame, area, les, &self.data.label_color_map);
-                }
+            Overlay::LabelEditor { state } => {
+                label_editor::render(frame, area, state, &self.data.label_color_map);
             }
             Overlay::Error(msg) => {
                 error_popup::render(frame, area, msg);

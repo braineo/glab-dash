@@ -4,6 +4,7 @@ use crossterm::event::KeyEvent;
 
 use crate::cmd::EventResult;
 use crate::keybindings::{self, KeyAction};
+use crate::ui::components::picker;
 
 use super::{App, FocusedItem, Overlay, View};
 
@@ -99,13 +100,6 @@ impl App {
             self.execute_global_action(action);
             return false;
         }
-        // ReplyThread (r in detail views)
-        if let Some(action @ KeyAction::ReplyThread) =
-            keybindings::match_group(keybindings::DETAIL_NAV_BINDINGS, key)
-        {
-            self.execute_global_action(action);
-            return false;
-        }
         false
     }
 
@@ -125,8 +119,8 @@ impl App {
                 &mut self.ui.pending_cmds,
                 &mut self.ui.needs_redraw,
             ),
-            View::IssueDetail => self.ui.views.issue_detail.handle_key(key),
-            View::MrDetail => self.ui.views.mr_detail.handle_key(key),
+            View::IssueDetail => self.data.issue_detail.handle_key(key, &mut self.ui),
+            View::MrDetail => self.data.mr_detail.handle_key(key, &mut self.ui),
             View::Dashboard => self.ui.views.board.handle_key(
                 key,
                 self.ui.views.health.as_mut(),
@@ -151,10 +145,11 @@ impl App {
                     self.ui.view = prev;
                     self.ui.dirty.selection = true;
                 } else {
-                    self.ui.confirm_title = "Quit".to_string();
-                    self.ui.confirm_message = "Quit glab-dash?".to_string();
-                    self.ui.confirm_on_accept = None; // None = quit
-                    self.ui.overlay = Overlay::Confirm;
+                    self.ui.overlay = Overlay::Confirm {
+                        title: "Quit".to_string(),
+                        message: "Quit glab-dash?".to_string(),
+                        on_accept: None,
+                    };
                 }
             }
             KeyAction::ToggleHelp => {
@@ -168,25 +163,22 @@ impl App {
             KeyAction::SwitchTeam if !self.ctx.config.teams.is_empty() => {
                 let mut names: Vec<String> = vec!["All".to_string()];
                 names.extend(self.ctx.config.teams.iter().map(|t| t.name.clone()));
-                self.ui.picker_state = Some(crate::ui::components::picker::PickerState::new(
-                    "Switch Team",
-                    names,
-                    false,
-                ));
-                self.ui.picker_on_complete = Some(Box::new(|values, app| {
-                    if let Some(name) = values.first() {
-                        if name == "All" {
-                            app.ui.active_team = None;
-                        } else {
-                            app.ui.active_team =
-                                app.ctx.config.teams.iter().position(|t| t.name == *name);
+                self.ui.overlay = Overlay::Picker {
+                    state: picker::PickerState::new("Switch Team", names, false),
+                    on_complete: Box::new(|values, app| {
+                        if let Some(name) = values.first() {
+                            if name == "All" {
+                                app.ui.active_team = None;
+                            } else {
+                                app.ui.active_team =
+                                    app.ctx.config.teams.iter().position(|t| t.name == *name);
+                            }
+                            app.ui.dirty.issues = true;
+                            app.ui.dirty.mrs = true;
+                            app.ui.dirty.selection = true;
                         }
-                        app.ui.dirty.issues = true;
-                        app.ui.dirty.mrs = true;
-                        app.ui.dirty.selection = true;
-                    }
-                }));
-                self.ui.overlay = Overlay::Picker;
+                    }),
+                };
             }
             KeyAction::NavigateTo(target) if self.ui.view != target => {
                 self.navigate_to_view(target);
@@ -202,7 +194,6 @@ impl App {
             }
             KeyAction::FilterMenu => self.action_show_filter_menu(),
             KeyAction::SortByField => self.action_sort_by_field(),
-            KeyAction::ReplyThread => self.action_reply_thread(),
             _ => {}
         }
     }

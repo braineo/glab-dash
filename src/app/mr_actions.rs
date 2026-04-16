@@ -31,98 +31,103 @@ impl TrackedMergeRequest {
             KeyAction::ToggleState => {
                 let project = self.project_path.clone();
                 let iid = self.mr.iid;
-                ui.confirm_title = "Close MR".to_string();
-                ui.confirm_message = format!("Close MR !{iid}?");
-                ui.confirm_on_accept = Some(Box::new(move |app| {
-                    if let Some(pos) = app
-                        .data
-                        .mrs
-                        .iter()
-                        .position(|m| m.project_path == project && m.mr.iid == iid)
-                    {
-                        app.data.mrs[pos].mr.state = "closed".to_string();
-                        app.data.mrs[pos].mr.updated_at = chrono::Utc::now();
-                        app.ui.dirty.mrs = true;
-                        app.ui.pending_cmds.push(Cmd::PersistMrs);
-                    }
-                    app.ui.pending_cmds.push(Cmd::SpawnCloseMr { project, iid });
-                }));
-                ui.overlay = Overlay::Confirm;
+                ui.overlay = Overlay::Confirm {
+                    title: "Close MR".to_string(),
+                    message: format!("Close MR !{iid}?"),
+                    on_accept: Some(Box::new(move |app| {
+                        if let Some(pos) = app
+                            .data
+                            .mrs
+                            .iter()
+                            .position(|m| m.project_path == project && m.mr.iid == iid)
+                        {
+                            app.data.mrs[pos].mr.state = "closed".to_string();
+                            app.data.mrs[pos].mr.updated_at = chrono::Utc::now();
+                            app.ui.dirty.mrs = true;
+                            app.ui.pending_cmds.push(Cmd::PersistMrs);
+                        }
+                        app.ui.pending_cmds.push(Cmd::SpawnCloseMr { project, iid });
+                    })),
+                };
             }
             KeyAction::Approve => {
                 let project = self.project_path.clone();
                 let iid = self.mr.iid;
-                ui.confirm_title = "Approve MR".to_string();
-                ui.confirm_message = format!("Approve MR !{iid}?");
-                ui.confirm_on_accept = Some(Box::new(move |app| {
-                    app.ui
-                        .pending_cmds
-                        .push(Cmd::SpawnApproveMr { project, iid });
-                }));
-                ui.overlay = Overlay::Confirm;
+                ui.overlay = Overlay::Confirm {
+                    title: "Approve MR".to_string(),
+                    message: format!("Approve MR !{iid}?"),
+                    on_accept: Some(Box::new(move |app| {
+                        app.ui
+                            .pending_cmds
+                            .push(Cmd::SpawnApproveMr { project, iid });
+                    })),
+                };
             }
             KeyAction::Merge => {
                 let project = self.project_path.clone();
                 let iid = self.mr.iid;
-                ui.confirm_title = "Merge MR".to_string();
-                ui.confirm_message = format!("Merge MR !{iid}?");
-                ui.confirm_on_accept = Some(Box::new(move |app| {
-                    if let Some(pos) = app
-                        .data
-                        .mrs
-                        .iter()
-                        .position(|m| m.project_path == project && m.mr.iid == iid)
-                    {
-                        app.data.mrs[pos].mr.state = "merged".to_string();
-                        app.data.mrs[pos].mr.updated_at = chrono::Utc::now();
-                        app.ui.dirty.mrs = true;
-                        app.ui.pending_cmds.push(Cmd::PersistMrs);
-                    }
-                    app.ui.pending_cmds.push(Cmd::SpawnMergeMr { project, iid });
-                }));
-                ui.overlay = Overlay::Confirm;
+                ui.overlay = Overlay::Confirm {
+                    title: "Merge MR".to_string(),
+                    message: format!("Merge MR !{iid}?"),
+                    on_accept: Some(Box::new(move |app| {
+                        if let Some(pos) = app
+                            .data
+                            .mrs
+                            .iter()
+                            .position(|m| m.project_path == project && m.mr.iid == iid)
+                        {
+                            app.data.mrs[pos].mr.state = "merged".to_string();
+                            app.data.mrs[pos].mr.updated_at = chrono::Utc::now();
+                            app.ui.dirty.mrs = true;
+                            app.ui.pending_cmds.push(Cmd::PersistMrs);
+                        }
+                        app.ui.pending_cmds.push(Cmd::SpawnMergeMr { project, iid });
+                    })),
+                };
             }
             KeyAction::EditLabels => {
                 let label_names: Vec<String> = data.labels.iter().map(|l| l.name.clone()).collect();
                 let issue_labels: Vec<Vec<String>> =
                     data.issues.iter().map(|i| i.issue.labels.clone()).collect();
-                ui.label_editor_state = Some(label_editor::LabelEditorState::new(
-                    label_names,
-                    &self.mr.labels,
-                    &data.label_usage,
-                    &issue_labels,
-                    20,
-                ));
-                ui.overlay = Overlay::LabelEditor;
+                ui.overlay = Overlay::LabelEditor {
+                    state: label_editor::LabelEditorState::new(
+                        label_names,
+                        &self.mr.labels,
+                        &data.label_usage,
+                        &issue_labels,
+                        20,
+                    ),
+                };
             }
             KeyAction::EditAssignee => {
                 let members = ctx.config.all_members();
                 let is_detail = matches!(ui.view, View::MrDetail);
                 if is_detail {
-                    ui.picker_state = Some(crate::ui::components::picker::PickerState::new(
-                        "Assignee", members, false,
-                    ));
-                    ui.picker_on_complete = Some(Box::new(|values, app| {
-                        if let Some(username) = values.first() {
-                            app.dispatch_update_assignee(username);
-                        }
-                    }));
-                    ui.overlay = Overlay::Picker;
+                    ui.overlay = Overlay::Picker {
+                        state: crate::ui::components::picker::PickerState::new(
+                            "Assignee", members, false,
+                        ),
+                        on_complete: Box::new(|values, app| {
+                            if let Some(username) = values.first() {
+                                app.dispatch_update_assignee(username);
+                            }
+                        }),
+                    };
                 } else {
-                    ui.chord_state = Some(chord_popup::ChordState::new_for_names(
-                        "Set Assignee",
-                        members,
-                    ));
-                    ui.chord_on_complete = Some(Box::new(|value, app| {
-                        app.dispatch_update_assignee(&value);
-                    }));
-                    ui.overlay = Overlay::Chord;
+                    ui.overlay = Overlay::Chord {
+                        state: chord_popup::ChordState::new_for_names("Set Assignee", members),
+                        on_complete: Box::new(|value, app| {
+                            app.dispatch_update_assignee(&value);
+                        }),
+                    };
                 }
             }
             KeyAction::Comment => {
-                ui.comment_input = CommentInput::default();
-                ui.reply_discussion_id = None;
-                ui.overlay = Overlay::CommentInput;
+                ui.overlay = Overlay::CommentInput {
+                    input: CommentInput::default(),
+                    autocomplete: Box::default(),
+                    reply_discussion_id: None,
+                };
             }
             _ => return EventResult::Bubble,
         }

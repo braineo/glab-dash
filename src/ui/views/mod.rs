@@ -15,8 +15,6 @@ pub mod planning;
 pub struct Views {
     pub issue_list: issue_list::IssueListState,
     pub mr_list: mr_list::MrListState,
-    pub issue_detail: issue_detail::IssueDetailState,
-    pub mr_detail: mr_detail::MrDetailState,
     pub planning: planning::PlanningViewState,
     pub board: dashboard::IterationBoardState,
     pub health: Option<dashboard::IterationHealth>,

@@ -4,9 +4,12 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
+use crate::app::{Overlay, ThreadPickerInfo, UiState};
 use crate::cmd::EventResult;
 use crate::gitlab::types::{Discussion, TrackedIssue};
 use crate::keybindings::{self, KeyAction};
+use crate::ui::components::input::CommentInput;
+use crate::ui::components::picker;
 use crate::ui::{markdown, styles};
 
 #[derive(Default)]
@@ -21,16 +24,47 @@ pub struct IssueDetailState {
 impl IssueDetailState {
     /// Handle keys for the detail view.  Scroll is the detail's domain;
     /// everything else (item actions, global) bubbles.
-    pub fn handle_key(&mut self, key: &crossterm::event::KeyEvent) -> EventResult {
+    pub fn handle_key(
+        &mut self,
+        key: &crossterm::event::KeyEvent,
+        ui: &mut UiState,
+    ) -> EventResult {
         let Some(action) = keybindings::match_group(keybindings::DETAIL_NAV_BINDINGS, key) else {
             return EventResult::Bubble;
         };
         match action {
             KeyAction::MoveDown => self.scroll_down(),
             KeyAction::MoveUp => self.scroll_up(),
+            KeyAction::ReplyThread => {
+                self.start_reply(ui);
+            }
             _ => return EventResult::Bubble,
         }
         EventResult::Consumed
+    }
+
+    fn start_reply(&self, ui: &mut UiState) {
+        let infos = self.thread_picker_items();
+        if infos.is_empty() {
+            return;
+        }
+        let (labels, subtitles) = build_thread_picker_display(&infos);
+        ui.overlay = Overlay::Picker {
+            state: picker::PickerState::new("Reply to thread", labels.clone(), false)
+                .with_subtitles(subtitles),
+            on_complete: Box::new(move |values, app| {
+                if let Some(picked_label) = values.first()
+                    && let Some(idx) = labels.iter().position(|item| item == picked_label)
+                    && let Some(info) = infos.get(idx)
+                {
+                    app.ui.overlay = Overlay::CommentInput {
+                        input: CommentInput::default(),
+                        autocomplete: Box::default(),
+                        reply_discussion_id: Some(info.discussion_id.clone()),
+                    };
+                }
+            }),
+        };
     }
 
     pub fn scroll_down(&mut self) {
@@ -58,7 +92,7 @@ impl IssueDetailState {
 
     /// Build picker items for thread selection: (discussion_id, display label).
     /// Build thread metadata for the reply picker.
-    pub fn thread_picker_items(&self) -> Vec<crate::app::ThreadPickerInfo> {
+    pub fn thread_picker_items(&self) -> Vec<ThreadPickerInfo> {
         self.discussions
             .iter()
             .filter_map(|d| {
@@ -74,7 +108,7 @@ impl IssueDetailState {
                 } else {
                     (None, None)
                 };
-                Some(crate::app::ThreadPickerInfo {
+                Some(ThreadPickerInfo {
                     discussion_id: d.id.clone(),
                     author: first.author.username.clone(),
                     preview: first.body.lines().next().unwrap_or("").to_string(),
@@ -93,6 +127,39 @@ impl IssueDetailState {
             .filter(|n| !n.system)
             .count()
     }
+}
+
+/// Build display labels and subtitles for the thread reply picker.
+pub(crate) fn build_thread_picker_display(
+    infos: &[ThreadPickerInfo],
+) -> (Vec<String>, Vec<String>) {
+    let labels: Vec<String> = infos
+        .iter()
+        .map(|t| format!("@{}: {}", t.author, t.preview))
+        .collect();
+    let subtitles: Vec<String> = infos
+        .iter()
+        .map(|t| {
+            if t.reply_count > 0 {
+                let last_author = t.last_author.as_deref().unwrap_or("?");
+                let last_msg = t.last_preview.as_deref().unwrap_or("");
+                format!(
+                    "\u{21B3} @{}: {}  ({} {})",
+                    last_author,
+                    last_msg,
+                    t.reply_count,
+                    if t.reply_count == 1 {
+                        "reply"
+                    } else {
+                        "replies"
+                    }
+                )
+            } else {
+                String::new()
+            }
+        })
+        .collect();
+    (labels, subtitles)
 }
 
 pub fn render(

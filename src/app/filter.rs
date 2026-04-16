@@ -68,11 +68,12 @@ impl App {
             labels.push(format!("{}::", order.scope));
         }
 
-        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names("Sort by", labels));
-        self.ui.chord_on_complete = Some(Box::new(|value, app| {
-            app.handle_sort_field_chosen(&value);
-        }));
-        self.ui.overlay = Overlay::Chord;
+        self.ui.overlay = Overlay::Chord {
+            state: chord_popup::ChordState::new_for_names("Sort by", labels),
+            on_complete: Box::new(|value, app| {
+                app.handle_sort_field_chosen(&value);
+            }),
+        };
     }
 
     pub(super) fn handle_sort_field_chosen(&mut self, value: &str) {
@@ -96,20 +97,18 @@ impl App {
         };
 
         let labels = vec!["↓ Descending".to_string(), "↑ Ascending".to_string()];
-        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names(
-            &format!("Sort {value}"),
-            labels,
-        ));
         let field_name_clone = field_name.clone();
         let label_scope_clone = label_scope.clone();
-        self.ui.chord_on_complete = Some(Box::new(move |value, app| {
-            app.handle_sort_direction_chosen(
-                &field_name_clone,
-                label_scope_clone.as_deref(),
-                &value,
-            );
-        }));
-        self.ui.overlay = Overlay::Chord;
+        self.ui.overlay = Overlay::Chord {
+            state: chord_popup::ChordState::new_for_names(&format!("Sort {value}"), labels),
+            on_complete: Box::new(move |value, app| {
+                app.handle_sort_direction_chosen(
+                    &field_name_clone,
+                    label_scope_clone.as_deref(),
+                    &value,
+                );
+            }),
+        };
     }
 
     pub(super) fn handle_sort_direction_chosen(
@@ -222,11 +221,12 @@ impl App {
             }
         }
 
-        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names("Filter", labels));
-        self.ui.chord_on_complete = Some(Box::new(|value, app| {
-            app.handle_filter_menu_chosen(&value);
-        }));
-        self.ui.overlay = Overlay::Chord;
+        self.ui.overlay = Overlay::Chord {
+            state: chord_popup::ChordState::new_for_names("Filter", labels),
+            on_complete: Box::new(|value, app| {
+                app.handle_filter_menu_chosen(&value);
+            }),
+        };
     }
 
     pub(super) fn handle_filter_menu_chosen(&mut self, value: &str) {
@@ -260,14 +260,12 @@ impl App {
 
     fn show_filter_field_chord(&mut self) {
         let labels: Vec<String> = Field::all().iter().map(|f| f.name().to_string()).collect();
-        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names(
-            "Filter Field",
-            labels,
-        ));
-        self.ui.chord_on_complete = Some(Box::new(|value, app| {
-            app.handle_filter_field_chosen(&value);
-        }));
-        self.ui.overlay = Overlay::Chord;
+        self.ui.overlay = Overlay::Chord {
+            state: chord_popup::ChordState::new_for_names("Filter Field", labels),
+            on_complete: Box::new(|value, app| {
+                app.handle_filter_field_chosen(&value);
+            }),
+        };
     }
 
     pub(super) fn handle_filter_field_chosen(&mut self, value: &str) {
@@ -289,14 +287,12 @@ impl App {
                 )
             })
             .collect();
-        self.ui.chord_state = Some(chord_popup::ChordState::new_for_names(
-            &format!("{value}:"),
-            labels,
-        ));
-        self.ui.chord_on_complete = Some(Box::new(move |value, app| {
-            app.handle_filter_op_chosen(field, &value);
-        }));
-        self.ui.overlay = Overlay::Chord;
+        self.ui.overlay = Overlay::Chord {
+            state: chord_popup::ChordState::new_for_names(&format!("{value}:"), labels),
+            on_complete: Box::new(move |value, app| {
+                app.handle_filter_op_chosen(field, &value);
+            }),
+        };
     }
 
     pub(super) fn handle_filter_op_chosen(&mut self, field: Field, value: &str) {
@@ -314,12 +310,16 @@ impl App {
         };
 
         // Set up filter editor at the value step with field and op pre-selected
-        self.ui.filter_editor_state.reset();
-        self.ui.filter_editor_state.selected_field = Some(field);
-        self.ui.filter_editor_state.selected_op = Some(op);
-        self.ui.filter_editor_state.step = filter_editor::EditorStep::EnterValue;
-        self.ui.filter_editor_state.suggestions = self.get_filter_suggestions();
-        self.ui.overlay = Overlay::FilterEditor;
+        let mut state = filter_editor::FilterEditorState::default();
+        state.selected_field = Some(field);
+        state.selected_op = Some(op);
+        state.step = filter_editor::EditorStep::EnterValue;
+        self.ui.overlay = Overlay::FilterEditor(state);
+        // Populate suggestions now that overlay field is set
+        let suggestions = self.get_filter_suggestions();
+        if let Overlay::FilterEditor(ref mut s) = self.ui.overlay {
+            s.suggestions = suggestions;
+        }
     }
 
     pub(super) fn action_clear_filters(&mut self) {
@@ -329,7 +329,11 @@ impl App {
     }
 
     pub(super) fn get_filter_suggestions(&self) -> Vec<String> {
-        match &self.ui.filter_editor_state.selected_field {
+        let selected_field = match &self.ui.overlay {
+            Overlay::FilterEditor(state) => state.selected_field.as_ref(),
+            _ => None,
+        };
+        match selected_field {
             Some(Field::Label) => self.data.labels.iter().map(|l| l.name.clone()).collect(),
             Some(Field::State) => {
                 let mut states = vec![
