@@ -120,6 +120,13 @@ impl App {
                 self.ui.loading = false;
                 match result {
                     Ok((project_path, iid, status_name)) => {
+                        // Look up the category from cached statuses
+                        let category = self
+                            .data
+                            .work_item_statuses
+                            .get(&project_path)
+                            .and_then(|statuses| statuses.iter().find(|s| s.name == status_name))
+                            .and_then(|s| s.category.clone());
                         if let Some(pos) = self
                             .data
                             .issues
@@ -127,6 +134,7 @@ impl App {
                             .position(|e| e.issue.iid == iid && e.project_path == project_path)
                         {
                             self.data.issues[pos].issue.custom_status = Some(status_name);
+                            self.data.issues[pos].issue.custom_status_category = category;
                         }
                         self.ui.error = None;
                         self.ui.dirty.issues = true;

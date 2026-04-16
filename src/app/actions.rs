@@ -12,18 +12,20 @@ impl App {
         iid: u64,
         status_name: &str,
     ) {
-        // Find the status ID from cached statuses
-        let status_id = self
+        // Find the status from cached statuses
+        let status = self
             .data
             .work_item_statuses
             .get(project)
-            .and_then(|statuses| statuses.iter().find(|s| s.name == status_name))
-            .map(|s| s.id.clone());
+            .and_then(|statuses| statuses.iter().find(|s| s.name == status_name));
 
-        let Some(status_id) = status_id else {
+        let Some(status) = status else {
             self.show_error(format!("Status '{status_name}' not found"));
             return;
         };
+
+        let status_id = status.id.clone();
+        let status_category = status.category.clone();
 
         // Optimistic update
         if let Some(pos) = self
@@ -33,6 +35,7 @@ impl App {
             .position(|e| e.issue.iid == iid && e.project_path == project)
         {
             self.data.issues[pos].issue.custom_status = Some(status_name.to_string());
+            self.data.issues[pos].issue.custom_status_category = status_category;
             self.ui.dirty.issues = true;
         }
         self.ui.pending_cmds.push(crate::cmd::Cmd::PersistIssues);

@@ -42,6 +42,7 @@ impl App {
                     &self.data.mrs,
                     self.ui.loading,
                     &mut self.ui.views.board,
+                    &self.data.board_issues,
                     current_iter,
                     self.ui.views.health.as_mut(),
                     &self.data.shadow_work_cache,

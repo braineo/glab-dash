@@ -411,6 +411,7 @@ pub fn render(
     mrs: &[TrackedMergeRequest],
     loading: bool,
     board: &mut IterationBoardState,
+    board_issues: &[TrackedIssue],
     current_iteration: Option<&Iteration>,
     health: Option<&mut IterationHealth>,
     shadow_work_cache: &[TrackedIssue],
@@ -471,7 +472,7 @@ pub fn render(
         health,
         current_iteration,
         board.health_focused,
-        issues,
+        board_issues,
         shadow_work_cache,
         unplanned_work_cache,
     );
@@ -481,7 +482,7 @@ pub fn render(
         frame,
         chunks[2],
         board,
-        issues,
+        board_issues,
         current_iteration,
         !board.health_focused,
     );

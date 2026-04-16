@@ -136,6 +136,7 @@ pub struct AppData {
     pub work_item_statuses: std::collections::HashMap<String, Vec<WorkItemStatus>>,
     pub label_usage: std::collections::HashMap<String, u32>,
     pub label_sort_orders: std::collections::HashMap<String, Vec<String>>,
+    pub board_issues: Vec<TrackedIssue>,
     pub shadow_work_cache: Vec<TrackedIssue>,
     pub unplanned_work_cache: std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>,
     pub unplanned_work_state: FetchState,
@@ -201,6 +202,7 @@ impl App {
                 work_item_statuses: std::collections::HashMap::new(),
                 label_usage: std::collections::HashMap::new(),
                 label_sort_orders,
+                board_issues: Vec::new(),
                 shadow_work_cache: Vec::new(),
                 unplanned_work_cache: std::collections::HashMap::new(),
                 unplanned_work_state: FetchState::default(),
@@ -268,6 +270,7 @@ impl App {
         }
 
         self.refresh_shadow_work();
+        self.rebuild_board_issues();
         self.rebuild_label_color_map();
         self.refilter_issues();
         self.refilter_mrs();
@@ -324,7 +327,9 @@ impl App {
                 .views
                 .health
                 .as_ref()
-                .and_then(|h| h.selected_issue(&self.data.issues, &self.data.shadow_work_cache))
+                .and_then(|h| {
+                    h.selected_issue(&self.data.board_issues, &self.data.shadow_work_cache)
+                })
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
                     id: item.issue.id,
@@ -334,7 +339,7 @@ impl App {
                 .ui
                 .views
                 .board
-                .selected_issue(&self.data.issues)
+                .selected_issue(&self.data.board_issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
                     id: item.issue.id,
@@ -397,6 +402,9 @@ impl App {
         if d.statuses {
             self.rebuild_iteration_board_columns();
         }
+        if d.issues || d.iterations {
+            self.rebuild_board_issues();
+        }
         if d.issues || d.iterations || d.statuses || d.view_state {
             self.refilter_iteration_board();
         }
@@ -455,7 +463,7 @@ impl App {
         let me = self.ctx.config.me.clone();
         let members = self.active_team_members();
         self.ui.views.board.partition_issues(
-            &self.data.issues,
+            &self.data.board_issues,
             current_iter,
             &self.data.label_sort_orders,
             &me,
@@ -522,7 +530,39 @@ impl App {
         }
     }
 
-    /// Refresh shadow work cache from DB (closed issues in current iteration range).
+    /// Rebuild `board_issues` from in-memory issues + closed issues (from DB) for the
+    /// current iteration so the iteration board can display completed items.
+    fn rebuild_board_issues(&mut self) {
+        let current_iter_id = self
+            .ui
+            .views
+            .planning
+            .current_iteration
+            .as_ref()
+            .map(|i| i.id.clone());
+
+        // Start with all in-memory issues (open, plus any optimistically closed)
+        self.data.board_issues = self.data.issues.clone();
+
+        // Append closed issues from DB that belong to the current iteration,
+        // skipping any already present in memory (e.g. optimistic updates).
+        if let Some(iter_id) = &current_iter_id
+            && let Ok(closed) = self.ctx.db.load_issues(Some("closed"))
+        {
+            let existing: std::collections::HashSet<u64> =
+                self.data.board_issues.iter().map(|i| i.issue.id).collect();
+            self.data
+                .board_issues
+                .extend(closed.into_iter().filter(|i| {
+                    !existing.contains(&i.issue.id)
+                        && i.issue
+                            .iteration
+                            .as_ref()
+                            .is_some_and(|it| it.id == *iter_id)
+                }));
+        }
+    }
+
     fn refresh_shadow_work(&mut self) {
         let Some(iter) = self.ui.views.planning.current_iteration.as_ref() else {
             self.data.shadow_work_cache.clear();
@@ -551,7 +591,7 @@ impl App {
         };
 
         self.ui.views.health = Some(dashboard::compute_health(
-            &self.data.issues,
+            &self.data.board_issues,
             current_iter,
             &self.data.unplanned_work_cache,
             self.data.unplanned_work_state != FetchState::Done,
