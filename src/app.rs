@@ -281,7 +281,16 @@ impl App {
     /// Call after every view change, list selection change, or data load.
     fn refresh_focused(&mut self) {
         self.ui.focused = match self.ui.view {
-            View::IssueList | View::IssueDetail => self
+            View::IssueDetail => self.current_detail_issue().map(|item| FocusedItem::Issue {
+                project: item.project_path.clone(),
+                id: item.issue.id,
+                iid: item.issue.iid,
+            }),
+            View::MrDetail => self.current_detail_mr().map(|item| FocusedItem::Mr {
+                project: item.project_path.clone(),
+                iid: item.mr.iid,
+            }),
+            View::IssueList => self
                 .ui
                 .views
                 .issue_list
@@ -291,16 +300,15 @@ impl App {
                     id: item.issue.id,
                     iid: item.issue.iid,
                 }),
-            View::MrList | View::MrDetail => {
-                self.ui
-                    .views
-                    .mr_list
-                    .selected_mr(&self.data.mrs)
-                    .map(|item| FocusedItem::Mr {
-                        project: item.project_path.clone(),
-                        iid: item.mr.iid,
-                    })
-            }
+            View::MrList => self
+                .ui
+                .views
+                .mr_list
+                .selected_mr(&self.data.mrs)
+                .map(|item| FocusedItem::Mr {
+                    project: item.project_path.clone(),
+                    iid: item.mr.iid,
+                }),
             View::Planning => self
                 .ui
                 .views
