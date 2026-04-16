@@ -59,7 +59,13 @@ impl App {
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
-                    issue_detail::render(frame, chunks[1], &item, &self.data.issue_detail, &ctx);
+                    issue_detail::render(
+                        frame,
+                        chunks[1],
+                        &item,
+                        &self.ui.views.issue_detail,
+                        &ctx,
+                    );
                 }
             }
             View::MrList => {
@@ -73,7 +79,7 @@ impl App {
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(frame, chunks[1], &item, &self.data.mr_detail, &ctx);
+                    mr_detail::render(frame, chunks[1], &item, &self.ui.views.mr_detail, &ctx);
                 }
             }
             View::Planning => {

@@ -133,7 +133,7 @@ impl App {
 
     /// Look up the issue shown in the detail view by its stored (project, iid).
     pub(super) fn current_detail_issue(&self) -> Option<&TrackedIssue> {
-        let d = &self.data.issue_detail;
+        let d = &self.ui.views.issue_detail;
         if d.project.is_empty() {
             return None;
         }
@@ -151,7 +151,7 @@ impl App {
 
     /// Look up the MR shown in the detail view by its stored (project, iid).
     pub(super) fn current_detail_mr(&self) -> Option<&TrackedMergeRequest> {
-        let d = &self.data.mr_detail;
+        let d = &self.ui.views.mr_detail;
         if d.project.is_empty() {
             return None;
         }
@@ -164,13 +164,13 @@ impl App {
     pub(super) fn action_open_detail(&mut self) {
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { project, iid, .. }) => {
-                self.data.issue_detail.open(&project, iid);
+                self.ui.views.issue_detail.open(&project, iid);
                 self.fetch_notes_for_issue(&project, iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::IssueDetail;
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                self.data.mr_detail.open(&project, iid);
+                self.ui.views.mr_detail.open(&project, iid);
                 self.fetch_notes_for_mr(&project, iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::MrDetail;

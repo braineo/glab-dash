@@ -4,7 +4,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
-use crate::app::{Overlay, ThreadPickerInfo, UiState};
+use crate::app::{Overlay, ThreadPickerInfo};
 use crate::cmd::EventResult;
 use crate::gitlab::types::{Discussion, TrackedIssue};
 use crate::keybindings::{self, KeyAction};
@@ -27,7 +27,7 @@ impl IssueDetailState {
     pub fn handle_key(
         &mut self,
         key: &crossterm::event::KeyEvent,
-        ui: &mut UiState,
+        overlay: &mut Overlay,
     ) -> EventResult {
         let Some(action) = keybindings::match_group(keybindings::DETAIL_NAV_BINDINGS, key) else {
             return EventResult::Bubble;
@@ -36,20 +36,20 @@ impl IssueDetailState {
             KeyAction::MoveDown => self.scroll_down(),
             KeyAction::MoveUp => self.scroll_up(),
             KeyAction::ReplyThread => {
-                self.start_reply(ui);
+                self.start_reply(overlay);
             }
             _ => return EventResult::Bubble,
         }
         EventResult::Consumed
     }
 
-    fn start_reply(&self, ui: &mut UiState) {
+    fn start_reply(&self, overlay: &mut Overlay) {
         let infos = self.thread_picker_items();
         if infos.is_empty() {
             return;
         }
         let (labels, subtitles) = build_thread_picker_display(&infos);
-        ui.overlay = Overlay::Picker {
+        *overlay = Overlay::Picker {
             state: picker::PickerState::new("Reply to thread", labels.clone(), false)
                 .with_subtitles(subtitles),
             on_complete: Box::new(move |values, app| {

@@ -57,11 +57,11 @@ impl App {
                 match result {
                     Ok(discussions) => {
                         if self.ui.view == View::IssueDetail {
-                            self.data.issue_detail.discussions = discussions;
-                            self.data.issue_detail.loading_notes = false;
+                            self.ui.views.issue_detail.discussions = discussions;
+                            self.ui.views.issue_detail.loading_notes = false;
                         } else if self.ui.view == View::MrDetail {
-                            self.data.mr_detail.discussions = discussions;
-                            self.data.mr_detail.loading_notes = false;
+                            self.ui.views.mr_detail.discussions = discussions;
+                            self.ui.views.mr_detail.loading_notes = false;
                         }
                     }
                     Err(e) => {

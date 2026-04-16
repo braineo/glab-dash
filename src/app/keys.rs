@@ -119,8 +119,16 @@ impl App {
                 &mut self.ui.pending_cmds,
                 &mut self.ui.needs_redraw,
             ),
-            View::IssueDetail => self.data.issue_detail.handle_key(key, &mut self.ui),
-            View::MrDetail => self.data.mr_detail.handle_key(key, &mut self.ui),
+            View::IssueDetail => self
+                .ui
+                .views
+                .issue_detail
+                .handle_key(key, &mut self.ui.overlay),
+            View::MrDetail => self
+                .ui
+                .views
+                .mr_detail
+                .handle_key(key, &mut self.ui.overlay),
             View::Dashboard => self.ui.views.board.handle_key(
                 key,
                 self.ui.views.health.as_mut(),

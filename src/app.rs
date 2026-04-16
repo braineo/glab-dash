@@ -139,8 +139,6 @@ pub struct AppData {
     pub shadow_work_cache: Vec<TrackedIssue>,
     pub unplanned_work_cache: std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>,
     pub unplanned_work_state: FetchState,
-    pub issue_detail: crate::ui::views::issue_detail::IssueDetailState,
-    pub mr_detail: crate::ui::views::mr_detail::MrDetailState,
 }
 
 /// UI layer — views, overlays, TEA accumulators.
@@ -206,8 +204,6 @@ impl App {
                 shadow_work_cache: Vec::new(),
                 unplanned_work_cache: std::collections::HashMap::new(),
                 unplanned_work_state: FetchState::default(),
-                issue_detail: crate::ui::views::issue_detail::IssueDetailState::default(),
-                mr_detail: crate::ui::views::mr_detail::MrDetailState::default(),
             },
             ui: UiState {
                 view: View::Dashboard,
