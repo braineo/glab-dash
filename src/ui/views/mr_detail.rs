@@ -353,15 +353,30 @@ fn render_discussions(lines: &mut Vec<Line<'_>>, state: &MrDetailState) {
 
             let rendered = markdown::render_comment(&note.body);
             if is_reply {
+                let reply_gutter = Span::styled(
+                    "  \u{2502}     \u{2502} ",
+                    styles::help_desc_style(),
+                );
                 for line in rendered {
-                    let mut spans = vec![Span::raw("      ".to_string())];
-                    spans.extend(line.spans);
+                    // Replace the default "  │ " gutter with the reply gutter
+                    let mut spans = vec![reply_gutter.clone()];
+                    spans.extend(line.spans.into_iter().skip(1));
                     lines.push(Line::from(spans));
                 }
             } else {
                 lines.extend(rendered);
             }
-            lines.push(Line::from(""));
+
+            // Blank line with gutter continuation between notes
+            let is_last = i == non_system_notes.len() - 1;
+            if is_last {
+                lines.push(Line::from(""));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "  \u{2502}",
+                    styles::help_desc_style(),
+                )));
+            }
         }
     }
 }
