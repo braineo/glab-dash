@@ -45,6 +45,12 @@ impl MrDetailState {
     fn start_reply(&self, overlay: &mut Overlay) {
         let infos = self.thread_picker_items();
         if infos.is_empty() {
+            // No threads yet — fall back to new comment.
+            *overlay = Overlay::CommentInput {
+                input: CommentInput::default(),
+                autocomplete: Box::default(),
+                reply_discussion_id: None,
+            };
             return;
         }
         let (labels, subtitles) = build_thread_picker_display(&infos);
