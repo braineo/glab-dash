@@ -71,21 +71,44 @@ impl App {
         let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
         let members = self.ctx.config.all_members();
+
+        // Collect external projects that have open issues we track, so we can
+        // detect state changes (closed, reassigned) even if those issues are
+        // no longer assigned to a team member.
+        let tracked_ids: std::collections::HashSet<u64> =
+            self.data.issues.iter().map(|i| i.issue.id).collect();
+        let external_projects: Vec<String> = self
+            .data
+            .issues
+            .iter()
+            .filter(|i| !self.ctx.config.is_tracking_project(&i.project_path))
+            .map(|i| i.project_path.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
         tokio::spawn(async move {
             let ua = updated_after.as_deref();
-            let (tracking, assigned) = tokio::join!(
-                client.fetch_tracking_issues(None, ua),
-                client.fetch_assigned_issues(&members, None, ua),
+            let (tracking, assigned, external) = tokio::join!(
+                client.fetch_tracking_issues("all", ua),
+                client.fetch_assigned_issues(&members, "all", ua),
+                client.fetch_external_project_issues(&external_projects, ua),
             );
-            let result = match (tracking, assigned) {
-                (Ok(mut t), Ok(a)) => {
-                    let existing: std::collections::HashSet<u64> =
-                        t.iter().map(|i| i.issue.id).collect();
-                    t.extend(a.into_iter().filter(|i| !existing.contains(&i.issue.id)));
-                    Ok(t)
-                }
-                (Err(e), _) | (_, Err(e)) => Err(e),
-            };
+            let result =
+                match (tracking, assigned, external) {
+                    (Ok(mut t), Ok(a), Ok(ext)) => {
+                        let mut seen: std::collections::HashSet<u64> =
+                            t.iter().map(|i| i.issue.id).collect();
+                        t.extend(a.into_iter().filter(|i| seen.insert(i.issue.id)));
+                        // Only merge external issues we already track — don't
+                        // pull in new issues from those projects.
+                        t.extend(ext.into_iter().filter(|i| {
+                            tracked_ids.contains(&i.issue.id) && seen.insert(i.issue.id)
+                        }));
+                        Ok(t)
+                    }
+                    (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
+                };
             let _ = tx.send(AsyncMsg::IssuesLoaded(result, incremental));
         });
     }

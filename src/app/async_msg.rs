@@ -90,9 +90,14 @@ impl App {
                         {
                             self.data.issues[pos].issue = issue;
                         }
+                        // Persist full snapshot (including closed) then remove closed
+                        // from memory — same pattern as IssuesLoaded.
+                        self.ui
+                            .pending_cmds
+                            .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
+                        self.data.issues.retain(|i| i.issue.state == "opened");
                         self.ui.error = None;
                         self.ui.dirty.issues = true;
-                        self.ui.pending_cmds.push(Cmd::PersistIssues);
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }

@@ -48,7 +48,7 @@ async fn debug_fetch() -> Result<()> {
         "Fetching tracking issues from {} ...",
         config.tracking_projects.join(", ")
     );
-    match client.fetch_tracking_issues(Some("opened"), None).await {
+    match client.fetch_tracking_issues("opened", None).await {
         Ok(issues) => {
             println!("  OK: {} tracking issues", issues.len());
             for item in issues.iter().take(3) {
@@ -65,10 +65,7 @@ async fn debug_fetch() -> Result<()> {
     }
 
     println!("Fetching assigned issues for {} members ...", members.len());
-    match client
-        .fetch_assigned_issues(&members, Some("opened"), None)
-        .await
-    {
+    match client.fetch_assigned_issues(&members, "opened", None).await {
         Ok(issues) => {
             println!("  OK: {} assigned issues", issues.len());
             for item in issues.iter().take(3) {
@@ -104,15 +101,11 @@ async fn debug_fetch() -> Result<()> {
     let (async_tx, _async_rx) = mpsc::unbounded_channel();
     let db = crate::db::Db::open().context("Failed to open database")?;
     let mut app = App::new(config, client, async_tx, db);
-    let tracking = app
-        .ctx
-        .client
-        .fetch_tracking_issues(Some("opened"), None)
-        .await?;
+    let tracking = app.ctx.client.fetch_tracking_issues("opened", None).await?;
     let assigned = app
         .ctx
         .client
-        .fetch_assigned_issues(&members, Some("opened"), None)
+        .fetch_assigned_issues(&members, "opened", None)
         .await?;
     println!("  tracking={} assigned={}", tracking.len(), assigned.len());
     app.data.issues = tracking;

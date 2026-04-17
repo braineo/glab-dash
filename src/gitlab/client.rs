@@ -1174,16 +1174,48 @@ impl GitLabClient {
     /// Fetch all issues from the tracking namespaces via `namespace.workItems`.
     pub async fn fetch_tracking_issues(
         &self,
-        state: Option<&str>,
+        state: &str,
         updated_after: Option<&str>,
     ) -> Result<Vec<TrackedIssue>> {
+        let gql_state = if state == "all" { None } else { Some(state) };
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
         for project in &self.config.tracking_projects {
             let issues = self
-                .graphql_list_work_items(project, state, None, updated_after)
+                .graphql_list_work_items(project, gql_state, None, updated_after)
                 .await?;
 
+            for issue in issues {
+                let project_path = issue.references.as_ref().map_or_else(
+                    || project.clone(),
+                    |r| extract_project_from_ref(&r.full_ref),
+                );
+                if seen_ids.insert(issue.id) {
+                    all.push(TrackedIssue {
+                        issue,
+                        project_path,
+                    });
+                }
+            }
+        }
+        Ok(all)
+    }
+
+    /// Fetch updated issues from specific external projects.
+    /// Used to sync state for issues we already track that live outside
+    /// the tracking namespace (e.g. issues assigned to team members in
+    /// other repos that may later be reassigned or closed).
+    pub async fn fetch_external_project_issues(
+        &self,
+        projects: &[String],
+        updated_after: Option<&str>,
+    ) -> Result<Vec<TrackedIssue>> {
+        let mut all = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        for project in projects {
+            let issues = self
+                .graphql_list_work_items(project, None, None, updated_after)
+                .await?;
             for issue in issues {
                 let project_path = issue.references.as_ref().map_or_else(
                     || project.clone(),
@@ -1205,12 +1237,12 @@ impl GitLabClient {
     pub async fn fetch_assigned_issues(
         &self,
         members: &[String],
-        state: Option<&str>,
+        state: &str,
         updated_after: Option<&str>,
     ) -> Result<Vec<TrackedIssue>> {
         let gql_state = match state {
-            Some("opened") => serde_json::json!("opened"),
-            Some("closed") => serde_json::json!("closed"),
+            "opened" => serde_json::json!("opened"),
+            "closed" => serde_json::json!("closed"),
             _ => serde_json::Value::Null,
         };
 
@@ -1249,7 +1281,7 @@ impl GitLabClient {
             let mut cursor: Option<String> = None;
             loop {
                 let variables = serde_json::json!({
-                    "assigneeUsernames": member,
+                    "assigneeUsernames": vec![member],
                     "state": gql_state,
                     "types": ["ISSUE"],
                     "after": cursor,
