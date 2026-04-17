@@ -340,10 +340,8 @@ fn render_discussions(lines: &mut Vec<Line<'_>>, state: &IssueDetailState) {
 
             let rendered = markdown::render_comment(&note.body);
             if is_reply {
-                let reply_gutter = Span::styled(
-                    "  \u{2502}     \u{2502} ",
-                    styles::help_desc_style(),
-                );
+                let reply_gutter =
+                    Span::styled("  \u{2502}     \u{2502} ", styles::help_desc_style());
                 for line in rendered {
                     // Replace the default "  │ " gutter with the reply gutter
                     let mut spans = vec![reply_gutter.clone()];
