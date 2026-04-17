@@ -271,7 +271,9 @@ impl IterationBoardState {
             Self::build_columns_from_config(kanban_config)
         };
         self.columns = cols;
-        self.focused_column = 0;
+        if self.focused_column >= self.columns.len() {
+            self.focused_column = self.columns.len().saturating_sub(1);
+        }
     }
 
     fn build_columns_auto(statuses: &[WorkItemStatus]) -> Vec<StatusColumn> {
