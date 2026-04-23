@@ -911,13 +911,33 @@ impl GitLabClient {
     }
 
     async fn graphql_post(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
-        let resp = self
-            .client
-            .post(self.graphql_url())
-            .json(body)
-            .send()
-            .await?;
-        let json: serde_json::Value = Self::handle_response(resp).await?;
+        let op = body
+            .get("query")
+            .and_then(|v| v.as_str())
+            .and_then(|q| q.split_whitespace().nth(1))
+            .unwrap_or("<anon>")
+            .to_string();
+        let vars_preview = body
+            .get("variables")
+            .map(std::string::ToString::to_string)
+            .unwrap_or_default();
+        let started = std::time::Instant::now();
+        tracing::debug!(op = %op, vars = %vars_preview, "graphql_post →");
+        let resp = match self.client.post(self.graphql_url()).json(body).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(op = %op, error = %e, elapsed_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX), "graphql_post ✗ network");
+                return Err(e.into());
+            }
+        };
+        let json: serde_json::Value = match Self::handle_response(resp).await {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::warn!(op = %op, error = ?e, elapsed_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX), "graphql_post ✗ http");
+                return Err(e);
+            }
+        };
+        tracing::debug!(op = %op, elapsed_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX), "graphql_post ✓");
         // Surface top-level GraphQL errors
         if let Some(errors) = json.get("errors").and_then(|v| v.as_array())
             && !errors.is_empty()
@@ -1483,21 +1503,54 @@ impl GitLabClient {
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
 
-        let queries = [&assigned_query, &reviewer_query];
+        let queries = [("assigned", &assigned_query), ("reviewer", &reviewer_query)];
+        tracing::info!(
+            members = members.len(),
+            updated_after = ?updated_after,
+            "fetch_external_mrs start"
+        );
+        let overall = std::time::Instant::now();
         for member in members {
-            for query in &queries {
-                for item in self
+            for (kind, query) in &queries {
+                let t = std::time::Instant::now();
+                let page = self
                     .fetch_user_mrs_page(query, member, &gql_state, updated_after)
-                    .await?
-                {
-                    if !self.config.is_tracking_project(&item.project_path)
-                        && seen_ids.insert(item.mr.id)
-                    {
-                        all.push(item);
+                    .await;
+                match page {
+                    Ok(items) => {
+                        tracing::debug!(
+                            member = %member,
+                            kind = %kind,
+                            count = items.len(),
+                            elapsed_ms = t.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                            "fetch_user_mrs_page ✓"
+                        );
+                        for item in items {
+                            if !self.config.is_tracking_project(&item.project_path)
+                                && seen_ids.insert(item.mr.id)
+                            {
+                                all.push(item);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            member = %member,
+                            kind = %kind,
+                            error = ?e,
+                            elapsed_ms = t.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                            "fetch_user_mrs_page ✗"
+                        );
+                        return Err(e);
                     }
                 }
             }
         }
+        tracing::info!(
+            total = all.len(),
+            elapsed_ms = overall.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+            "fetch_external_mrs done"
+        );
         Ok(all)
     }
 

@@ -22,6 +22,9 @@ tui-textarea = "0.7"
 rpassword = "7"
 comrak = "0.52.0"
 rusqlite = { version = "0.33", features = ["bundled"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+tracing-appender = "0.2"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

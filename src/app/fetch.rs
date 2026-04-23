@@ -119,15 +119,54 @@ impl App {
         let tx = self.ctx.async_tx.clone();
         let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
+        tracing::info!(
+            incremental,
+            members = members.len(),
+            updated_after = ?updated_after,
+            "fetch_mrs spawn"
+        );
         tokio::spawn(async move {
             let ua = updated_after.as_deref();
+            let t0 = std::time::Instant::now();
             let tracking = client.fetch_tracking_mrs("all", ua).await;
-            let external = client.fetch_external_mrs(&members, "all", ua).await;
+            match &tracking {
+                Ok(t) => tracing::info!(
+                    count = t.len(),
+                    elapsed_ms = t0.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    "fetch_tracking_mrs ✓"
+                ),
+                Err(e) => tracing::warn!(
+                    error = ?e,
+                    elapsed_ms = t0.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    "fetch_tracking_mrs ✗"
+                ),
+            }
+            let t1 = std::time::Instant::now();
+            // External MRs enter the cache only via team-member assignment, so
+            // we only want currently-open MRs. Fetching `"all"` paginates
+            // through every merged/closed MR ever assigned to each member —
+            // that's tens of thousands of requests for long-tenured teams and
+            // causes the MR list to appear frozen on load.
+            let external = client.fetch_external_mrs(&members, "opened", ua).await;
+            match &external {
+                Ok(e) => tracing::info!(
+                    count = e.len(),
+                    elapsed_ms = t1.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    "fetch_external_mrs ✓"
+                ),
+                Err(e) => tracing::warn!(
+                    error = ?e,
+                    elapsed_ms = t1.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    "fetch_external_mrs ✗"
+                ),
+            }
             let result = match (tracking, external) {
                 (Ok(t), Ok(e)) => Ok((t, e)),
                 (Err(e), _) | (_, Err(e)) => Err(e),
             };
-            let _ = tx.send(AsyncMsg::MrsLoaded(result, incremental));
+            if let Err(e) = tx.send(AsyncMsg::MrsLoaded(result, incremental)) {
+                tracing::error!(error = %e, "failed to send MrsLoaded — receiver dropped");
+            }
         });
     }
 

@@ -37,67 +37,39 @@ use crate::app::App;
 use crate::config::Config;
 use crate::gitlab::client::GitLabClient;
 
-/// Non-interactive debug mode: fetch issues via GraphQL and print them.
-/// Run with: cargo run -- --debug
+/// Non-interactive debug mode: exercise the fetch paths and log results.
+/// Run with: cargo run -- --debug — output goes to the tracing log file.
 async fn debug_fetch() -> Result<()> {
     let config = Config::load().context("Failed to load configuration")?;
     let client = GitLabClient::new(&config).context("Failed to create GitLab client")?;
     let members = config.team_members(0);
 
-    println!(
-        "Fetching tracking issues from {} ...",
-        config.tracking_projects.join(", ")
+    tracing::info!(
+        projects = %config.tracking_projects.join(", "),
+        "debug: fetching tracking issues"
     );
     match client.fetch_tracking_issues("opened", None).await {
-        Ok(issues) => {
-            println!("  OK: {} tracking issues", issues.len());
-            for item in issues.iter().take(3) {
-                println!(
-                    "  #{} [{}] {:?} {}",
-                    item.issue.iid,
-                    item.issue.state,
-                    item.issue.custom_status,
-                    item.issue.title.chars().take(40).collect::<String>(),
-                );
-            }
-        }
-        Err(e) => println!("  FAIL: {e:#}"),
+        Ok(issues) => tracing::info!(count = issues.len(), "debug: tracking issues ✓"),
+        Err(e) => tracing::error!(error = ?e, "debug: tracking issues ✗"),
     }
 
-    println!("Fetching assigned issues for {} members ...", members.len());
+    tracing::info!(members = members.len(), "debug: fetching assigned issues");
     match client.fetch_assigned_issues(&members, "opened", None).await {
-        Ok(issues) => {
-            println!("  OK: {} assigned issues", issues.len());
-            for item in issues.iter().take(3) {
-                println!(
-                    "  #{} [{}] {:?} {} ({})",
-                    item.issue.iid,
-                    item.issue.state,
-                    item.issue.custom_status,
-                    item.issue.title.chars().take(40).collect::<String>(),
-                    item.project_path
-                );
-            }
-        }
-        Err(e) => println!("  FAIL: {e:#}"),
+        Ok(issues) => tracing::info!(count = issues.len(), "debug: assigned issues ✓"),
+        Err(e) => tracing::error!(error = ?e, "debug: assigned issues ✗"),
     }
 
-    println!("Fetching work item statuses ...");
+    tracing::info!("debug: fetching work item statuses");
     match client
         .fetch_work_item_statuses(config.primary_tracking_project())
         .await
     {
-        Ok(statuses) => {
-            println!("  OK: {} statuses", statuses.len());
-            for s in &statuses {
-                println!("  {} ({})", s.name, s.id);
-            }
-        }
-        Err(e) => println!("  FAIL: {e:#}"),
+        Ok(statuses) => tracing::info!(count = statuses.len(), "debug: statuses ✓"),
+        Err(e) => tracing::error!(error = ?e, "debug: statuses ✗"),
     }
 
     // Simulate what the app does: store issues, refilter, check count
-    println!("\nSimulating app flow ...");
+    tracing::info!("debug: simulating app flow");
     let (async_tx, _async_rx) = mpsc::unbounded_channel();
     let db = crate::db::Db::open().context("Failed to open database")?;
     let mut app = App::new(config, client, async_tx, db);
@@ -107,32 +79,59 @@ async fn debug_fetch() -> Result<()> {
         .client
         .fetch_assigned_issues(&members, "opened", None)
         .await?;
-    println!("  tracking={} assigned={}", tracking.len(), assigned.len());
     app.data.issues = tracking;
     app.data.issues.extend(assigned);
     app.refilter_issues();
-    println!(
-        "  total issues={} filtered={}",
-        app.data.issues.len(),
-        app.ui.views.issue_list.list.len()
+    tracing::info!(
+        total_issues = app.data.issues.len(),
+        filtered = app.ui.views.issue_list.list.len(),
+        "debug: app flow done"
     );
-    // Check a few filtered issues
-    for i in app.ui.views.issue_list.list.indices.iter().take(3) {
-        let item = &app.data.issues[*i];
-        println!(
-            "  #{} [{}] {:?} {}",
-            item.issue.iid,
-            item.issue.state,
-            item.issue.custom_status,
-            item.issue.title.chars().take(40).collect::<String>()
-        );
-    }
-
     Ok(())
+}
+
+/// Initialize file-based tracing. Logs go to `~/.cache/glab-dash/glab-dash.log`
+/// (or `$GLAB_DASH_LOG_DIR` if set). Level controlled by `GLAB_DASH_LOG` env
+/// var (default: `info`, use e.g. `glab_dash=debug,reqwest=info`).
+///
+/// Returns the `WorkerGuard` — must be kept alive for the duration of the
+/// program so the background writer flushes on exit.
+fn init_tracing() -> Result<tracing_appender::non_blocking::WorkerGuard> {
+    let log_dir = std::env::var_os("GLAB_DASH_LOG_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::cache_dir().map(|d| d.join("glab-dash")))
+        .context("Could not determine log directory")?;
+    std::fs::create_dir_all(&log_dir).context("Failed to create log directory")?;
+
+    let file_appender = tracing_appender::rolling::never(&log_dir, "glab-dash.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+    let filter = tracing_subscriber::EnvFilter::try_from_env("GLAB_DASH_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,glab_dash=debug"));
+
+    // Local-time timestamps via chrono. ANSI colors are kept in the log file:
+    // `tail -f` and `less -R` render them; plain `cat` shows escape codes but
+    // that's rare for log inspection. Disable with `GLAB_DASH_LOG_NO_COLOR=1`.
+    let ansi = std::env::var_os("GLAB_DASH_LOG_NO_COLOR").is_none();
+    let timer =
+        tracing_subscriber::fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string());
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(non_blocking)
+        .with_ansi(ansi)
+        .with_timer(timer)
+        .with_target(true)
+        .init();
+
+    tracing::info!(log_dir = %log_dir.display(), "tracing initialized");
+    Ok(guard)
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    let _log_guard = init_tracing()?;
+
     if std::env::args().any(|a| a == "--debug") {
         return debug_fetch().await;
     }
