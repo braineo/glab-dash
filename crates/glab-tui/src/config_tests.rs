@@ -108,5 +108,5 @@ teams = []
 "#;
     let config: Config = toml::from_str(toml_str).unwrap();
     let members = config.team_members(99);
-    assert!(members.is_empty());
+    assert_eq!(members, Vec::<String>::new());
 }

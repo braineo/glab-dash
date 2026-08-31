@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
-use crate::config::Config;
-use crate::gitlab::client::GitLabClient;
+use glab_tui::config::Config;
+use glab_tui::gitlab::client::GitLabClient;
 
 const LOGO: &str = r"
    __ _  _       _             _           _
@@ -127,7 +127,7 @@ pub async fn run_onboarding() -> Result<Config> {
             members.len(),
             members.join(", ")
         );
-        teams.push(crate::config::TeamConfig {
+        teams.push(glab_tui::config::TeamConfig {
             name: team_name,
             members,
         });
@@ -183,80 +183,80 @@ pub fn generate_toml(config: &Config) -> String {
     toml::to_string_pretty(config).expect("Config should be serializable to TOML")
 }
 
-pub fn default_filter_presets() -> Vec<crate::config::FilterPreset> {
+pub fn default_filter_presets() -> Vec<glab_tui::config::FilterPreset> {
     vec![
-        crate::config::FilterPreset {
+        glab_tui::config::FilterPreset {
             name: "My open issues".to_string(),
             kind: "issue".to_string(),
             conditions: vec![
-                crate::config::PresetCondition {
+                glab_tui::config::PresetCondition {
                     field: "assignee".to_string(),
                     op: "eq".to_string(),
                     value: "$me".to_string(),
                 },
-                crate::config::PresetCondition {
+                glab_tui::config::PresetCondition {
                     field: "state".to_string(),
                     op: "eq".to_string(),
                     value: "opened".to_string(),
                 },
             ],
         },
-        crate::config::FilterPreset {
+        glab_tui::config::FilterPreset {
             name: "Unassigned issues".to_string(),
             kind: "issue".to_string(),
-            conditions: vec![crate::config::PresetCondition {
+            conditions: vec![glab_tui::config::PresetCondition {
                 field: "assignee".to_string(),
                 op: "eq".to_string(),
                 value: "none".to_string(),
             }],
         },
-        crate::config::FilterPreset {
+        glab_tui::config::FilterPreset {
             name: "My open MRs".to_string(),
             kind: "merge_request".to_string(),
             conditions: vec![
-                crate::config::PresetCondition {
+                glab_tui::config::PresetCondition {
                     field: "author".to_string(),
                     op: "eq".to_string(),
                     value: "$me".to_string(),
                 },
-                crate::config::PresetCondition {
+                glab_tui::config::PresetCondition {
                     field: "state".to_string(),
                     op: "eq".to_string(),
                     value: "opened".to_string(),
                 },
             ],
         },
-        crate::config::FilterPreset {
+        glab_tui::config::FilterPreset {
             name: "Needs my review".to_string(),
             kind: "merge_request".to_string(),
             conditions: vec![
-                crate::config::PresetCondition {
+                glab_tui::config::PresetCondition {
                     field: "reviewer".to_string(),
                     op: "contains".to_string(),
                     value: "$me".to_string(),
                 },
-                crate::config::PresetCondition {
+                glab_tui::config::PresetCondition {
                     field: "draft".to_string(),
                     op: "eq".to_string(),
                     value: "false".to_string(),
                 },
-                crate::config::PresetCondition {
+                glab_tui::config::PresetCondition {
                     field: "approved_by".to_string(),
                     op: "not_contains".to_string(),
                     value: "$me".to_string(),
                 },
             ],
         },
-        crate::config::FilterPreset {
+        glab_tui::config::FilterPreset {
             name: "Ready to merge".to_string(),
             kind: "merge_request".to_string(),
             conditions: vec![
-                crate::config::PresetCondition {
+                glab_tui::config::PresetCondition {
                     field: "draft".to_string(),
                     op: "eq".to_string(),
                     value: "false".to_string(),
                 },
-                crate::config::PresetCondition {
+                glab_tui::config::PresetCondition {
                     field: "state".to_string(),
                     op: "eq".to_string(),
                     value: "opened".to_string(),

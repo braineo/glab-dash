@@ -84,6 +84,10 @@ impl<T> ItemList<T> {
         self.indices.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+
     pub fn selected_index(&self) -> Option<usize> {
         self.table_state
             .selected()

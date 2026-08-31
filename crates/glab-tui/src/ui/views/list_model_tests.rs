@@ -182,7 +182,7 @@ fn test_handle_fuzzy_input_esc_cancels() {
 
     assert_eq!(f.handle_fuzzy_input(&key(KeyCode::Esc)), Some(true));
     assert!(!f.is_searching());
-    assert!(f.fuzzy_query.is_empty()); // query cleared
+    assert_eq!(f.fuzzy_query, ""); // query cleared
 }
 
 #[test]
