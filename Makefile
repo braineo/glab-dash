@@ -7,13 +7,13 @@ format:
 
 .PHONY: lint
 lint:
-	cargo clippy --all-targets --all-features --fix --allow-dirty -- -D warnings
+	cargo clippy --workspace --all-targets --all-features --fix --allow-dirty -- -D warnings
 
 .PHONY: test
 test:
-	cargo test
+	cargo test --workspace
 
 .PHONY: install
 install:
 	cargo build --release
-	cargo install --path .
+	cargo install --path crates/glab-dash

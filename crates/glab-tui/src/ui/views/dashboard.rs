@@ -28,6 +28,7 @@ pub enum HealthTab {
 }
 
 impl HealthTab {
+    #[must_use]
     pub fn next(self) -> Self {
         match self {
             Self::UnplannedWork => Self::ShadowWork,
@@ -36,6 +37,7 @@ impl HealthTab {
         }
     }
 
+    #[must_use]
     pub fn prev(self) -> Self {
         match self {
             Self::UnplannedWork => Self::AtRisk,

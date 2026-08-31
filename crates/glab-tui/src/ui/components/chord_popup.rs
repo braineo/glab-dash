@@ -89,6 +89,7 @@ impl ChordState {
         }
     }
 
+    #[must_use]
     pub fn with_kind(mut self, kind: ChordKind) -> Self {
         self.kind = kind;
         self

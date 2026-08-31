@@ -1,5 +1,5 @@
-use crate::config::Config;
 use crate::onboarding::generate_toml;
+use glab_tui::config::Config;
 
 #[test]
 fn test_generate_toml_roundtrip() {
@@ -10,19 +10,19 @@ fn test_generate_toml_roundtrip() {
         tracking_projects: vec!["org/tracker".to_string()],
         refresh_interval_secs: 60,
         teams: vec![
-            crate::config::TeamConfig {
+            glab_tui::config::TeamConfig {
                 name: "frontend".to_string(),
                 members: vec!["alice".to_string(), "bob".to_string()],
             },
-            crate::config::TeamConfig {
+            glab_tui::config::TeamConfig {
                 name: "platform".to_string(),
                 members: vec!["charlie".to_string()],
             },
         ],
-        filters: vec![crate::config::FilterPreset {
+        filters: vec![glab_tui::config::FilterPreset {
             name: "My issues".to_string(),
             kind: "issue".to_string(),
-            conditions: vec![crate::config::PresetCondition {
+            conditions: vec![glab_tui::config::PresetCondition {
                 field: "assignee".to_string(),
                 op: "eq".to_string(),
                 value: "$me".to_string(),
