@@ -6,6 +6,8 @@ use crate::cmd::EventResult;
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::picker;
 
+use super::issue_actions::IssueActions;
+use super::mr_actions::MrActions;
 use super::{App, FocusedItem, Overlay, View};
 
 impl App {

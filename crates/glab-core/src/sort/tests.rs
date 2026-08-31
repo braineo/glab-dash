@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use chrono::{Duration, Utc};
 
-use crate::gitlab::types::*;
+use crate::domain::*;
 
 use super::label_order::compare_by_label_scope;
 use super::spec::*;

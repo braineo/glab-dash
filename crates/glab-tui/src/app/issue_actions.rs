@@ -1,20 +1,55 @@
 //! Key handling for focused issues.
 //!
-//! `TrackedIssue::handle_action_key` is called from `dispatch_focused_item`
+//! `TrackedIssue` lives in `glab-core`, so the methods that take one are hung
+//! off it with the [`IssueActions`] extension trait; the chord and confirm
+//! builders, which never had a receiver, are plain module functions.
+//!
+//! `IssueActions::handle_action_key` is called from `dispatch_focused_item`
 //! with disjoint borrows: `&self` + `&AppData` (both immutable, from the
 //! same struct), `&AppCtx` (immutable infra), `&mut UiState` (mutable UI).
 
 use crossterm::event::KeyEvent;
 
 use crate::cmd::{Cmd, EventResult};
-use crate::gitlab::types::{Iteration, ProjectLabel, TrackedIssue, User};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
+use glab_core::domain::{Iteration, ProjectLabel, TrackedIssue, User};
 
 use super::{AppCtx, AppData, Overlay, UiState, View};
 
-impl TrackedIssue {
-    pub fn handle_action_key(
+/// Issue actions that need the app's context, ui and data. Implemented for
+/// `TrackedIssue`, which this crate does not own.
+pub trait IssueActions {
+    /// Handle a key press against the issue-action bindings.
+    fn handle_action_key(
+        &self,
+        key: &KeyEvent,
+        ctx: &AppCtx,
+        data: &AppData,
+        ui: &mut UiState,
+    ) -> EventResult;
+    /// Replace the issue's labels and push the change to the API.
+    fn update_labels(
+        &mut self,
+        labels: &[String],
+        all_labels: &[ProjectLabel],
+        ctx: &AppCtx,
+        ui: &mut UiState,
+    );
+    /// Assign the issue to `username`, optimistically updating in place.
+    fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState);
+    /// Post `body` as a new comment or as a reply to an existing thread.
+    fn submit_comment(
+        &self,
+        body: &str,
+        reply_discussion_id: Option<String>,
+        ctx: &AppCtx,
+        ui: &mut UiState,
+    );
+}
+
+impl IssueActions for TrackedIssue {
+    fn handle_action_key(
         &self,
         key: &KeyEvent,
         ctx: &AppCtx,
@@ -33,7 +68,7 @@ impl TrackedIssue {
 
         match action {
             KeyAction::SetStatus => {
-                Self::fetch_or_show_status_chord(
+                fetch_or_show_status_chord(
                     &self.project_path,
                     self.issue.id,
                     self.issue.iid,
@@ -44,7 +79,7 @@ impl TrackedIssue {
                 );
             }
             KeyAction::ToggleState => {
-                Self::fetch_or_show_status_chord(
+                fetch_or_show_status_chord(
                     &self.project_path,
                     self.issue.id,
                     self.issue.iid,
@@ -99,223 +134,15 @@ impl TrackedIssue {
                 };
             }
             KeyAction::MoveIteration => {
-                Self::show_iteration_chord(self.issue.id, data, ui);
+                show_iteration_chord(self.issue.id, data, ui);
             }
             _ => return EventResult::Bubble,
         }
         EventResult::Consumed
     }
 
-    /// Open status chord from cached statuses, or trigger async fetch.
-    fn fetch_or_show_status_chord(
-        project: &str,
-        issue_id: u64,
-        iid: u64,
-        close_only: bool,
-        ctx: &AppCtx,
-        data: &AppData,
-        ui: &mut UiState,
-    ) {
-        if let Some(statuses) = data.work_item_statuses.get(project)
-            && !statuses.is_empty()
-        {
-            Self::build_status_chord(project, issue_id, iid, close_only, statuses, data, ui);
-            return;
-        }
-        // No cached statuses — fetch them asynchronously
-        let client = ctx.client.clone();
-        let tx = ctx.async_tx.clone();
-        let project = project.to_string();
-        ui.loading = true;
-        tokio::spawn(async move {
-            let result = client.fetch_work_item_statuses(&project).await;
-            let _ = tx.send(super::AsyncMsg::StatusesLoaded(
-                result, project, issue_id, iid, close_only,
-            ));
-        });
-    }
-
-    /// Build the status chord from already-cached statuses.
-    pub fn build_status_chord(
-        project: &str,
-        issue_id: u64,
-        iid: u64,
-        close_only: bool,
-        statuses: &[crate::gitlab::types::WorkItemStatus],
-        data: &AppData,
-        ui: &mut UiState,
-    ) {
-        let is_duplicate =
-            |s: &crate::gitlab::types::WorkItemStatus| s.name.to_lowercase().contains("duplicate");
-
-        let mut sorted_indices: Vec<usize> = (0..statuses.len())
-            .filter(|&i| !is_duplicate(&statuses[i]))
-            .collect();
-        sorted_indices.sort_by_key(|&i| match statuses[i].category.as_deref() {
-            Some("done") => 0,
-            Some("active" | "opened") => 1,
-            Some("canceled") => 2,
-            _ => 3,
-        });
-        let sorted_names: Vec<String> = sorted_indices
-            .iter()
-            .map(|&i| statuses[i].name.clone())
-            .collect();
-        let sorted_codes = chord_popup::generate_priority_codes(&sorted_names);
-
-        let mut all_codes = vec![String::new(); statuses.len()];
-        for (sorted_pos, &orig_idx) in sorted_indices.iter().enumerate() {
-            all_codes[orig_idx].clone_from(&sorted_codes[sorted_pos]);
-        }
-        let all_names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
-
-        let project_owned = project.to_string();
-
-        if close_only {
-            let is_close_category = |s: &crate::gitlab::types::WorkItemStatus| {
-                s.category
-                    .as_deref()
-                    .is_some_and(|c| matches!(c, "done" | "canceled" | "closed"))
-            };
-
-            let mut close_items: Vec<(usize, &str)> = statuses
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| is_close_category(s))
-                .map(|(i, s)| (i, s.category.as_deref().unwrap_or("")))
-                .collect();
-
-            if close_items.is_empty() {
-                let item_state = data
-                    .issues
-                    .iter()
-                    .find(|i| i.issue.id == issue_id)
-                    .map_or("opened", |i| i.issue.state.as_str());
-                Self::show_close_reopen_confirm(issue_id, iid, item_state, ui);
-                return;
-            }
-
-            close_items.sort_by_key(|(_, cat)| match *cat {
-                "done" => 0,
-                "canceled" => 1,
-                _ => 2,
-            });
-
-            let options: Vec<(String, String)> = close_items
-                .iter()
-                .map(|&(i, _)| (all_codes[i].clone(), all_names[i].clone()))
-                .collect();
-            let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
-
-            ui.overlay = Overlay::Chord {
-                state: chord_popup::ChordState::from_options("Close As", options, max_code_len)
-                    .with_kind(chord_popup::ChordKind::Status),
-                on_complete: Box::new(move |value, app| {
-                    app.set_issue_status(&project_owned, issue_id, iid, &value);
-                }),
-            };
-        } else {
-            let options: Vec<(String, String)> = all_codes
-                .into_iter()
-                .zip(all_names)
-                .filter(|(code, _)| !code.is_empty())
-                .collect();
-            let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
-
-            ui.overlay = Overlay::Chord {
-                state: chord_popup::ChordState::from_options("Set Status", options, max_code_len)
-                    .with_kind(chord_popup::ChordKind::Status),
-                on_complete: Box::new(move |value, app| {
-                    app.set_issue_status(&project_owned, issue_id, iid, &value);
-                }),
-            };
-        }
-    }
-
-    /// Show a close/reopen confirm dialog for issues without custom statuses.
-    pub fn show_close_reopen_confirm(issue_id: u64, iid: u64, item_state: &str, ui: &mut UiState) {
-        if item_state == "opened" {
-            ui.overlay = Overlay::Confirm {
-                title: "Close Issue".to_string(),
-                message: format!("Close issue #{iid}?"),
-                on_accept: Some(Box::new(move |app| {
-                    if let Some(pos) = app.data.issues.iter().position(|i| i.issue.id == issue_id) {
-                        app.data.issues[pos].issue.state = "closed".to_string();
-                        app.data.issues[pos].issue.updated_at = chrono::Utc::now();
-                        app.ui.dirty.issues = true;
-                        app.ui.pending_cmds.push(Cmd::PersistIssues);
-                    }
-                    app.ui.pending_cmds.push(Cmd::SpawnCloseIssue { issue_id });
-                })),
-            };
-        } else {
-            ui.overlay = Overlay::Confirm {
-                title: "Reopen Issue".to_string(),
-                message: format!("Reopen issue #{iid}?"),
-                on_accept: Some(Box::new(move |app| {
-                    if let Some(pos) = app.data.issues.iter().position(|i| i.issue.id == issue_id) {
-                        app.data.issues[pos].issue.state = "opened".to_string();
-                        app.data.issues[pos].issue.updated_at = chrono::Utc::now();
-                        app.ui.dirty.issues = true;
-                        app.ui.pending_cmds.push(Cmd::PersistIssues);
-                    }
-                    app.ui.pending_cmds.push(Cmd::SpawnReopenIssue { issue_id });
-                })),
-            };
-        }
-    }
-
-    /// Open the iteration move chord.
-    fn show_iteration_chord(issue_id: u64, data: &AppData, ui: &mut UiState) {
-        let current_pos = data.iterations.iter().position(|i| i.state == "current");
-
-        let mut display_opts: Vec<(String, String)> = Vec::new();
-        let mut action_map: Vec<(String, Option<Iteration>)> = Vec::new();
-
-        let prefixes = ["a", "s", "d"];
-
-        if let Some(pos) = current_pos {
-            for (i, prefix_char) in prefixes.iter().enumerate() {
-                if let Some(it) = data.iterations.get(pos + i) {
-                    let start = it.start_date.as_deref().unwrap_or("?");
-                    let end = it.due_date.as_deref().unwrap_or("?");
-                    let title = if it.title.is_empty() {
-                        format!("{start} \u{2192} {end}")
-                    } else {
-                        format!("{} ({} \u{2192} {})", it.title, start, end)
-                    };
-
-                    let code = prefix_char.to_string();
-                    display_opts.push((code, title.clone()));
-                    action_map.push((title, Some(it.clone())));
-                }
-            }
-        }
-
-        display_opts.push(("x".to_string(), "Remove".to_string()));
-        action_map.push(("Remove".to_string(), None));
-
-        let max_code_len = display_opts.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
-        ui.overlay = Overlay::Chord {
-            state: chord_popup::ChordState::from_options(
-                "Move to Iteration",
-                display_opts,
-                max_code_len,
-            ),
-            on_complete: Box::new(move |value, app| {
-                let target = action_map
-                    .into_iter()
-                    .find(|(t, _)| t == &value)
-                    .and_then(|(_, it)| it);
-                app.apply_iteration_move(issue_id, target.as_ref());
-            }),
-        };
-    }
-
-    // ── Mutations (called from overlay completion handlers) ──────────
-
     /// Update labels via GraphQL diff (add/remove GIDs).
-    pub fn update_labels(
+    fn update_labels(
         &mut self,
         labels: &[String],
         all_labels: &[ProjectLabel],
@@ -360,7 +187,7 @@ impl TrackedIssue {
     }
 
     /// Update assignee via GraphQL.
-    pub fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
+    fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
         let placeholder = User {
             id: 0,
             username: username.to_string(),
@@ -401,7 +228,7 @@ impl TrackedIssue {
     }
 
     /// Submit a comment or reply.
-    pub fn submit_comment(
+    fn submit_comment(
         &self,
         body: &str,
         reply_discussion_id: Option<String>,
@@ -432,4 +259,210 @@ impl TrackedIssue {
             let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
         });
     }
+}
+
+/// Open status chord from cached statuses, or trigger async fetch.
+fn fetch_or_show_status_chord(
+    project: &str,
+    issue_id: u64,
+    iid: u64,
+    close_only: bool,
+    ctx: &AppCtx,
+    data: &AppData,
+    ui: &mut UiState,
+) {
+    if let Some(statuses) = data.work_item_statuses.get(project)
+        && !statuses.is_empty()
+    {
+        build_status_chord(project, issue_id, iid, close_only, statuses, data, ui);
+        return;
+    }
+    // No cached statuses — fetch them asynchronously
+    let client = ctx.client.clone();
+    let tx = ctx.async_tx.clone();
+    let project = project.to_string();
+    ui.loading = true;
+    tokio::spawn(async move {
+        let result = client.fetch_work_item_statuses(&project).await;
+        let _ = tx.send(super::AsyncMsg::StatusesLoaded(
+            result, project, issue_id, iid, close_only,
+        ));
+    });
+}
+
+/// Build the status chord from already-cached statuses.
+pub fn build_status_chord(
+    project: &str,
+    issue_id: u64,
+    iid: u64,
+    close_only: bool,
+    statuses: &[glab_core::domain::WorkItemStatus],
+    data: &AppData,
+    ui: &mut UiState,
+) {
+    let is_duplicate =
+        |s: &glab_core::domain::WorkItemStatus| s.name.to_lowercase().contains("duplicate");
+
+    let mut sorted_indices: Vec<usize> = (0..statuses.len())
+        .filter(|&i| !is_duplicate(&statuses[i]))
+        .collect();
+    sorted_indices.sort_by_key(|&i| match statuses[i].category.as_deref() {
+        Some("done") => 0,
+        Some("active" | "opened") => 1,
+        Some("canceled") => 2,
+        _ => 3,
+    });
+    let sorted_names: Vec<String> = sorted_indices
+        .iter()
+        .map(|&i| statuses[i].name.clone())
+        .collect();
+    let sorted_codes = chord_popup::generate_priority_codes(&sorted_names);
+
+    let mut all_codes = vec![String::new(); statuses.len()];
+    for (sorted_pos, &orig_idx) in sorted_indices.iter().enumerate() {
+        all_codes[orig_idx].clone_from(&sorted_codes[sorted_pos]);
+    }
+    let all_names: Vec<String> = statuses.iter().map(|s| s.name.clone()).collect();
+
+    let project_owned = project.to_string();
+
+    if close_only {
+        let is_close_category = |s: &glab_core::domain::WorkItemStatus| {
+            s.category
+                .as_deref()
+                .is_some_and(|c| matches!(c, "done" | "canceled" | "closed"))
+        };
+
+        let mut close_items: Vec<(usize, &str)> = statuses
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| is_close_category(s))
+            .map(|(i, s)| (i, s.category.as_deref().unwrap_or("")))
+            .collect();
+
+        if close_items.is_empty() {
+            let item_state = data
+                .issues
+                .iter()
+                .find(|i| i.issue.id == issue_id)
+                .map_or("opened", |i| i.issue.state.as_str());
+            show_close_reopen_confirm(issue_id, iid, item_state, ui);
+            return;
+        }
+
+        close_items.sort_by_key(|(_, cat)| match *cat {
+            "done" => 0,
+            "canceled" => 1,
+            _ => 2,
+        });
+
+        let options: Vec<(String, String)> = close_items
+            .iter()
+            .map(|&(i, _)| (all_codes[i].clone(), all_names[i].clone()))
+            .collect();
+        let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
+
+        ui.overlay = Overlay::Chord {
+            state: chord_popup::ChordState::from_options("Close As", options, max_code_len)
+                .with_kind(chord_popup::ChordKind::Status),
+            on_complete: Box::new(move |value, app| {
+                app.set_issue_status(&project_owned, issue_id, iid, &value);
+            }),
+        };
+    } else {
+        let options: Vec<(String, String)> = all_codes
+            .into_iter()
+            .zip(all_names)
+            .filter(|(code, _)| !code.is_empty())
+            .collect();
+        let max_code_len = options.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
+
+        ui.overlay = Overlay::Chord {
+            state: chord_popup::ChordState::from_options("Set Status", options, max_code_len)
+                .with_kind(chord_popup::ChordKind::Status),
+            on_complete: Box::new(move |value, app| {
+                app.set_issue_status(&project_owned, issue_id, iid, &value);
+            }),
+        };
+    }
+}
+
+/// Show a close/reopen confirm dialog for issues without custom statuses.
+pub fn show_close_reopen_confirm(issue_id: u64, iid: u64, item_state: &str, ui: &mut UiState) {
+    if item_state == "opened" {
+        ui.overlay = Overlay::Confirm {
+            title: "Close Issue".to_string(),
+            message: format!("Close issue #{iid}?"),
+            on_accept: Some(Box::new(move |app| {
+                if let Some(pos) = app.data.issues.iter().position(|i| i.issue.id == issue_id) {
+                    app.data.issues[pos].issue.state = "closed".to_string();
+                    app.data.issues[pos].issue.updated_at = chrono::Utc::now();
+                    app.ui.dirty.issues = true;
+                    app.ui.pending_cmds.push(Cmd::PersistIssues);
+                }
+                app.ui.pending_cmds.push(Cmd::SpawnCloseIssue { issue_id });
+            })),
+        };
+    } else {
+        ui.overlay = Overlay::Confirm {
+            title: "Reopen Issue".to_string(),
+            message: format!("Reopen issue #{iid}?"),
+            on_accept: Some(Box::new(move |app| {
+                if let Some(pos) = app.data.issues.iter().position(|i| i.issue.id == issue_id) {
+                    app.data.issues[pos].issue.state = "opened".to_string();
+                    app.data.issues[pos].issue.updated_at = chrono::Utc::now();
+                    app.ui.dirty.issues = true;
+                    app.ui.pending_cmds.push(Cmd::PersistIssues);
+                }
+                app.ui.pending_cmds.push(Cmd::SpawnReopenIssue { issue_id });
+            })),
+        };
+    }
+}
+
+/// Open the iteration move chord.
+fn show_iteration_chord(issue_id: u64, data: &AppData, ui: &mut UiState) {
+    let current_pos = data.iterations.iter().position(|i| i.state == "current");
+
+    let mut display_opts: Vec<(String, String)> = Vec::new();
+    let mut action_map: Vec<(String, Option<Iteration>)> = Vec::new();
+
+    let prefixes = ["a", "s", "d"];
+
+    if let Some(pos) = current_pos {
+        for (i, prefix_char) in prefixes.iter().enumerate() {
+            if let Some(it) = data.iterations.get(pos + i) {
+                let start = it.start_date.as_deref().unwrap_or("?");
+                let end = it.due_date.as_deref().unwrap_or("?");
+                let title = if it.title.is_empty() {
+                    format!("{start} \u{2192} {end}")
+                } else {
+                    format!("{} ({} \u{2192} {})", it.title, start, end)
+                };
+
+                let code = prefix_char.to_string();
+                display_opts.push((code, title.clone()));
+                action_map.push((title, Some(it.clone())));
+            }
+        }
+    }
+
+    display_opts.push(("x".to_string(), "Remove".to_string()));
+    action_map.push(("Remove".to_string(), None));
+
+    let max_code_len = display_opts.iter().map(|(c, _)| c.len()).max().unwrap_or(1);
+    ui.overlay = Overlay::Chord {
+        state: chord_popup::ChordState::from_options(
+            "Move to Iteration",
+            display_opts,
+            max_code_len,
+        ),
+        on_complete: Box::new(move |value, app| {
+            let target = action_map
+                .into_iter()
+                .find(|(t, _)| t == &value)
+                .and_then(|(_, it)| it);
+            app.apply_iteration_move(issue_id, target.as_ref());
+        }),
+    };
 }

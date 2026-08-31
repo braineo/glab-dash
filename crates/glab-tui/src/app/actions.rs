@@ -1,7 +1,9 @@
 //! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
-use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
+use glab_core::domain::{TrackedIssue, TrackedMergeRequest};
 
+use super::issue_actions::IssueActions;
+use super::mr_actions::MrActions;
 use super::{App, FocusedItem, Overlay, View};
 
 impl App {
@@ -186,7 +188,7 @@ impl App {
     pub(super) fn apply_iteration_move(
         &mut self,
         issue_id: u64,
-        target: Option<&crate::gitlab::types::Iteration>,
+        target: Option<&glab_core::domain::Iteration>,
     ) {
         let issue_idx = self.data.issues.iter().position(|i| i.issue.id == issue_id);
         let Some(issue_idx) = issue_idx else {

@@ -3,9 +3,9 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::filter::FilterCondition;
-use crate::sort::SortSpec;
 use crate::ui::styles;
+use glab_core::filter::FilterCondition;
+use glab_core::sort::SortSpec;
 
 pub fn render(
     frame: &mut Frame,

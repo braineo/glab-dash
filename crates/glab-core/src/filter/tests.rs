@@ -1,5 +1,5 @@
 use super::condition::*;
-use crate::gitlab::types::*;
+use crate::domain::*;
 use chrono::Utc;
 
 fn make_user(username: &str) -> User {

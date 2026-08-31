@@ -8,11 +8,11 @@ use ratatui::widgets::{Cell, Paragraph, Row, Table};
 use std::collections::HashMap;
 
 use crate::cmd::{Cmd, Dirty, EventResult};
-use crate::filter::matches_issue;
-use crate::gitlab::types::TrackedIssue;
-use crate::sort;
 use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
 use crate::ui::{components, styles};
+use glab_core::domain::TrackedIssue;
+use glab_core::filter::matches_issue;
+use glab_core::sort;
 
 #[derive(Default)]
 pub struct IssueListState {

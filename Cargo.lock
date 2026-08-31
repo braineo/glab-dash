@@ -724,6 +724,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "glab-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+]
+
+[[package]]
 name = "glab-dash"
 version = "0.1.0"
 dependencies = [
@@ -751,6 +759,7 @@ dependencies = [
  "dirs",
  "futures",
  "fuzzy-matcher",
+ "glab-core",
  "open",
  "ratatui",
  "reqwest",

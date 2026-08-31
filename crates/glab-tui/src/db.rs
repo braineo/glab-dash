@@ -5,11 +5,11 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::filter::FilterCondition;
-use crate::gitlab::types::{
+use glab_core::domain::{
     Iteration, ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus,
 };
-use crate::sort::SortSpec;
+use glab_core::filter::FilterCondition;
+use glab_core::sort::SortSpec;
 
 const SCHEMA_VERSION: u32 = 2;
 
@@ -391,8 +391,8 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gitlab::types::{Issue, MergeRequest};
     use chrono::Utc;
+    use glab_core::domain::{Issue, MergeRequest};
 
     fn make_issue(id: u64, state: &str) -> TrackedIssue {
         TrackedIssue {

@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
+use crate::domain::{TrackedIssue, TrackedMergeRequest};
 
 use super::label_order::compare_by_label_scope;
 

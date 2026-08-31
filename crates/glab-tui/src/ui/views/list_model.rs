@@ -3,11 +3,11 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, TableState};
 
-use crate::filter::FilterCondition;
 use crate::keybindings::{self, KeyAction};
-use crate::sort::SortSpec;
 use crate::ui::keys;
 use crate::ui::styles;
+use glab_core::filter::FilterCondition;
+use glab_core::sort::SortSpec;
 
 // ── ListCursor — non-generic borrowed handle for navigation ──
 

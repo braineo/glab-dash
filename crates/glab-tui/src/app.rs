@@ -17,11 +17,11 @@ use crate::cmd::{Cmd, Dirty};
 use crate::config::Config;
 use crate::db::{Db, ViewState};
 use crate::gitlab::client::GitLabClient;
-use crate::gitlab::types::{
-    Issue, Iteration, MergeRequest, ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus,
-};
 use crate::ui::views::Views;
 use crate::ui::views::{dashboard, filter_editor};
+use glab_core::domain::{
+    Issue, Iteration, MergeRequest, ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -88,7 +88,7 @@ pub enum AsyncMsg {
         Result<(Vec<TrackedMergeRequest>, Vec<TrackedMergeRequest>)>,
         bool,
     ),
-    DiscussionsLoaded(Result<Vec<crate::gitlab::types::Discussion>>),
+    DiscussionsLoaded(Result<Vec<glab_core::domain::Discussion>>),
     ActionDone(Result<String>),
     /// An issue was mutated; carry the updated object.
     IssueUpdated(Result<Issue>),
