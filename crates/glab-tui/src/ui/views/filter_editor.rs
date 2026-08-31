@@ -5,8 +5,8 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
-use crate::filter::{Field, FilterCondition, Op};
 use crate::ui::{keys, styles};
+use glab_core::filter::{Field, FilterCondition, Op};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditorStep {

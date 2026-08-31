@@ -8,11 +8,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::cmd::{Cmd, Dirty, EventResult};
 use crate::config::Config;
-use crate::gitlab::types::{Iteration, TrackedIssue};
 use crate::keybindings::{self, KeyAction};
-use crate::sort;
 use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
 use crate::ui::{RenderCtx, components, styles};
+use glab_core::domain::{Iteration, TrackedIssue};
+use glab_core::sort;
 
 use std::collections::HashMap;
 

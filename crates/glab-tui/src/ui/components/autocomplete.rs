@@ -6,8 +6,8 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 
-use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
 use crate::ui::styles;
+use glab_core::domain::{TrackedIssue, TrackedMergeRequest};
 
 const MAX_VISIBLE: usize = 6;
 

@@ -6,12 +6,12 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 use crate::app::{Overlay, ThreadPickerInfo};
 use crate::cmd::EventResult;
-use crate::gitlab::types::{Discussion, TrackedMergeRequest};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::input::CommentInput;
 use crate::ui::components::picker;
 use crate::ui::views::issue_detail::build_thread_picker_display;
 use crate::ui::{markdown, styles};
+use glab_core::domain::{Discussion, TrackedMergeRequest};
 
 #[derive(Default)]
 pub struct MrDetailState {

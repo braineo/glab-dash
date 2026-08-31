@@ -1,4 +1,4 @@
-use crate::gitlab::types::{Iteration, TrackedIssue, TrackedMergeRequest};
+use glab_core::domain::{Iteration, TrackedIssue, TrackedMergeRequest};
 
 /// Side-effect descriptors returned from update logic.
 ///

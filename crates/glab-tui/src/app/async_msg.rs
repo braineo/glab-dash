@@ -1,8 +1,9 @@
 //! TEA handle phase for async messages: process results from background tasks.
 
 use crate::cmd::Cmd;
-use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
+use glab_core::domain::{TrackedIssue, TrackedMergeRequest};
 
+use super::issue_actions;
 use super::{App, AsyncMsg, FetchState, View};
 
 impl App {
@@ -169,7 +170,7 @@ impl App {
                                 .selected_issue(&self.data.issues)
                                 .or_else(|| self.current_detail_issue())
                                 .map_or("opened".to_string(), |i| i.issue.state.clone());
-                            TrackedIssue::show_close_reopen_confirm(
+                            issue_actions::show_close_reopen_confirm(
                                 issue_id,
                                 iid,
                                 &item_state,
@@ -186,7 +187,7 @@ impl App {
                             if !is_background
                                 && let Some(statuses) = self.data.work_item_statuses.get(&project)
                             {
-                                TrackedIssue::build_status_chord(
+                                issue_actions::build_status_chord(
                                     &project,
                                     issue_id,
                                     iid,

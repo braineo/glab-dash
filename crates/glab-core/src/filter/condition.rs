@@ -1,4 +1,4 @@
-use crate::gitlab::types::{TrackedIssue, TrackedMergeRequest};
+use crate::domain::{TrackedIssue, TrackedMergeRequest};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Field {

@@ -4,7 +4,7 @@ use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::Deserialize;
 
 use crate::config::Config;
-use crate::gitlab::types::{
+use glab_core::domain::{
     ApprovalUser, Discussion, Issue, Iteration, MergeRequest, Milestone, Note, ProjectLabel,
     References, TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
 };
@@ -294,7 +294,7 @@ impl From<GqlMergeRequest> for MergeRequest {
         };
 
         let pipeline = gql.head_pipeline.and_then(|p| {
-            p.status.map(|status| crate::gitlab::types::Pipeline {
+            p.status.map(|status| glab_core::domain::Pipeline {
                 id: 0,
                 status: status.to_lowercase(),
                 ref_name: None,

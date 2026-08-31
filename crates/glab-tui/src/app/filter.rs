@@ -2,10 +2,10 @@
 
 use super::{App, Overlay, View};
 use crate::cmd::Cmd;
-use crate::filter::{Field, FilterCondition, Op};
 use crate::ui::components::chord_popup;
 use crate::ui::views::filter_editor;
 use crate::ui::views::list_model::UserFilter;
+use glab_core::filter::{Field, FilterCondition, Op};
 
 impl App {
     /// Returns a mutable reference to the `UserFilter` for the current view.
@@ -55,9 +55,9 @@ impl App {
         }
 
         // Built-in field sorts
-        let fields: &[crate::sort::SortField] = match kind {
-            "merge_request" => crate::sort::SortField::all_mr(),
-            _ => crate::sort::SortField::all_issue(),
+        let fields: &[glab_core::sort::SortField] = match kind {
+            "merge_request" => glab_core::sort::SortField::all_mr(),
+            _ => glab_core::sort::SortField::all_issue(),
         };
         for field in fields {
             labels.push(field.name().to_string());
@@ -118,16 +118,16 @@ impl App {
         value: &str,
     ) {
         let direction = if value.starts_with('↑') {
-            crate::sort::SortDirection::Asc
+            glab_core::sort::SortDirection::Asc
         } else {
-            crate::sort::SortDirection::Desc
+            glab_core::sort::SortDirection::Desc
         };
 
-        let Some(field) = crate::sort::SortField::from_str(field_name) else {
+        let Some(field) = glab_core::sort::SortField::from_str(field_name) else {
             return;
         };
 
-        let specs = vec![crate::sort::SortSpec {
+        let specs = vec![glab_core::sort::SortSpec {
             field,
             direction,
             label_scope: label_scope.map(String::from),
@@ -135,7 +135,7 @@ impl App {
         self.apply_sort_specs(specs);
     }
 
-    fn apply_sort_specs(&mut self, specs: Vec<crate::sort::SortSpec>) {
+    fn apply_sort_specs(&mut self, specs: Vec<glab_core::sort::SortSpec>) {
         self.active_filter_mut().sort_specs = specs;
         self.ui.dirty.view_state = true;
         self.ui.pending_cmds.push(Cmd::PersistViewState);
@@ -153,9 +153,9 @@ impl App {
                     .specs
                     .iter()
                     .filter_map(|s| {
-                        let field = crate::sort::SortField::from_str(&s.field)?;
-                        let direction = crate::sort::SortDirection::from_str(&s.direction)?;
-                        Some(crate::sort::SortSpec {
+                        let field = glab_core::sort::SortField::from_str(&s.field)?;
+                        let direction = glab_core::sort::SortDirection::from_str(&s.direction)?;
+                        Some(glab_core::sort::SortSpec {
                             field,
                             direction,
                             label_scope: s.label_scope.clone(),

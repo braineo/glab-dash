@@ -1,16 +1,44 @@
 //! Key handling for focused merge requests.
+//!
+//! `TrackedMergeRequest` lives in `glab-core`, so these are hung off it with
+//! the [`MrActions`] extension trait rather than an inherent impl.
 
 use crossterm::event::KeyEvent;
 
 use crate::cmd::{Cmd, EventResult};
-use crate::gitlab::types::{TrackedMergeRequest, User};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
+use glab_core::domain::{TrackedMergeRequest, User};
 
 use super::{AppCtx, AppData, Overlay, UiState, View};
 
-impl TrackedMergeRequest {
-    pub fn handle_action_key(
+/// Merge-request actions that need the app's context, ui and data. Implemented
+/// for `TrackedMergeRequest`, which this crate does not own.
+pub trait MrActions {
+    /// Handle a key press against the MR-action bindings.
+    fn handle_action_key(
+        &self,
+        key: &KeyEvent,
+        ctx: &AppCtx,
+        data: &AppData,
+        ui: &mut UiState,
+    ) -> EventResult;
+    /// Replace the MR's labels and push the change to the API.
+    fn update_labels(&mut self, labels: &[String], ctx: &AppCtx, ui: &mut UiState);
+    /// Assign the MR to `username`, optimistically updating in place.
+    fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState);
+    /// Post `body` as a new comment or as a reply to an existing thread.
+    fn submit_comment(
+        &self,
+        body: &str,
+        reply_discussion_id: Option<String>,
+        ctx: &AppCtx,
+        ui: &mut UiState,
+    );
+}
+
+impl MrActions for TrackedMergeRequest {
+    fn handle_action_key(
         &self,
         key: &KeyEvent,
         ctx: &AppCtx,
@@ -137,7 +165,7 @@ impl TrackedMergeRequest {
     // ── Mutations (called from overlay completion handlers) ──────────
 
     /// Update labels via REST API.
-    pub fn update_labels(&mut self, labels: &[String], ctx: &AppCtx, ui: &mut UiState) {
+    fn update_labels(&mut self, labels: &[String], ctx: &AppCtx, ui: &mut UiState) {
         self.mr.labels = labels.to_vec();
         let project = self.project_path.clone();
         let iid = self.mr.iid;
@@ -152,7 +180,7 @@ impl TrackedMergeRequest {
     }
 
     /// Update assignee via REST API.
-    pub fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
+    fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
         let placeholder = User {
             id: 0,
             username: username.to_string(),
@@ -190,7 +218,7 @@ impl TrackedMergeRequest {
     }
 
     /// Submit a comment or reply.
-    pub fn submit_comment(
+    fn submit_comment(
         &self,
         body: &str,
         reply_discussion_id: Option<String>,

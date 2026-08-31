@@ -9,11 +9,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::cmd::{Cmd, Dirty, EventResult};
 use crate::config::{Config, KanbanColumnConfig};
-use crate::gitlab::types::{Iteration, TrackedIssue, TrackedMergeRequest, WorkItemStatus};
 use crate::keybindings::{self, KeyAction};
-use crate::sort;
 use crate::ui::styles;
 use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
+use glab_core::domain::{Iteration, TrackedIssue, TrackedMergeRequest, WorkItemStatus};
+use glab_core::sort;
 
 use std::collections::HashMap;
 
@@ -367,7 +367,7 @@ impl IterationBoardState {
         for col in &mut self.columns {
             col.list.indices.retain(|&i| {
                 let item = &issues[i];
-                if !crate::filter::condition::matches_issue(
+                if !glab_core::filter::condition::matches_issue(
                     item,
                     &self.filter.conditions,
                     me,
@@ -1462,7 +1462,7 @@ pub fn compute_health(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gitlab::types::Issue;
+    use glab_core::domain::Issue;
 
     fn make_issue(id: u64, iteration_id: Option<&str>) -> TrackedIssue {
         TrackedIssue {
@@ -1485,7 +1485,7 @@ mod tests {
                 references: None,
                 custom_status: None,
                 custom_status_category: None,
-                iteration: iteration_id.map(|id| crate::gitlab::types::Iteration {
+                iteration: iteration_id.map(|id| glab_core::domain::Iteration {
                     id: id.to_string(),
                     title: "Sprint 1".to_string(),
                     start_date: None,
@@ -1502,7 +1502,7 @@ mod tests {
         let mut board = IterationBoardState::default();
         assert!(board.columns.is_empty());
 
-        let iter = crate::gitlab::types::Iteration {
+        let iter = glab_core::domain::Iteration {
             id: "gid://gitlab/Iteration/1".to_string(),
             title: "Sprint 1".to_string(),
             start_date: Some("2026-04-01".to_string()),
@@ -1543,7 +1543,7 @@ mod tests {
             ..Default::default()
         };
 
-        let iter = crate::gitlab::types::Iteration {
+        let iter = glab_core::domain::Iteration {
             id: "gid://gitlab/Iteration/1".to_string(),
             title: "Sprint 1".to_string(),
             start_date: None,

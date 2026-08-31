@@ -6,11 +6,11 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 use crate::app::{Overlay, ThreadPickerInfo};
 use crate::cmd::EventResult;
-use crate::gitlab::types::{Discussion, TrackedIssue};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::input::CommentInput;
 use crate::ui::components::picker;
 use crate::ui::{markdown, styles};
+use glab_core::domain::{Discussion, TrackedIssue};
 
 #[derive(Default)]
 pub struct IssueDetailState {
