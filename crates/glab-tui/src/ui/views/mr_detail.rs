@@ -16,7 +16,7 @@ use glab_core::domain::{Discussion, TrackedMergeRequest};
 #[derive(Default)]
 pub struct MrDetailState {
     pub project: String,
-    pub iid: u64,
+    pub iid: String,
     pub scroll: u16,
     pub discussions: Vec<Discussion>,
     pub loading_notes: bool,
@@ -82,16 +82,16 @@ impl MrDetailState {
 
     pub fn reset(&mut self) {
         self.project.clear();
-        self.iid = 0;
+        self.iid.clear();
         self.scroll = 0;
         self.discussions.clear();
         self.loading_notes = false;
     }
 
-    pub fn open(&mut self, project: &str, iid: u64) {
+    pub fn open(&mut self, project: &str, iid: &str) {
         self.reset();
         self.project = project.to_string();
-        self.iid = iid;
+        self.iid = iid.to_string();
         self.loading_notes = true;
     }
 
@@ -163,14 +163,10 @@ pub fn render(
         .mr
         .approved_by
         .iter()
-        .map(|a| a.user.username.as_str())
+        .map(|a| a.username.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let pipeline_status = item
-        .mr
-        .head_pipeline
-        .as_ref()
-        .map_or("none", |p| p.status.as_str());
+    let pipeline_status = item.mr.pipeline_status().unwrap_or("none");
 
     let pipeline_icon = match pipeline_status {
         "success" | "passed" => styles::ICON_PIPELINE_OK,

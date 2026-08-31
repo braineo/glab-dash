@@ -40,32 +40,32 @@ pub enum Cmd {
 
     // ── API mutations (simple spawn-and-forget) ──────────────────────
     SpawnCloseIssue {
-        issue_id: u64,
+        issue_id: String,
     },
     SpawnReopenIssue {
-        issue_id: u64,
+        issue_id: String,
     },
     SpawnCloseMr {
         project: String,
-        iid: u64,
+        iid: String,
     },
     SpawnApproveMr {
         project: String,
-        iid: u64,
+        iid: String,
     },
     SpawnMergeMr {
         project: String,
-        iid: u64,
+        iid: String,
     },
     SpawnMoveIteration {
-        issue_id: u64,
+        issue_id: String,
         target_gid: Option<String>,
         old_iteration: Option<Iteration>,
     },
     SpawnSetStatus {
         project: String,
-        issue_id: u64,
-        iid: u64,
+        issue_id: String,
+        iid: String,
         status_id: String,
         status_display: String,
     },

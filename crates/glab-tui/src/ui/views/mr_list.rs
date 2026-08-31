@@ -169,11 +169,7 @@ pub fn render(
             };
             let author = item.mr.author.as_ref().map_or("-", |a| a.username.as_str());
 
-            let pipeline_status = item
-                .mr
-                .head_pipeline
-                .as_ref()
-                .map_or("-", |p| p.status.as_str());
+            let pipeline_status = item.mr.pipeline_status().unwrap_or("-");
             let pipeline_icon = match pipeline_status {
                 "success" | "passed" => styles::ICON_PIPELINE_OK,
                 "failed" => styles::ICON_PIPELINE_FAIL,
@@ -197,13 +193,19 @@ pub fn render(
                 .join(",");
 
             // Diff: green additions, red deletions
-            let diff_cell = match (item.mr.diff_additions, item.mr.diff_deletions) {
-                (Some(a), Some(d)) => Cell::from(Line::from(vec![
-                    Span::styled(format!("+{a}"), Style::default().fg(styles::GREEN)),
+            let diff_cell = match item.mr.diff_stats() {
+                Some(d) => Cell::from(Line::from(vec![
+                    Span::styled(
+                        format!("+{}", d.additions),
+                        Style::default().fg(styles::GREEN),
+                    ),
                     Span::raw(" "),
-                    Span::styled(format!("-{d}"), Style::default().fg(styles::RED)),
+                    Span::styled(
+                        format!("-{}", d.deletions),
+                        Style::default().fg(styles::RED),
+                    ),
                 ])),
-                _ => Cell::default(),
+                None => Cell::default(),
             };
 
             // Approval: green check, red uncheck
@@ -224,12 +226,12 @@ pub fn render(
             };
 
             // Threads: unresolved in orange, total in dim
-            let threads_cell = match (item.mr.unresolved_threads, item.mr.user_notes_count) {
-                (Some(u), n) if u > 0 && n > 0 => Cell::from(Line::from(vec![
+            let threads_cell = match (item.mr.unresolved_threads(), item.mr.notes_count()) {
+                (u, n) if u > 0 && n > 0 => Cell::from(Line::from(vec![
                     Span::styled(format!("{u}!"), Style::default().fg(styles::ORANGE)),
                     Span::styled(format!(" {n}"), Style::default().fg(styles::TEXT_DIM)),
                 ])),
-                (Some(u), 0) if u > 0 => Cell::from(Span::styled(
+                (u, 0) if u > 0 => Cell::from(Span::styled(
                     format!("{u}!"),
                     Style::default().fg(styles::ORANGE),
                 )),
@@ -322,11 +324,7 @@ pub fn render(
                 spans.extend(styles::label_spans(label, color));
             }
         }
-        let pipeline_status = item
-            .mr
-            .head_pipeline
-            .as_ref()
-            .map_or("none", |p| p.status.as_str());
+        let pipeline_status = item.mr.pipeline_status().unwrap_or("none");
 
         // Build detail line: branch info, pipeline, approvals, diff stats
         let mut detail_spans = vec![
@@ -352,7 +350,7 @@ pub fn render(
             .mr
             .approved_by
             .iter()
-            .map(|a| a.user.username.as_str())
+            .map(|a| a.username.as_str())
             .collect();
         if !approved_by.is_empty() {
             detail_spans.push(Span::styled("  Approved: ", styles::help_desc_style()));
@@ -363,17 +361,18 @@ pub fn render(
         }
 
         // Diff stats
-        if let (Some(a), Some(d)) = (item.mr.diff_additions, item.mr.diff_deletions) {
+        if let Some(stats) = item.mr.diff_stats() {
             detail_spans.push(Span::styled("  Diff: ", styles::help_desc_style()));
             detail_spans.push(Span::styled(
-                format!("+{a}"),
+                format!("+{}", stats.additions),
                 ratatui::style::Style::default().fg(styles::GREEN),
             ));
             detail_spans.push(Span::styled(
-                format!(" -{d}"),
+                format!(" -{}", stats.deletions),
                 ratatui::style::Style::default().fg(styles::RED),
             ));
-            if let Some(f) = item.mr.diff_file_count {
+            {
+                let f = stats.file_count;
                 detail_spans.push(Span::styled(
                     format!(" ({f} files)"),
                     styles::help_desc_style(),

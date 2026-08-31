@@ -425,8 +425,7 @@ fn render_column(
         .map(|item| {
             let status_icon = item
                 .issue
-                .custom_status
-                .as_deref()
+                .status_name()
                 .map_or(styles::ICON_UNCHECK, styles::status_icon);
             let iid = format!("#{}", item.issue.iid);
             let assignee = item
@@ -445,12 +444,7 @@ fn render_column(
             Row::new(vec![
                 Cell::from(Span::styled(
                     status_icon,
-                    styles::status_style(
-                        item.issue
-                            .custom_status
-                            .as_deref()
-                            .unwrap_or(&item.issue.state),
-                    ),
+                    styles::status_style(item.issue.status_name().unwrap_or(&item.issue.state)),
                 )),
                 Cell::from(Span::styled(iid, Style::default().fg(styles::TEXT_DIM))),
                 Cell::from(Span::styled(
@@ -500,8 +494,8 @@ fn render_column(
 }
 
 pub fn iteration_label(iter: &Iteration) -> String {
-    if !iter.title.is_empty() {
-        return iter.title.clone();
+    if let Some(title) = iter.title.as_deref().filter(|t| !t.is_empty()) {
+        return title.to_string();
     }
     // Titles are often null for auto-generated iterations — use date range
     match (&iter.start_date, &iter.due_date) {

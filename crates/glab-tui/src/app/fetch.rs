@@ -24,9 +24,16 @@ impl App {
             let project = project.clone();
             tokio::spawn(async move {
                 let result = client.fetch_work_item_statuses(&project).await;
-                // Reuse StatusesLoaded with sentinel values (issue_id=0, iid=0)
-                // to indicate this is a background fetch, not a chord popup trigger.
-                let _ = tx.send(AsyncMsg::StatusesLoaded(result, project, 0, 0, false));
+                // Reuse StatusesLoaded with sentinel values (issue_id=0, empty
+                // iid) to indicate this is a background fetch, not a chord
+                // popup trigger.
+                let _ = tx.send(AsyncMsg::StatusesLoaded(
+                    result,
+                    project,
+                    String::new(),
+                    String::new(),
+                    false,
+                ));
             });
         }
     }
@@ -75,8 +82,12 @@ impl App {
         // Collect external projects that have open issues we track, so we can
         // detect state changes (closed, reassigned) even if those issues are
         // no longer assigned to a team member.
-        let tracked_ids: std::collections::HashSet<u64> =
-            self.data.issues.iter().map(|i| i.issue.id).collect();
+        let tracked_ids: std::collections::HashSet<String> = self
+            .data
+            .issues
+            .iter()
+            .map(|i| i.issue.id.clone())
+            .collect();
         let external_projects: Vec<String> = self
             .data
             .issues
@@ -94,21 +105,20 @@ impl App {
                 client.fetch_assigned_issues(&members, "all", ua),
                 client.fetch_external_project_issues(&external_projects, ua),
             );
-            let result =
-                match (tracking, assigned, external) {
-                    (Ok(mut t), Ok(a), Ok(ext)) => {
-                        let mut seen: std::collections::HashSet<u64> =
-                            t.iter().map(|i| i.issue.id).collect();
-                        t.extend(a.into_iter().filter(|i| seen.insert(i.issue.id)));
-                        // Only merge external issues we already track — don't
-                        // pull in new issues from those projects.
-                        t.extend(ext.into_iter().filter(|i| {
-                            tracked_ids.contains(&i.issue.id) && seen.insert(i.issue.id)
-                        }));
-                        Ok(t)
-                    }
-                    (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
-                };
+            let result = match (tracking, assigned, external) {
+                (Ok(mut t), Ok(a), Ok(ext)) => {
+                    let mut seen: std::collections::HashSet<String> =
+                        t.iter().map(|i| i.issue.id.clone()).collect();
+                    t.extend(a.into_iter().filter(|i| seen.insert(i.issue.id.clone())));
+                    // Only merge external issues we already track — don't
+                    // pull in new issues from those projects.
+                    t.extend(ext.into_iter().filter(|i| {
+                        tracked_ids.contains(&i.issue.id) && seen.insert(i.issue.id.clone())
+                    }));
+                    Ok(t)
+                }
+                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
+            };
             let _ = tx.send(AsyncMsg::IssuesLoaded(result, incremental));
         });
     }
@@ -190,22 +200,24 @@ impl App {
         });
     }
 
-    pub(super) fn fetch_notes_for_issue(&self, project: &str, iid: u64) {
+    pub(super) fn fetch_notes_for_issue(&self, project: &str, iid: &str) {
         let client = self.ctx.client.clone();
         let project = project.to_string();
+        let iid = iid.to_string();
         let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
-            let result = client.list_issue_discussions(&project, iid).await;
+            let result = client.list_issue_discussions(&project, &iid).await;
             let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
         });
     }
 
-    pub(super) fn fetch_notes_for_mr(&self, project: &str, iid: u64) {
+    pub(super) fn fetch_notes_for_mr(&self, project: &str, iid: &str) {
         let client = self.ctx.client.clone();
         let project = project.to_string();
+        let iid = iid.to_string();
         let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
-            let result = client.list_mr_discussions(&project, iid).await;
+            let result = client.list_mr_discussions(&project, &iid).await;
             let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
         });
     }
@@ -227,7 +239,7 @@ impl App {
         let current_id = current_iter.id.clone();
 
         // Collect issues in the current iteration that we haven't cached yet
-        let items: Vec<(String, String, u64)> = self
+        let items: Vec<(String, String, String)> = self
             .data
             .issues
             .iter()
@@ -247,7 +259,7 @@ impl App {
                     .first()
                     .cloned()
                     .unwrap_or_else(|| i.project_path.clone());
-                (namespace, i.issue.iid.to_string(), i.issue.id)
+                (namespace, i.issue.iid.clone(), i.issue.id.clone())
             })
             .collect();
 

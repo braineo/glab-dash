@@ -29,6 +29,18 @@ pub async fn run() -> Result<()> {
         Err(e) => tracing::error!(error = ?e, "debug: assigned issues ✗"),
     }
 
+    tracing::info!("debug: fetching tracking MRs");
+    match client.fetch_tracking_mrs("opened", None).await {
+        Ok(mrs) => tracing::info!(count = mrs.len(), "debug: tracking MRs ✓"),
+        Err(e) => tracing::error!(error = ?e, "debug: tracking MRs ✗"),
+    }
+
+    tracing::info!(members = members.len(), "debug: fetching external MRs");
+    match client.fetch_external_mrs(&members, "opened", None).await {
+        Ok(mrs) => tracing::info!(count = mrs.len(), "debug: external MRs ✓"),
+        Err(e) => tracing::error!(error = ?e, "debug: external MRs ✗"),
+    }
+
     tracing::info!("debug: fetching work item statuses");
     match client
         .fetch_work_item_statuses(config.primary_tracking_project())

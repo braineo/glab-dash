@@ -8,7 +8,7 @@ use crossterm::event::KeyEvent;
 use crate::cmd::{Cmd, EventResult};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
-use glab_core::domain::{TrackedMergeRequest, User};
+use glab_core::domain::{ProjectLabel, TrackedMergeRequest, User};
 
 use super::{AppCtx, AppData, Overlay, UiState, View};
 
@@ -24,7 +24,13 @@ pub trait MrActions {
         ui: &mut UiState,
     ) -> EventResult;
     /// Replace the MR's labels and push the change to the API.
-    fn update_labels(&mut self, labels: &[String], ctx: &AppCtx, ui: &mut UiState);
+    fn update_labels(
+        &mut self,
+        labels: &[String],
+        all_labels: &[ProjectLabel],
+        ctx: &AppCtx,
+        ui: &mut UiState,
+    );
     /// Assign the MR to `username`, optimistically updating in place.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState);
     /// Post `body` as a new comment or as a reply to an existing thread.
@@ -49,7 +55,9 @@ impl MrActions for TrackedMergeRequest {
             if keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
                 == Some(KeyAction::OpenBrowser)
             {
-                let _ = open::that_detached(&self.mr.web_url);
+                if let Some(url) = &self.mr.web_url {
+                    let _ = open::that_detached(url);
+                }
                 return EventResult::Consumed;
             }
             return EventResult::Bubble;
@@ -58,7 +66,7 @@ impl MrActions for TrackedMergeRequest {
         match action {
             KeyAction::ToggleState => {
                 let project = self.project_path.clone();
-                let iid = self.mr.iid;
+                let iid = self.mr.iid.clone();
                 ui.overlay = Overlay::Confirm {
                     title: "Close MR".to_string(),
                     message: format!("Close MR !{iid}?"),
@@ -80,7 +88,7 @@ impl MrActions for TrackedMergeRequest {
             }
             KeyAction::Approve => {
                 let project = self.project_path.clone();
-                let iid = self.mr.iid;
+                let iid = self.mr.iid.clone();
                 ui.overlay = Overlay::Confirm {
                     title: "Approve MR".to_string(),
                     message: format!("Approve MR !{iid}?"),
@@ -93,7 +101,7 @@ impl MrActions for TrackedMergeRequest {
             }
             KeyAction::Merge => {
                 let project = self.project_path.clone();
-                let iid = self.mr.iid;
+                let iid = self.mr.iid.clone();
                 ui.overlay = Overlay::Confirm {
                     title: "Merge MR".to_string(),
                     message: format!("Merge MR !{iid}?"),
@@ -164,60 +172,53 @@ impl MrActions for TrackedMergeRequest {
 
     // ── Mutations (called from overlay completion handlers) ──────────
 
-    /// Update labels via REST API.
-    fn update_labels(&mut self, labels: &[String], ctx: &AppCtx, ui: &mut UiState) {
+    /// Replace labels via `mergeRequestSetLabels`.
+    fn update_labels(
+        &mut self,
+        labels: &[String],
+        all_labels: &[ProjectLabel],
+        ctx: &AppCtx,
+        ui: &mut UiState,
+    ) {
         self.mr.labels = labels.to_vec();
         let project = self.project_path.clone();
-        let iid = self.mr.iid;
-        let payload = serde_json::json!({"labels": labels.join(",")});
+        let iid = self.mr.iid.clone();
+        // The mutation takes label GIDs, so resolve each title against the
+        // project's label list; a title with no match is dropped.
+        let label_ids: Vec<u64> = labels
+            .iter()
+            .filter_map(|name| all_labels.iter().find(|l| l.name == *name).map(|l| l.id))
+            .collect();
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         tokio::spawn(async move {
-            let result = client.update_mr(&project, iid, payload).await;
+            let result = client.set_mr_labels(&project, &iid, &label_ids).await;
             let _ = tx.send(super::AsyncMsg::MrUpdated(result, project));
         });
         ui.dirty.mrs = true;
     }
 
-    /// Update assignee via REST API.
+    /// Replace assignees via `mergeRequestSetAssignees`, which takes usernames
+    /// directly — no `search_users` round-trip needed.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
-        let placeholder = User {
-            id: 0,
+        self.mr.assignees = vec![User {
+            id: String::new(),
             username: username.to_string(),
             name: username.to_string(),
-            avatar_url: None,
-            web_url: String::new(),
-        };
-        self.mr.assignees = vec![placeholder];
+        }];
 
         let project = self.project_path.clone();
-        let iid = self.mr.iid;
+        let iid = self.mr.iid.clone();
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
-        let username = username.to_string();
+        let usernames = vec![username.to_string()];
         tokio::spawn(async move {
-            let users = client.search_users(&username).await;
-            match users {
-                Ok(users) => {
-                    if let Some(user) = users.first() {
-                        let payload = serde_json::json!({"assignee_ids": [user.id]});
-                        let result = client.update_mr(&project, iid, payload).await;
-                        let _ = tx.send(super::AsyncMsg::MrUpdated(result, project));
-                    } else {
-                        let _ = tx.send(super::AsyncMsg::ActionDone(Err(anyhow::anyhow!(
-                            "User '{username}' not found"
-                        ))));
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
-                }
-            }
+            let result = client.set_mr_assignees(&project, &iid, &usernames).await;
+            let _ = tx.send(super::AsyncMsg::MrUpdated(result, project));
         });
         ui.dirty.mrs = true;
     }
 
-    /// Submit a comment or reply.
     fn submit_comment(
         &self,
         body: &str,
@@ -229,23 +230,23 @@ impl MrActions for TrackedMergeRequest {
         let tx = ctx.async_tx.clone();
         let body = body.to_string();
         let project = self.project_path.clone();
-        let iid = self.mr.iid;
+        let iid = self.mr.iid.clone();
 
         ui.loading = true;
         tokio::spawn(async move {
             let create_result = match &reply_discussion_id {
                 Some(disc_id) => {
                     client
-                        .reply_to_mr_discussion(&project, iid, disc_id, &body)
+                        .reply_to_mr_discussion(&project, &iid, disc_id, &body)
                         .await
                 }
-                None => client.create_mr_note(&project, iid, &body).await,
+                None => client.create_mr_note(&project, &iid, &body).await,
             };
             if let Err(e) = create_result {
                 let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
                 return;
             }
-            let discussions = client.list_mr_discussions(&project, iid).await;
+            let discussions = client.list_mr_discussions(&project, &iid).await;
             let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
         });
     }

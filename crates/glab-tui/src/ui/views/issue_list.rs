@@ -192,8 +192,8 @@ pub fn render(
             let age = list_model::format_age(&item.issue.updated_at, now);
 
             // Show custom status if available, otherwise fall back to state
-            let (state_icon, state_text) = if let Some(ref status) = item.issue.custom_status {
-                (styles::status_icon(status), status.clone())
+            let (state_icon, state_text) = if let Some(status) = item.issue.status_name() {
+                (styles::status_icon(status), status.to_string())
             } else {
                 let icon = match item.issue.state.as_str() {
                     "opened" => styles::ICON_OPEN,
@@ -203,7 +203,7 @@ pub fn render(
                 (icon, item.issue.state.clone())
             };
 
-            let state_style = if item.issue.custom_status.is_some() {
+            let state_style = if item.issue.status_name().is_some() {
                 styles::status_style(&state_text)
             } else {
                 styles::state_style(&item.issue.state)

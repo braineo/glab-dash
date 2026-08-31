@@ -5,29 +5,11 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use glab_core::domain::{
-    ApprovalUser, Discussion, Issue, Iteration, MergeRequest, Milestone, Note, ProjectLabel,
-    References, TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
+    Discussion, Issue, Iteration, MergeRequest, Milestone, Note, ProjectLabel, StatusValue,
+    TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
 };
 
 // ── GraphQL response types (serde-driven) ──
-
-fn gid_to_u64(gid: &str) -> u64 {
-    gid.rsplit('/')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| panic!("invalid GID: {gid}"))
-}
-
-fn deserialize_string_u64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
-    let v = serde_json::Value::deserialize(d)?;
-    match &v {
-        serde_json::Value::String(s) => s.parse().map_err(serde::de::Error::custom),
-        serde_json::Value::Number(n) => n
-            .as_u64()
-            .ok_or_else(|| serde::de::Error::custom("not u64")),
-        _ => Err(serde::de::Error::custom("expected string or number")),
-    }
-}
 
 // ── GraphQL serde types ──
 
@@ -74,12 +56,11 @@ struct GqlNamespace {
 #[derive(Deserialize)]
 struct GqlWorkItem {
     id: String,
-    #[serde(deserialize_with = "deserialize_string_u64")]
-    iid: u64,
+    iid: String,
     title: String,
     state: String,
     #[serde(default)]
-    author: Option<GqlUser>,
+    author: Option<User>,
     #[serde(rename = "createdAt")]
     created_at: DateTime<FixedOffset>,
     #[serde(rename = "updatedAt")]
@@ -105,46 +86,8 @@ struct GqlItemNamespace {
 }
 
 #[derive(Deserialize, Default)]
-struct GqlUser {
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    username: String,
-    #[serde(default)]
-    name: String,
-    #[serde(default, rename = "webUrl")]
-    web_url: String,
-}
-
-#[derive(Deserialize, Default)]
 struct GqlLabel {
     title: String,
-}
-
-#[derive(Deserialize)]
-struct GqlMilestone {
-    id: String,
-    title: String,
-    #[serde(default)]
-    state: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct GqlStatusValue {
-    name: String,
-    category: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct GqlIteration {
-    id: String,
-    /// Nullable in GitLab schema — iterations may have no title.
-    title: Option<String>,
-    #[serde(default, rename = "startDate")]
-    start_date: Option<String>,
-    #[serde(default, rename = "dueDate")]
-    due_date: Option<String>,
-    state: String,
 }
 
 /// Serde flattens all widget types into one struct.
@@ -152,17 +95,17 @@ struct GqlIteration {
 #[derive(Deserialize, Default)]
 struct GqlWidget {
     #[serde(default)]
-    assignees: Option<GqlConnection<GqlUser>>,
+    assignees: Option<GqlConnection<User>>,
     #[serde(default)]
     labels: Option<GqlConnection<GqlLabel>>,
     #[serde(default)]
-    milestone: Option<GqlMilestone>,
+    milestone: Option<Milestone>,
     #[serde(default)]
-    status: Option<GqlStatusValue>,
+    status: Option<StatusValue>,
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
-    iteration: Option<GqlIteration>,
+    iteration: Option<Iteration>,
     #[serde(default)]
     weight: Option<u32>,
 }
@@ -204,66 +147,7 @@ struct GqlProjectMrData {
 #[derive(Deserialize)]
 struct GqlProjectMrs {
     #[serde(default, rename = "mergeRequests")]
-    merge_requests: GqlConnection<GqlMergeRequest>,
-}
-
-/// All fields here are explicitly requested in `MR_FIELDS`.
-/// No `#[serde(default)]` on queried fields — if deserialization fails
-/// the error surfaces instead of silently producing None/0.
-#[derive(Deserialize)]
-struct GqlMergeRequest {
-    id: String,
-    #[serde(deserialize_with = "deserialize_string_u64")]
-    iid: u64,
-    title: String,
-    state: String,
-    draft: bool,
-    author: Option<GqlUser>,
-    assignees: GqlConnection<GqlUser>,
-    reviewers: GqlConnection<GqlUser>,
-    labels: GqlConnection<GqlLabel>,
-    milestone: Option<GqlMilestone>,
-    #[serde(rename = "createdAt")]
-    created_at: DateTime<FixedOffset>,
-    #[serde(rename = "updatedAt")]
-    updated_at: DateTime<FixedOffset>,
-    #[serde(rename = "webUrl")]
-    web_url: String,
-    description: Option<String>,
-    #[serde(rename = "userNotesCount")]
-    user_notes_count: u64,
-    #[serde(rename = "sourceBranch")]
-    source_branch: String,
-    #[serde(rename = "targetBranch")]
-    target_branch: String,
-    #[serde(rename = "mergeStatusEnum")]
-    merge_status_enum: Option<String>,
-    reference: Option<String>,
-    #[serde(rename = "diffStatsSummary")]
-    diff_stats_summary: Option<GqlDiffStatsSummary>,
-    approved: Option<bool>,
-    #[serde(rename = "approvedBy")]
-    approved_by: GqlConnection<GqlUser>,
-    #[serde(rename = "headPipeline")]
-    head_pipeline: Option<GqlPipelineRef>,
-    #[serde(rename = "resolvableDiscussionsCount")]
-    resolvable_discussions_count: u64,
-    #[serde(rename = "resolvedDiscussionsCount")]
-    resolved_discussions_count: u64,
-}
-
-#[derive(Deserialize)]
-struct GqlDiffStatsSummary {
-    additions: u64,
-    deletions: u64,
-    #[serde(rename = "fileCount")]
-    file_count: u64,
-}
-
-#[derive(Deserialize)]
-struct GqlPipelineRef {
-    #[serde(default)]
-    status: Option<String>,
+    merge_requests: GqlConnection<MergeRequest>,
 }
 
 #[derive(Deserialize)]
@@ -279,240 +163,44 @@ struct GqlUserMrs {
         alias = "assignedMergeRequests",
         alias = "reviewRequestedMergeRequests"
     )]
-    mrs: GqlConnection<GqlMergeRequest>,
-}
-
-impl From<GqlMergeRequest> for MergeRequest {
-    fn from(gql: GqlMergeRequest) -> Self {
-        let unresolved = gql
-            .resolvable_discussions_count
-            .saturating_sub(gql.resolved_discussions_count);
-
-        let (diff_additions, diff_deletions, diff_file_count) = match gql.diff_stats_summary {
-            Some(ds) => (Some(ds.additions), Some(ds.deletions), Some(ds.file_count)),
-            None => (None, None, None),
-        };
-
-        let pipeline = gql.head_pipeline.and_then(|p| {
-            p.status.map(|status| glab_core::domain::Pipeline {
-                id: 0,
-                status: status.to_lowercase(),
-                ref_name: None,
-                web_url: String::new(),
-            })
-        });
-
-        MergeRequest {
-            id: gid_to_u64(&gql.id),
-            iid: gql.iid,
-            title: gql.title,
-            state: gql.state,
-            author: gql.author.map(|u| User {
-                id: gid_to_u64(&u.id),
-                username: u.username,
-                name: u.name,
-                avatar_url: None,
-                web_url: u.web_url,
-            }),
-            assignees: gql
-                .assignees
-                .nodes
-                .into_iter()
-                .map(|u| User {
-                    id: gid_to_u64(&u.id),
-                    username: u.username,
-                    name: u.name,
-                    avatar_url: None,
-                    web_url: u.web_url,
-                })
-                .collect(),
-            reviewers: gql
-                .reviewers
-                .nodes
-                .into_iter()
-                .map(|u| User {
-                    id: gid_to_u64(&u.id),
-                    username: u.username,
-                    name: u.name,
-                    avatar_url: None,
-                    web_url: u.web_url,
-                })
-                .collect(),
-            labels: gql.labels.nodes.into_iter().map(|l| l.title).collect(),
-            milestone: gql.milestone.map(|m| Milestone {
-                id: gid_to_u64(&m.id),
-                title: m.title,
-                state: m.state.unwrap_or_default(),
-            }),
-            created_at: gql.created_at.with_timezone(&Utc),
-            updated_at: gql.updated_at.with_timezone(&Utc),
-            web_url: gql.web_url,
-            description: gql.description,
-            draft: gql.draft,
-            work_in_progress: false,
-            merge_status: gql.merge_status_enum,
-            source_branch: gql.source_branch,
-            target_branch: gql.target_branch,
-            head_pipeline: pipeline,
-            user_notes_count: gql.user_notes_count,
-            references: gql.reference.map(|r| References { full_ref: r }),
-            approved_by: gql
-                .approved_by
-                .nodes
-                .into_iter()
-                .map(|u| ApprovalUser {
-                    user: User {
-                        id: gid_to_u64(&u.id),
-                        username: u.username,
-                        name: u.name,
-                        avatar_url: None,
-                        web_url: u.web_url,
-                    },
-                })
-                .collect(),
-            diff_additions,
-            diff_deletions,
-            diff_file_count,
-            approved: gql.approved,
-            unresolved_threads: Some(unresolved),
-        }
-    }
+    mrs: GqlConnection<MergeRequest>,
 }
 
 // ── Root issues query (for assigned issues outside tracking namespace) ──
 
 #[derive(Deserialize)]
 struct GqlRootIssuesData {
-    issues: GqlConnection<GqlRootIssue>,
-}
-
-/// Issue from the root `issues` query — has assignees/labels/status as direct fields.
-#[derive(Deserialize)]
-struct GqlRootIssue {
-    id: String,
-    #[serde(deserialize_with = "deserialize_string_u64")]
-    iid: u64,
-    title: String,
-    state: String,
-    #[serde(default)]
-    author: Option<GqlUser>,
-    #[serde(default)]
-    assignees: GqlConnection<GqlUser>,
-    #[serde(default)]
-    labels: GqlConnection<GqlLabel>,
-    #[serde(default)]
-    milestone: Option<GqlMilestone>,
-    #[serde(rename = "createdAt")]
-    created_at: DateTime<FixedOffset>,
-    #[serde(rename = "updatedAt")]
-    updated_at: DateTime<FixedOffset>,
-    #[serde(rename = "closedAt")]
-    closed_at: Option<DateTime<FixedOffset>>,
-    #[serde(rename = "webUrl")]
-    web_url: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    reference: Option<String>,
-    #[serde(default)]
-    status: Option<GqlStatusValue>,
-    #[serde(default)]
-    iteration: Option<GqlIteration>,
-    #[serde(default)]
-    weight: Option<u32>,
-}
-
-impl From<GqlRootIssue> for Issue {
-    fn from(g: GqlRootIssue) -> Self {
-        let to_user = |u: GqlUser| User {
-            id: gid_to_u64(&u.id),
-            username: u.username,
-            name: u.name,
-            avatar_url: None,
-            web_url: u.web_url,
-        };
-        Issue {
-            id: gid_to_u64(&g.id),
-            iid: g.iid,
-            title: g.title,
-            state: g.state, // already "opened"/"closed"
-            author: g.author.map(&to_user),
-            assignees: g.assignees.nodes.into_iter().map(&to_user).collect(),
-            labels: g.labels.nodes.into_iter().map(|l| l.title).collect(),
-            milestone: g.milestone.map(|m| Milestone {
-                id: gid_to_u64(&m.id),
-                title: m.title,
-                state: m.state.unwrap_or_else(|| "active".to_string()),
-            }),
-            created_at: g.created_at.with_timezone(&Utc),
-            updated_at: g.updated_at.with_timezone(&Utc),
-            closed_at: g.closed_at.map(|dt| dt.with_timezone(&Utc)),
-            web_url: g.web_url,
-            description: g.description,
-            user_notes_count: 0,
-            references: g.reference.map(|r| References { full_ref: r }),
-            custom_status_category: g.status.as_ref().and_then(|s| s.category.clone()),
-            custom_status: g.status.map(|s| s.name),
-            iteration: g.iteration.map(|i| Iteration {
-                id: i.id,
-                title: i.title.unwrap_or_default(),
-                start_date: i.start_date,
-                due_date: i.due_date,
-                state: i.state,
-            }),
-            weight: g.weight,
-        }
-    }
+    issues: GqlConnection<Issue>,
 }
 
 impl From<GqlWorkItem> for Issue {
     fn from(w: GqlWorkItem) -> Self {
-        let to_user = |u: GqlUser| User {
-            id: gid_to_u64(&u.id),
-            username: u.username,
-            name: u.name,
-            avatar_url: None,
-            web_url: u.web_url,
-        };
-
         let mut assignees = Vec::new();
         let mut labels = Vec::new();
         let mut milestone = None;
-        let mut custom_status = None;
-        let mut custom_status_category = None;
+        let mut status = None;
         let mut description = None;
         let mut iteration = None;
         let mut weight = None;
 
         for widget in w.widgets {
             if let Some(a) = widget.assignees {
-                assignees = a.nodes.into_iter().map(&to_user).collect();
+                assignees = a.nodes;
             }
             if let Some(l) = widget.labels {
                 labels = l.nodes.into_iter().map(|l| l.title).collect();
             }
             if let Some(m) = widget.milestone {
-                milestone = Some(Milestone {
-                    id: gid_to_u64(&m.id),
-                    title: m.title,
-                    state: m.state.unwrap_or_else(|| "active".to_string()),
-                });
+                milestone = Some(m);
             }
             if let Some(s) = widget.status {
-                custom_status = Some(s.name);
-                custom_status_category = s.category;
+                status = Some(s);
             }
             if let Some(d) = widget.description {
                 description = Some(d);
             }
             if let Some(i) = widget.iteration {
-                iteration = Some(Iteration {
-                    id: i.id,
-                    title: i.title.unwrap_or_default(),
-                    start_date: i.start_date,
-                    due_date: i.due_date,
-                    state: i.state,
-                });
+                iteration = Some(i);
             }
             if let Some(w) = widget.weight {
                 weight = Some(w);
@@ -520,7 +208,7 @@ impl From<GqlWorkItem> for Issue {
         }
 
         Issue {
-            id: gid_to_u64(&w.id),
+            id: w.id,
             iid: w.iid,
             title: w.title,
             // workItems returns OPEN/CLOSED; normalize to opened/closed
@@ -528,7 +216,7 @@ impl From<GqlWorkItem> for Issue {
                 "open" => "opened".to_string(),
                 other => other.to_string(),
             },
-            author: w.author.map(&to_user),
+            author: w.author,
             assignees,
             labels,
             milestone,
@@ -538,9 +226,8 @@ impl From<GqlWorkItem> for Issue {
             web_url: w.web_url,
             description,
             user_notes_count: 0,
-            references: w.reference.map(|r| References { full_ref: r }),
-            custom_status,
-            custom_status_category,
+            reference: w.reference,
+            status,
             iteration,
             weight,
         }
@@ -587,7 +274,8 @@ impl GitLabClient {
 
     // ── Issues (GraphQL via namespace.workItems) ──
 
-    const WORK_ITEM_QUERY: &str = r"
+    fn work_item_query() -> String {
+        let doc = r"
         query($path: ID!, $state: IssuableState, $assigneeUsernames: [String!], $updatedAfter: Time, $after: String) {
             namespace(fullPath: $path) {
                 workItems(
@@ -601,40 +289,15 @@ impl GitLabClient {
                     sort: UPDATED_DESC
                 ) {
                     nodes {
-                        id iid title state
-                        author { id username name webUrl }
-                        createdAt updatedAt closedAt webUrl
-                        reference(full: true)
-                        namespace { fullPath }
-                        widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION, ITERATION, WEIGHT]) {
-                            ... on WorkItemWidgetAssignees {
-                                assignees { nodes { id username name webUrl } }
-                            }
-                            ... on WorkItemWidgetLabels {
-                                labels { nodes { title } }
-                            }
-                            ... on WorkItemWidgetMilestone {
-                                milestone { id title state }
-                            }
-                            ... on WorkItemWidgetStatus {
-                                status { name category }
-                            }
-                            ... on WorkItemWidgetDescription {
-                                description
-                            }
-                            ... on WorkItemWidgetIteration {
-                                iteration { id title startDate dueDate state }
-                            }
-                            ... on WorkItemWidgetWeight {
-                                weight
-                            }
-                        }
+                        ...WorkItemFields
                     }
                     pageInfo { hasNextPage endCursor }
                 }
             }
         }
-    ";
+        ";
+        format!("{doc}{}", Self::fragments(Self::WORK_ITEM_FIELDS))
+    }
 
     /// Fetch work items from a namespace with optional filters.
     /// Single method used for both tracking and external issue queries.
@@ -663,7 +326,7 @@ impl GitLabClient {
                 "after": cursor,
             });
             let body = serde_json::json!({
-                "query": Self::WORK_ITEM_QUERY,
+                "query": Self::work_item_query(),
                 "variables": variables,
             });
             let json = self.graphql_post(&body).await?;
@@ -684,48 +347,24 @@ impl GitLabClient {
     /// Update a work item (issue) via GraphQL `workItemUpdate` mutation.
     /// `input` should contain the widget fields to update (e.g. `assigneesWidget`,
     /// `labelsWidget`, `stateEvent`). The `id` field is added automatically.
-    pub async fn update_issue(&self, issue_id: u64, input: serde_json::Value) -> Result<Issue> {
-        let gid = format!("gid://gitlab/WorkItem/{issue_id}");
+    pub async fn update_issue(&self, gid: &str, input: serde_json::Value) -> Result<Issue> {
         let mut full_input = input;
         full_input["id"] = serde_json::json!(gid);
 
-        let query = r"
+        let query = format!(
+            "{doc}{}",
+            Self::fragments(Self::WORK_ITEM_FIELDS),
+            doc = r"
             mutation workItemUpdate($input: WorkItemUpdateInput!) {
                 workItemUpdate(input: $input) {
                     errors
                     workItem {
-                        id iid title state
-                        author { id username name webUrl }
-                        createdAt updatedAt closedAt webUrl
-                        reference(full: true)
-                        namespace { fullPath }
-                        widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION, ITERATION, WEIGHT]) {
-                            ... on WorkItemWidgetAssignees {
-                                assignees { nodes { id username name webUrl } }
-                            }
-                            ... on WorkItemWidgetLabels {
-                                labels { nodes { title } }
-                            }
-                            ... on WorkItemWidgetMilestone {
-                                milestone { id title state }
-                            }
-                            ... on WorkItemWidgetStatus {
-                                status { name category }
-                            }
-                            ... on WorkItemWidgetDescription {
-                                description
-                            }
-                            ... on WorkItemWidgetIteration {
-                                iteration { id title startDate dueDate state }
-                            }
-                            ... on WorkItemWidgetWeight {
-                                weight
-                            }
-                        }
+                        ...WorkItemFields
                     }
                 }
             }
-        ";
+            "
+        );
 
         let body = serde_json::json!({ "query": query, "variables": { "input": full_input } });
         let json = self.graphql_post(&body).await?;
@@ -753,22 +392,101 @@ impl GitLabClient {
         Ok(Issue::from(work_item))
     }
 
-    pub async fn update_mr(
+    async fn mr_mutation(
         &self,
+        mutation: &str,
+        input_type: &str,
         project: &str,
-        iid: u64,
-        payload: serde_json::Value,
+        iid: &str,
+        mut input: serde_json::Value,
     ) -> Result<MergeRequest> {
-        let url = self.api_url(&format!(
-            "/projects/{}/merge_requests/{}",
-            Self::encode_project(project),
-            iid
-        ));
-        let resp = self.client.put(&url).json(&payload).send().await?;
-        Self::handle_response(resp).await
+        input["projectPath"] = serde_json::json!(project);
+        input["iid"] = serde_json::json!(iid);
+
+        let query = format!(
+            r"
+            mutation($input: {input_type}!) {{
+                {mutation}(input: $input) {{
+                    errors
+                    mergeRequest {{ ...MrFields }}
+                }}
+            }}
+            {fragments}
+            ",
+            fragments = Self::fragments(Self::MR_FIELDS)
+        );
+
+        let body = serde_json::json!({ "query": query, "variables": { "input": input } });
+        let json = self.graphql_post(&body).await?;
+
+        if let Some(errors) = json
+            .pointer(&format!("/data/{mutation}/errors"))
+            .and_then(|v| v.as_array())
+            && !errors.is_empty()
+        {
+            let msgs: Vec<String> = errors
+                .iter()
+                .filter_map(|e| e.as_str().map(std::string::ToString::to_string))
+                .collect();
+            anyhow::bail!("{}", msgs.join(", "));
+        }
+
+        let mr = json
+            .pointer(&format!("/data/{mutation}/mergeRequest"))
+            .cloned()
+            .with_context(|| format!("missing mergeRequest in {mutation} response"))?;
+        serde_json::from_value(mr)
+            .with_context(|| format!("failed to deserialize {mutation} response"))
     }
 
-    pub async fn create_issue_note(&self, project: &str, iid: u64, body: &str) -> Result<Note> {
+    pub async fn close_mr(&self, project: &str, iid: &str) -> Result<MergeRequest> {
+        self.mr_mutation(
+            "mergeRequestUpdate",
+            "MergeRequestUpdateInput",
+            project,
+            iid,
+            serde_json::json!({ "state": "CLOSED" }),
+        )
+        .await
+    }
+
+    pub async fn set_mr_assignees(
+        &self,
+        project: &str,
+        iid: &str,
+        usernames: &[String],
+    ) -> Result<MergeRequest> {
+        self.mr_mutation(
+            "mergeRequestSetAssignees",
+            "MergeRequestSetAssigneesInput",
+            project,
+            iid,
+            serde_json::json!({ "assigneeUsernames": usernames }),
+        )
+        .await
+    }
+
+    pub async fn set_mr_labels(
+        &self,
+        project: &str,
+        iid: &str,
+        label_ids: &[u64],
+    ) -> Result<MergeRequest> {
+        let gids: Vec<String> = label_ids
+            .iter()
+            .map(|id| format!("gid://gitlab/Label/{id}"))
+            .collect();
+        self.mr_mutation(
+            "mergeRequestSetLabels",
+            "MergeRequestSetLabelsInput",
+            project,
+            iid,
+            serde_json::json!({ "labelIds": gids }),
+        )
+        .await
+    }
+
+    pub async fn create_issue_note(&self, project: &str, iid: &str, body: &str) -> Result<Note> {
         let url = self.api_url(&format!(
             "/projects/{}/issues/{}/notes",
             Self::encode_project(project),
@@ -783,7 +501,11 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
-    pub async fn list_issue_discussions(&self, project: &str, iid: u64) -> Result<Vec<Discussion>> {
+    pub async fn list_issue_discussions(
+        &self,
+        project: &str,
+        iid: &str,
+    ) -> Result<Vec<Discussion>> {
         let url = self.api_url(&format!(
             "/projects/{}/issues/{}/discussions",
             Self::encode_project(project),
@@ -801,7 +523,7 @@ impl GitLabClient {
     pub async fn reply_to_issue_discussion(
         &self,
         project: &str,
-        iid: u64,
+        iid: &str,
         discussion_id: &str,
         body: &str,
     ) -> Result<Note> {
@@ -822,7 +544,7 @@ impl GitLabClient {
 
     // ── Merge Requests (REST, single-item) ──
 
-    pub async fn approve_mr(&self, project: &str, iid: u64) -> Result<()> {
+    pub async fn approve_mr(&self, project: &str, iid: &str) -> Result<()> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}/approve",
             Self::encode_project(project),
@@ -837,7 +559,7 @@ impl GitLabClient {
         Ok(())
     }
 
-    pub async fn merge_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
+    pub async fn merge_mr(&self, project: &str, iid: &str) -> Result<()> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}/merge",
             Self::encode_project(project),
@@ -849,10 +571,15 @@ impl GitLabClient {
             .json(&serde_json::json!({"should_remove_source_branch": true}))
             .send()
             .await?;
-        Self::handle_response(resp).await
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Merge failed ({status}): {body}");
+        }
+        Ok(())
     }
 
-    pub async fn create_mr_note(&self, project: &str, iid: u64, body: &str) -> Result<Note> {
+    pub async fn create_mr_note(&self, project: &str, iid: &str, body: &str) -> Result<Note> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}/notes",
             Self::encode_project(project),
@@ -867,7 +594,7 @@ impl GitLabClient {
         Self::handle_response(resp).await
     }
 
-    pub async fn list_mr_discussions(&self, project: &str, iid: u64) -> Result<Vec<Discussion>> {
+    pub async fn list_mr_discussions(&self, project: &str, iid: &str) -> Result<Vec<Discussion>> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}/discussions",
             Self::encode_project(project),
@@ -885,7 +612,7 @@ impl GitLabClient {
     pub async fn reply_to_mr_discussion(
         &self,
         project: &str,
-        iid: u64,
+        iid: &str,
         discussion_id: &str,
         body: &str,
     ) -> Result<Note> {
@@ -1009,7 +736,7 @@ impl GitLabClient {
     }
 
     /// Update a work item's status via GraphQL.
-    pub async fn update_issue_status(&self, issue_id: u64, status_id: &str) -> Result<()> {
+    pub async fn update_issue_status(&self, gid: &str, status_id: &str) -> Result<()> {
         let query = r"
             mutation workItemUpdate($input: WorkItemUpdateInput!) {
                 workItemUpdate(input: $input) {
@@ -1017,7 +744,6 @@ impl GitLabClient {
                 }
             }
         ";
-        let gid = format!("gid://gitlab/WorkItem/{issue_id}");
         let variables = serde_json::json!({
             "input": {
                 "id": gid,
@@ -1070,7 +796,7 @@ impl GitLabClient {
         }
         #[derive(Deserialize)]
         struct Group {
-            iterations: GqlConnection<GqlIteration>,
+            iterations: GqlConnection<Iteration>,
         }
 
         // Extract the group path from primary tracking project (everything before the last `/`)
@@ -1095,7 +821,7 @@ impl GitLabClient {
             for gi in connection.nodes {
                 all.push(Iteration {
                     id: gi.id,
-                    title: gi.title.unwrap_or_default(),
+                    title: gi.title,
                     start_date: gi.start_date,
                     due_date: gi.due_date,
                     state: gi.state,
@@ -1114,7 +840,7 @@ impl GitLabClient {
     /// Update a work item's iteration via GraphQL.
     pub async fn update_issue_iteration(
         &self,
-        issue_id: u64,
+        gid: &str,
         iteration_gid: Option<&str>,
     ) -> Result<()> {
         let query = r"
@@ -1124,7 +850,6 @@ impl GitLabClient {
                 }
             }
         ";
-        let gid = format!("gid://gitlab/WorkItem/{issue_id}");
         let variables = serde_json::json!({
             "input": {
                 "id": gid,
@@ -1206,11 +931,11 @@ impl GitLabClient {
                 .await?;
 
             for issue in issues {
-                let project_path = issue.references.as_ref().map_or_else(
-                    || project.clone(),
-                    |r| extract_project_from_ref(&r.full_ref),
-                );
-                if seen_ids.insert(issue.id) {
+                let project_path = issue
+                    .reference
+                    .as_deref()
+                    .map_or_else(|| project.clone(), extract_project_from_ref);
+                if seen_ids.insert(issue.id.clone()) {
                     all.push(TrackedIssue {
                         issue,
                         project_path,
@@ -1237,11 +962,11 @@ impl GitLabClient {
                 .graphql_list_work_items(project, None, None, updated_after)
                 .await?;
             for issue in issues {
-                let project_path = issue.references.as_ref().map_or_else(
-                    || project.clone(),
-                    |r| extract_project_from_ref(&r.full_ref),
-                );
-                if seen_ids.insert(issue.id) {
+                let project_path = issue
+                    .reference
+                    .as_deref()
+                    .map_or_else(|| project.clone(), extract_project_from_ref);
+                if seen_ids.insert(issue.id.clone()) {
                     all.push(TrackedIssue {
                         issue,
                         project_path,
@@ -1266,7 +991,10 @@ impl GitLabClient {
             _ => serde_json::Value::Null,
         };
 
-        let query = r"
+        let query = format!(
+            "{doc}{}",
+            Self::fragments(Self::ISSUE_FIELDS),
+            doc = r"
             query($assigneeUsernames: [String!], $state: IssuableState, $types: [IssueType!], $after: String, $updatedAfter: Time) {
                 issues(
                     assigneeUsernames: $assigneeUsernames
@@ -1278,21 +1006,13 @@ impl GitLabClient {
                     sort: UPDATED_DESC
                 ) {
                     nodes {
-                        id iid title state
-                        author { id username name webUrl }
-                        assignees { nodes { id username name webUrl } }
-                        labels { nodes { title } }
-                        milestone { id title state }
-                        createdAt updatedAt closedAt webUrl description
-                        reference(full: true)
-                        status { name }
-                        iteration { id title startDate dueDate state }
-                        weight
+                        ...IssueFields
                     }
                     pageInfo { hasNextPage endCursor }
                 }
             }
-        ";
+            "
+        );
 
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
@@ -1313,15 +1033,16 @@ impl GitLabClient {
                     .context("failed to deserialize assigned issues")?;
 
                 let connection = resp.data.issues;
-                for issue in connection.nodes.into_iter().map(Issue::from) {
+                for issue in connection.nodes {
                     let project_path = issue
-                        .references
-                        .as_ref()
-                        .map(|r| extract_project_from_ref(&r.full_ref))
+                        .reference
+                        .as_deref()
+                        .map(extract_project_from_ref)
                         .unwrap_or_default();
 
                     // Skip tracking project issues and duplicates
-                    if self.config.is_tracking_project(&project_path) || !seen_ids.insert(issue.id)
+                    if self.config.is_tracking_project(&project_path)
+                        || !seen_ids.insert(issue.id.clone())
                     {
                         continue;
                     }
@@ -1344,24 +1065,95 @@ impl GitLabClient {
 
     // ── Merge Requests (GraphQL) ──
 
-    const MR_FIELDS: &str = r"
-        id iid title state draft
-        author { id username name webUrl }
-        assignees { nodes { id username name webUrl } }
-        reviewers { nodes { id username name webUrl } }
-        labels { nodes { title } }
-        milestone { id title state }
-        createdAt updatedAt closedAt webUrl description
-        userNotesCount
-        sourceBranch targetBranch mergeStatusEnum
-        reference(full: true)
-        diffStatsSummary { additions deletions fileCount }
-        approved
-        approvedBy { nodes { id username name webUrl } }
-        headPipeline { status }
-        resolvableDiscussionsCount
-        resolvedDiscussionsCount
+    /// The selection every merge-request query and mutation shares
+    const USER_FRAGMENT: &str = r"
+        fragment UserFields on User {
+            id username name webUrl
+        }
     ";
+
+    /// The selection every merge-request query and mutation shares
+    const MR_FIELDS: &str = r"
+        fragment MrFields on MergeRequest {
+            id iid title state draft
+            author { ...UserFields }
+            assignees { nodes { ...UserFields } }
+            reviewers { nodes { ...UserFields } }
+            labels { nodes { title } }
+            milestone { id title state }
+            createdAt updatedAt webUrl description
+            userNotesCount
+            sourceBranch targetBranch mergeStatusEnum
+            reference(full: true)
+            diffStatsSummary { additions deletions fileCount }
+            approved
+            approvedBy { nodes { ...UserFields } }
+            headPipeline { status }
+            resolvableDiscussionsCount
+            resolvedDiscussionsCount
+        }
+    ";
+
+    /// The selection the root `issues` query uses, deserialized straight into
+    /// [`Issue`].
+    const ISSUE_FIELDS: &str = r"
+        fragment IssueFields on Issue {
+            id iid title state
+            author { ...UserFields }
+            assignees { nodes { ...UserFields } }
+            labels { nodes { title } }
+            milestone { id title state }
+            createdAt updatedAt closedAt webUrl description
+            userNotesCount
+            reference(full: true)
+            status { name category }
+            iteration { id title startDate dueDate state }
+            weight
+        }
+    ";
+
+    /// The selection both work-item documents share — the `namespace.workItems`
+    /// list query and the `workItemUpdate` mutation. Widgets arrive as a
+    /// heterogeneous array, so this path still needs `GqlWorkItem` and
+    /// `From<GqlWorkItem> for Issue` to fold into the flat [`Issue`] shape.
+    const WORK_ITEM_FIELDS: &str = r"
+        fragment WorkItemFields on WorkItem {
+            id iid title state
+            author { ...UserFields }
+            createdAt updatedAt closedAt webUrl
+            reference(full: true)
+            namespace { fullPath }
+            widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION, ITERATION, WEIGHT]) {
+                ... on WorkItemWidgetAssignees {
+                    assignees { nodes { ...UserFields } }
+                }
+                ... on WorkItemWidgetLabels {
+                    labels { nodes { title } }
+                }
+                ... on WorkItemWidgetMilestone {
+                    milestone { id title state }
+                }
+                ... on WorkItemWidgetStatus {
+                    status { name category }
+                }
+                ... on WorkItemWidgetDescription {
+                    description
+                }
+                ... on WorkItemWidgetIteration {
+                    iteration { id title startDate dueDate state }
+                }
+                ... on WorkItemWidgetWeight {
+                    weight
+                }
+            }
+        }
+    ";
+
+    /// The fragment text to append to a document spreading `fields`, together
+    /// with the `UserFields` fragment every one of them spreads in turn.
+    fn fragments(fields: &str) -> String {
+        format!("{fields}{}", Self::USER_FRAGMENT)
+    }
 
     /// Page size for MR list queries. Kept small to stay within GitLab's
     /// default query complexity limit of 250 (each MR node with nested
@@ -1392,14 +1184,15 @@ impl GitLabClient {
                         first: {page_size}
                         sort: UPDATED_DESC
                     ) {{
-                        nodes {{ {fields} }}
+                        nodes {{ ...MrFields }}
                         pageInfo {{ hasNextPage endCursor }}
                     }}
                 }}
             }}
+            {fragments}
             ",
             page_size = Self::MR_PAGE_SIZE,
-            fields = Self::MR_FIELDS
+            fragments = Self::fragments(Self::MR_FIELDS)
         );
 
         let mut all = Vec::new();
@@ -1422,7 +1215,7 @@ impl GitLabClient {
             };
 
             let connection = proj.merge_requests;
-            all.extend(connection.nodes.into_iter().map(MergeRequest::from));
+            all.extend(connection.nodes);
 
             match connection.page_info {
                 Some(pi) if pi.has_next_page => cursor = pi.end_cursor,
@@ -1445,11 +1238,11 @@ impl GitLabClient {
                 .graphql_list_project_mrs(project, gql_state, updated_after)
                 .await?;
             for mr in mrs {
-                let project_path = mr.references.as_ref().map_or_else(
-                    || project.clone(),
-                    |r| extract_project_from_ref(&r.full_ref),
-                );
-                if seen_ids.insert(mr.id) {
+                let project_path = mr
+                    .reference
+                    .as_deref()
+                    .map_or_else(|| project.clone(), extract_project_from_ref);
+                if seen_ids.insert(mr.id.clone()) {
                     all.push(TrackedMergeRequest { mr, project_path });
                 }
             }
@@ -1475,14 +1268,15 @@ impl GitLabClient {
             query($username: String!, $state: MergeRequestState, $after: String, $updatedAfter: Time) {{
                 user(username: $username) {{
                     assignedMergeRequests(state: $state, after: $after, updatedAfter: $updatedAfter, first: {page_size}, sort: UPDATED_DESC) {{
-                        nodes {{ {fields} }}
+                        nodes {{ ...MrFields }}
                         pageInfo {{ hasNextPage endCursor }}
                     }}
                 }}
             }}
+            {fragments}
             ",
             page_size = Self::MR_PAGE_SIZE,
-            fields = Self::MR_FIELDS
+            fragments = Self::fragments(Self::MR_FIELDS)
         );
 
         let reviewer_query = format!(
@@ -1490,14 +1284,15 @@ impl GitLabClient {
             query($username: String!, $state: MergeRequestState, $after: String, $updatedAfter: Time) {{
                 user(username: $username) {{
                     reviewRequestedMergeRequests(state: $state, after: $after, updatedAfter: $updatedAfter, first: {page_size}, sort: UPDATED_DESC) {{
-                        nodes {{ {fields} }}
+                        nodes {{ ...MrFields }}
                         pageInfo {{ hasNextPage endCursor }}
                     }}
                 }}
             }}
+            {fragments}
             ",
             page_size = Self::MR_PAGE_SIZE,
-            fields = Self::MR_FIELDS
+            fragments = Self::fragments(Self::MR_FIELDS)
         );
 
         let mut all = Vec::new();
@@ -1527,7 +1322,7 @@ impl GitLabClient {
                         );
                         for item in items {
                             if !self.config.is_tracking_project(&item.project_path)
-                                && seen_ids.insert(item.mr.id)
+                                && seen_ids.insert(item.mr.id.clone())
                             {
                                 all.push(item);
                             }
@@ -1586,11 +1381,11 @@ impl GitLabClient {
                 .as_ref()
                 .is_some_and(|pi| pi.has_next_page);
 
-            for mr in user.mrs.nodes.into_iter().map(MergeRequest::from) {
+            for mr in user.mrs.nodes {
                 let project_path = mr
-                    .references
-                    .as_ref()
-                    .map(|r| extract_project_from_ref(&r.full_ref))
+                    .reference
+                    .as_deref()
+                    .map(extract_project_from_ref)
                     .unwrap_or_default();
                 results.push(TrackedMergeRequest { mr, project_path });
             }
@@ -1696,8 +1491,8 @@ impl GitLabClient {
     /// Uses a semaphore to limit concurrency.
     pub async fn fetch_iteration_added_dates_batch(
         &self,
-        items: Vec<(String, String, u64)>, // (namespace, iid_str, issue_id)
-    ) -> Result<std::collections::HashMap<u64, DateTime<Utc>>> {
+        items: Vec<(String, String, String)>, // (namespace, iid_str, issue_id)
+    ) -> Result<std::collections::HashMap<String, DateTime<Utc>>> {
         use std::collections::HashMap;
         use std::sync::Arc;
         use tokio::sync::Semaphore;
@@ -1717,7 +1512,7 @@ impl GitLabClient {
             }));
         }
 
-        let mut map: HashMap<u64, DateTime<Utc>> = HashMap::new();
+        let mut map: HashMap<String, DateTime<Utc>> = HashMap::new();
         for handle in handles {
             if let Ok((issue_id, Ok(Some(dt)))) = handle.await {
                 map.insert(issue_id, dt);

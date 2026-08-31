@@ -66,8 +66,15 @@ pub enum Overlay {
 /// Key handlers, status bar, and help overlay all read from this.
 #[derive(Debug, Clone)]
 pub enum FocusedItem {
-    Issue { project: String, id: u64, iid: u64 },
-    Mr { project: String, iid: u64 },
+    Issue {
+        project: String,
+        id: String,
+        iid: String,
+    },
+    Mr {
+        project: String,
+        iid: String,
+    },
 }
 
 /// Metadata for a single thread shown in the reply picker.
@@ -95,15 +102,15 @@ pub enum AsyncMsg {
     /// A merge request was mutated; carry the updated object and project path.
     MrUpdated(Result<MergeRequest>, String),
     /// Issue custom status changed: (`project_path`, iid, `new_status_name`).
-    IssueStatusUpdated(Result<(String, u64, String)>),
+    IssueStatusUpdated(Result<(String, String, String)>),
     LabelsLoaded(Result<Vec<ProjectLabel>>),
     /// (statuses, project, `issue_db_id`, iid, `close_only`)
-    StatusesLoaded(Result<Vec<WorkItemStatus>>, String, u64, u64, bool),
+    StatusesLoaded(Result<Vec<WorkItemStatus>>, String, String, String, bool),
     IterationsLoaded(Result<Vec<Iteration>>),
     /// Iteration update result: (result, `issue_id`, `new_iteration`)
-    IterationUpdated(Result<()>, u64, Option<Iteration>),
+    IterationUpdated(Result<()>, String, Option<Iteration>),
     /// Unplanned work: issue_id → added_to_iteration_at timestamp
-    UnplannedWorkLoaded(Result<std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>>),
+    UnplannedWorkLoaded(Result<std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>>),
 }
 
 /// Lifecycle of an async health data fetch.
@@ -138,7 +145,7 @@ pub struct AppData {
     pub label_sort_orders: std::collections::HashMap<String, Vec<String>>,
     pub board_issues: Vec<TrackedIssue>,
     pub shadow_work_cache: Vec<TrackedIssue>,
-    pub unplanned_work_cache: std::collections::HashMap<u64, chrono::DateTime<chrono::Utc>>,
+    pub unplanned_work_cache: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
     pub unplanned_work_state: FetchState,
 }
 
@@ -286,12 +293,12 @@ impl App {
         self.ui.focused = match self.ui.view {
             View::IssueDetail => self.current_detail_issue().map(|item| FocusedItem::Issue {
                 project: item.project_path.clone(),
-                id: item.issue.id,
-                iid: item.issue.iid,
+                id: item.issue.id.clone(),
+                iid: item.issue.iid.clone(),
             }),
             View::MrDetail => self.current_detail_mr().map(|item| FocusedItem::Mr {
                 project: item.project_path.clone(),
-                iid: item.mr.iid,
+                iid: item.mr.iid.clone(),
             }),
             View::IssueList => self
                 .ui
@@ -300,8 +307,8 @@ impl App {
                 .selected_issue(&self.data.issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
-                    id: item.issue.id,
-                    iid: item.issue.iid,
+                    id: item.issue.id.clone(),
+                    iid: item.issue.iid.clone(),
                 }),
             View::MrList => self
                 .ui
@@ -310,7 +317,7 @@ impl App {
                 .selected_mr(&self.data.mrs)
                 .map(|item| FocusedItem::Mr {
                     project: item.project_path.clone(),
-                    iid: item.mr.iid,
+                    iid: item.mr.iid.clone(),
                 }),
             View::Planning => self
                 .ui
@@ -319,8 +326,8 @@ impl App {
                 .selected_issue(&self.data.issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
-                    id: item.issue.id,
-                    iid: item.issue.iid,
+                    id: item.issue.id.clone(),
+                    iid: item.issue.iid.clone(),
                 }),
             View::Dashboard if self.ui.views.board.health_focused => self
                 .ui
@@ -332,8 +339,8 @@ impl App {
                 })
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
-                    id: item.issue.id,
-                    iid: item.issue.iid,
+                    id: item.issue.id.clone(),
+                    iid: item.issue.iid.clone(),
                 }),
             View::Dashboard => self
                 .ui
@@ -342,8 +349,8 @@ impl App {
                 .selected_issue(&self.data.board_issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path.clone(),
-                    id: item.issue.id,
-                    iid: item.issue.iid,
+                    id: item.issue.id.clone(),
+                    iid: item.issue.iid.clone(),
                 }),
         };
     }
@@ -549,8 +556,12 @@ impl App {
         if let Some(iter_id) = &current_iter_id
             && let Ok(closed) = self.ctx.db.load_issues(Some("closed"))
         {
-            let existing: std::collections::HashSet<u64> =
-                self.data.board_issues.iter().map(|i| i.issue.id).collect();
+            let existing: std::collections::HashSet<String> = self
+                .data
+                .board_issues
+                .iter()
+                .map(|i| i.issue.id.clone())
+                .collect();
             self.data
                 .board_issues
                 .extend(closed.into_iter().filter(|i| {

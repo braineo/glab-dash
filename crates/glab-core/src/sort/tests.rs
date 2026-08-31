@@ -9,19 +9,17 @@ use super::spec::*;
 
 fn make_user(username: &str) -> User {
     User {
-        id: 1,
+        id: "gid://gitlab/User/1".to_string(),
         username: username.to_string(),
         name: username.to_string(),
-        avatar_url: None,
-        web_url: String::new(),
     }
 }
 
 fn make_issue(iid: u64, title: &str, labels: &[&str], updated_days_ago: i64) -> TrackedIssue {
     TrackedIssue {
         issue: Issue {
-            id: iid,
-            iid,
+            id: iid.to_string(),
+            iid: iid.to_string(),
             title: title.to_string(),
             state: "opened".to_string(),
             author: Some(make_user("author")),
@@ -37,9 +35,8 @@ fn make_issue(iid: u64, title: &str, labels: &[&str], updated_days_ago: i64) -> 
             web_url: String::new(),
             description: None,
             user_notes_count: 0,
-            references: None,
-            custom_status: None,
-            custom_status_category: None,
+            reference: None,
+            status: None,
             iteration: None,
             weight: None,
         },

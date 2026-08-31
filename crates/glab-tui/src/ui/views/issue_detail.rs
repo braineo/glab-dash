@@ -15,7 +15,7 @@ use glab_core::domain::{Discussion, TrackedIssue};
 #[derive(Default)]
 pub struct IssueDetailState {
     pub project: String,
-    pub iid: u64,
+    pub iid: String,
     pub scroll: u16,
     pub discussions: Vec<Discussion>,
     pub loading_notes: bool,
@@ -83,16 +83,16 @@ impl IssueDetailState {
 
     pub fn reset(&mut self) {
         self.project.clear();
-        self.iid = 0;
+        self.iid.clear();
         self.scroll = 0;
         self.discussions.clear();
         self.loading_notes = false;
     }
 
-    pub fn open(&mut self, project: &str, iid: u64) {
+    pub fn open(&mut self, project: &str, iid: &str) {
         self.reset();
         self.project = project.to_string();
-        self.iid = iid;
+        self.iid = iid.to_string();
         self.loading_notes = true;
     }
 
@@ -190,8 +190,8 @@ pub fn render(
         .map(|a| a.username.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let (state_icon, state_text) = if let Some(ref status) = item.issue.custom_status {
-        (styles::status_icon(status), status.clone())
+    let (state_icon, state_text) = if let Some(status) = item.issue.status_name() {
+        (styles::status_icon(status), status.to_string())
     } else {
         let icon = match item.issue.state.as_str() {
             "opened" => styles::ICON_OPEN,
@@ -229,7 +229,7 @@ pub fn render(
             Span::styled("Status: ", styles::help_desc_style()),
             Span::styled(
                 format!("{state_icon} {state_text}"),
-                if item.issue.custom_status.is_some() {
+                if item.issue.status_name().is_some() {
                     styles::status_style(&state_text)
                 } else {
                     styles::state_style(&item.issue.state)

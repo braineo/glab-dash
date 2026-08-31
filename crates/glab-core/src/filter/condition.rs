@@ -180,7 +180,10 @@ pub fn matches_issue(
                 team_members,
             ),
             Field::Iteration => match_optional_string(
-                item.issue.iteration.as_ref().map(|i| i.title.as_str()),
+                item.issue
+                    .iteration
+                    .as_ref()
+                    .and_then(|i| i.title.as_deref()),
                 &c.op,
                 &value,
             ),
@@ -245,7 +248,7 @@ pub fn matches_mr(
             ),
             Field::State => match_string(&item.mr.state, &c.op, &value),
             Field::Draft => {
-                let is_draft = item.mr.draft || item.mr.work_in_progress;
+                let is_draft = item.mr.draft;
                 match_bool(is_draft, &c.op, &value)
             }
             Field::ApprovedBy => match_string_list(
@@ -253,7 +256,7 @@ pub fn matches_mr(
                     .mr
                     .approved_by
                     .iter()
-                    .map(|a| a.user.username.as_str())
+                    .map(|a| a.username.as_str())
                     .collect::<Vec<_>>(),
                 &c.op,
                 &value,

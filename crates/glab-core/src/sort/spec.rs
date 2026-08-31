@@ -236,8 +236,8 @@ fn compare_issue(
             wa.cmp(&wb)
         }
         SortField::Iteration => cmp_optional_str(
-            a.issue.iteration.as_ref().map(|i| i.title.as_str()),
-            b.issue.iteration.as_ref().map(|i| i.title.as_str()),
+            a.issue.iteration.as_ref().and_then(|i| i.title.as_deref()),
+            b.issue.iteration.as_ref().and_then(|i| i.title.as_deref()),
         ),
         // MR-only fields are no-ops for issues
         SortField::Pipeline | SortField::Draft => Ordering::Equal,
@@ -283,15 +283,15 @@ fn compare_mr(
                 Some("failed") => 3,
                 _ => 4,
             };
-            let ra = rank(a.mr.head_pipeline.as_ref().map(|p| p.status.as_str()));
-            let rb = rank(b.mr.head_pipeline.as_ref().map(|p| p.status.as_str()));
+            let ra = rank(a.mr.pipeline_status());
+            let rb = rank(b.mr.pipeline_status());
             ra.cmp(&rb)
         }
         // Issue-only fields are no-ops for MRs
         SortField::Weight | SortField::Iteration => Ordering::Equal,
         SortField::Draft => {
-            let da = a.mr.draft || a.mr.work_in_progress;
-            let db = b.mr.draft || b.mr.work_in_progress;
+            let da = a.mr.draft;
+            let db = b.mr.draft;
             da.cmp(&db) // false (0) < true (1), so non-drafts first
         }
     }

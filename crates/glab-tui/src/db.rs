@@ -73,8 +73,8 @@ impl Db {
             self.conn.execute_batch(
                 "
                 CREATE TABLE IF NOT EXISTS issues (
-                    id           INTEGER PRIMARY KEY,
-                    iid          INTEGER NOT NULL,
+                    id           TEXT PRIMARY KEY,
+                    iid          TEXT NOT NULL,
                     project_path TEXT NOT NULL,
                     state        TEXT NOT NULL,
                     updated_at   TEXT NOT NULL,
@@ -85,8 +85,8 @@ impl Db {
                 CREATE INDEX IF NOT EXISTS idx_issues_updated ON issues(updated_at);
 
                 CREATE TABLE IF NOT EXISTS merge_requests (
-                    id           INTEGER PRIMARY KEY,
-                    iid          INTEGER NOT NULL,
+                    id           TEXT PRIMARY KEY,
+                    iid          TEXT NOT NULL,
                     project_path TEXT NOT NULL,
                     state        TEXT NOT NULL,
                     updated_at   TEXT NOT NULL,
@@ -317,7 +317,7 @@ impl Db {
 
     /// Load a single issue by project path + iid (for detail views).
     #[allow(dead_code)] // Will be used when sync_issue_list_for_detail is removed
-    pub fn load_issue_by_key(&self, project: &str, iid: u64) -> Result<Option<TrackedIssue>> {
+    pub fn load_issue_by_key(&self, project: &str, iid: &str) -> Result<Option<TrackedIssue>> {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT data FROM issues WHERE project_path = ?1 AND iid = ?2")?;
@@ -398,8 +398,8 @@ mod tests {
         TrackedIssue {
             project_path: "test/project".to_string(),
             issue: Issue {
-                id,
-                iid: id,
+                id: id.to_string(),
+                iid: id.to_string(),
                 title: format!("Issue {id}"),
                 state: state.to_string(),
                 author: None,
@@ -416,9 +416,8 @@ mod tests {
                 web_url: String::new(),
                 description: None,
                 user_notes_count: 0,
-                references: None,
-                custom_status: None,
-                custom_status_category: None,
+                reference: None,
+                status: None,
                 iteration: None,
                 weight: None,
             },
@@ -429,8 +428,8 @@ mod tests {
         TrackedMergeRequest {
             project_path: "test/project".to_string(),
             mr: MergeRequest {
-                id,
-                iid: id,
+                id: id.to_string(),
+                iid: id.to_string(),
                 title: format!("MR {id}"),
                 state: state.to_string(),
                 author: None,
@@ -440,22 +439,20 @@ mod tests {
                 milestone: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
-                web_url: String::new(),
+                web_url: None,
                 description: None,
                 draft: false,
-                work_in_progress: false,
                 merge_status: None,
                 source_branch: "feature".to_string(),
                 target_branch: "main".to_string(),
                 head_pipeline: None,
-                user_notes_count: 0,
-                references: None,
+                user_notes_count: None,
+                reference: None,
                 approved_by: vec![],
-                diff_additions: None,
-                diff_deletions: None,
-                diff_file_count: None,
+                diff_stats_summary: None,
                 approved: None,
-                unresolved_threads: None,
+                resolvable_discussions_count: None,
+                resolved_discussions_count: None,
             },
         }
     }
@@ -471,11 +468,11 @@ mod tests {
 
         let opened = db.load_issues(Some("opened")).unwrap();
         assert_eq!(opened.len(), 1);
-        assert_eq!(opened[0].issue.id, 1);
+        assert_eq!(opened[0].issue.id, "1");
 
         let closed = db.load_issues(Some("closed")).unwrap();
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].issue.id, 2);
+        assert_eq!(closed[0].issue.id, "2");
     }
 
     #[test]
@@ -510,10 +507,10 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         db.upsert_issues(&[make_issue(1, "opened")]).unwrap();
 
-        let found = db.load_issue_by_key("test/project", 1).unwrap();
+        let found = db.load_issue_by_key("test/project", "1").unwrap();
         assert!(found.is_some());
 
-        let missing = db.load_issue_by_key("test/project", 999).unwrap();
+        let missing = db.load_issue_by_key("test/project", "999").unwrap();
         assert!(missing.is_none());
     }
 
@@ -598,6 +595,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(shadow.len(), 1);
-        assert_eq!(shadow[0].issue.id, 1);
+        assert_eq!(shadow[0].issue.id, "1");
     }
 }
