@@ -1,6 +1,6 @@
 //! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
-use glab_core::domain::{TrackedIssue, TrackedMergeRequest};
+use glab_core::domain::{StatusValue, TrackedIssue, TrackedMergeRequest};
 
 use super::issue_actions::IssueActions;
 use super::mr_actions::MrActions;
@@ -10,8 +10,8 @@ impl App {
     pub(super) fn set_issue_status(
         &mut self,
         project: &str,
-        issue_id: u64,
-        iid: u64,
+        issue_id: &str,
+        iid: &str,
         status_name: &str,
     ) {
         // Find the status from cached statuses
@@ -36,15 +36,17 @@ impl App {
             .iter()
             .position(|e| e.issue.iid == iid && e.project_path == project)
         {
-            self.data.issues[pos].issue.custom_status = Some(status_name.to_string());
-            self.data.issues[pos].issue.custom_status_category = status_category;
+            self.data.issues[pos].issue.status = Some(StatusValue {
+                name: status_name.to_string(),
+                category: status_category,
+            });
             self.ui.dirty.issues = true;
         }
         self.ui.pending_cmds.push(crate::cmd::Cmd::PersistIssues);
         self.ui.pending_cmds.push(crate::cmd::Cmd::SpawnSetStatus {
             project: project.to_string(),
-            issue_id,
-            iid,
+            issue_id: issue_id.to_string(),
+            iid: iid.to_string(),
             status_id,
             status_display: status_name.to_string(),
         });
@@ -80,7 +82,7 @@ impl App {
                     .iter_mut()
                     .find(|m| m.mr.iid == iid && m.project_path == project)
                 {
-                    mr.update_labels(labels, &self.ctx, &mut self.ui);
+                    mr.update_labels(labels, &self.data.labels, &self.ctx, &mut self.ui);
                 }
             }
             None => {}
@@ -169,14 +171,14 @@ impl App {
     pub(super) fn action_open_detail(&mut self) {
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { project, iid, .. }) => {
-                self.ui.views.issue_detail.open(&project, iid);
-                self.fetch_notes_for_issue(&project, iid);
+                self.ui.views.issue_detail.open(&project, &iid);
+                self.fetch_notes_for_issue(&project, &iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::IssueDetail;
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                self.ui.views.mr_detail.open(&project, iid);
-                self.fetch_notes_for_mr(&project, iid);
+                self.ui.views.mr_detail.open(&project, &iid);
+                self.fetch_notes_for_mr(&project, &iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::MrDetail;
             }
@@ -187,7 +189,7 @@ impl App {
 
     pub(super) fn apply_iteration_move(
         &mut self,
-        issue_id: u64,
+        issue_id: &str,
         target: Option<&glab_core::domain::Iteration>,
     ) {
         let issue_idx = self.data.issues.iter().position(|i| i.issue.id == issue_id);
@@ -206,7 +208,7 @@ impl App {
         self.ui
             .pending_cmds
             .push(crate::cmd::Cmd::SpawnMoveIteration {
-                issue_id,
+                issue_id: issue_id.to_string(),
                 target_gid,
                 old_iteration,
             });

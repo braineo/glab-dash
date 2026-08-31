@@ -86,7 +86,7 @@ impl App {
                 let tx = self.ctx.async_tx.clone();
                 tokio::spawn(async move {
                     let result = client
-                        .update_issue(issue_id, serde_json::json!({"stateEvent": "CLOSE"}))
+                        .update_issue(&issue_id, serde_json::json!({"stateEvent": "CLOSE"}))
                         .await;
                     let _ = tx.send(AsyncMsg::IssueUpdated(result));
                 });
@@ -96,7 +96,7 @@ impl App {
                 let tx = self.ctx.async_tx.clone();
                 tokio::spawn(async move {
                     let result = client
-                        .update_issue(issue_id, serde_json::json!({"stateEvent": "REOPEN"}))
+                        .update_issue(&issue_id, serde_json::json!({"stateEvent": "REOPEN"}))
                         .await;
                     let _ = tx.send(AsyncMsg::IssueUpdated(result));
                 });
@@ -105,9 +105,7 @@ impl App {
                 let client = self.ctx.client.clone();
                 let tx = self.ctx.async_tx.clone();
                 tokio::spawn(async move {
-                    let result = client
-                        .update_mr(&project, iid, serde_json::json!({"state_event": "close"}))
-                        .await;
+                    let result = client.close_mr(&project, &iid).await;
                     let _ = tx.send(AsyncMsg::MrUpdated(result, project));
                 });
             }
@@ -116,7 +114,7 @@ impl App {
                 let tx = self.ctx.async_tx.clone();
                 tokio::spawn(async move {
                     let result = client
-                        .approve_mr(&project, iid)
+                        .approve_mr(&project, &iid)
                         .await
                         .map(|()| format!("Approved !{iid}"));
                     let _ = tx.send(AsyncMsg::ActionDone(result));
@@ -126,8 +124,11 @@ impl App {
                 let client = self.ctx.client.clone();
                 let tx = self.ctx.async_tx.clone();
                 tokio::spawn(async move {
-                    let result = client.merge_mr(&project, iid).await;
-                    let _ = tx.send(AsyncMsg::MrUpdated(result, project));
+                    let result = client
+                        .merge_mr(&project, &iid)
+                        .await
+                        .map(|()| format!("Merged !{iid}"));
+                    let _ = tx.send(AsyncMsg::ActionDone(result));
                 });
             }
             Cmd::SpawnMoveIteration {
@@ -139,7 +140,7 @@ impl App {
                 let tx = self.ctx.async_tx.clone();
                 tokio::spawn(async move {
                     let result = client
-                        .update_issue_iteration(issue_id, target_gid.as_deref())
+                        .update_issue_iteration(&issue_id, target_gid.as_deref())
                         .await;
                     let _ = tx.send(AsyncMsg::IterationUpdated(result, issue_id, old_iteration));
                 });
@@ -155,7 +156,7 @@ impl App {
                 let tx = self.ctx.async_tx.clone();
                 tokio::spawn(async move {
                     let result = client
-                        .update_issue_status(issue_id, &status_id)
+                        .update_issue_status(&issue_id, &status_id)
                         .await
                         .map(|()| (project, iid, status_display));
                     let _ = tx.send(AsyncMsg::IssueStatusUpdated(result));

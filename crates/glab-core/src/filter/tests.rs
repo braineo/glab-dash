@@ -4,11 +4,9 @@ use chrono::Utc;
 
 fn make_user(username: &str) -> User {
     User {
-        id: 1,
+        id: "gid://gitlab/User/1".to_string(),
         username: username.to_string(),
         name: username.to_string(),
-        avatar_url: None,
-        web_url: String::new(),
     }
 }
 
@@ -21,8 +19,8 @@ fn make_tracked_issue(
 ) -> TrackedIssue {
     TrackedIssue {
         issue: Issue {
-            id: 1,
-            iid: 1,
+            id: "gid://gitlab/User/1".to_string(),
+            iid: "1".to_string(),
             title: title.to_string(),
             state: state.to_string(),
             author: Some(make_user("author")),
@@ -38,9 +36,8 @@ fn make_tracked_issue(
             web_url: String::new(),
             description: None,
             user_notes_count: 0,
-            references: None,
-            custom_status: None,
-            custom_status_category: None,
+            reference: None,
+            status: None,
             iteration: None,
             weight: None,
         },
@@ -59,8 +56,8 @@ fn make_tracked_mr(
 ) -> TrackedMergeRequest {
     TrackedMergeRequest {
         mr: MergeRequest {
-            id: 1,
-            iid: 1,
+            id: "gid://gitlab/User/1".to_string(),
+            iid: "1".to_string(),
             title: title.to_string(),
             state: state.to_string(),
             author: Some(make_user("author")),
@@ -70,25 +67,20 @@ fn make_tracked_mr(
             milestone: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            web_url: String::new(),
+            web_url: None,
             description: None,
             draft,
-            work_in_progress: false,
             merge_status: None,
             source_branch: "feature".to_string(),
             target_branch: "main".to_string(),
             head_pipeline: None,
-            user_notes_count: 0,
-            references: None,
-            approved_by: approved_by
-                .iter()
-                .map(|u| ApprovalUser { user: make_user(u) })
-                .collect(),
-            diff_additions: None,
-            diff_deletions: None,
-            diff_file_count: None,
+            user_notes_count: None,
+            reference: None,
+            approved_by: approved_by.iter().map(|u| make_user(u)).collect(),
+            diff_stats_summary: None,
             approved: None,
-            unresolved_threads: None,
+            resolvable_discussions_count: None,
+            resolved_discussions_count: None,
         },
         project_path: project.to_string(),
     }

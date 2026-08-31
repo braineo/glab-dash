@@ -70,8 +70,8 @@ impl IssueActions for TrackedIssue {
             KeyAction::SetStatus => {
                 fetch_or_show_status_chord(
                     &self.project_path,
-                    self.issue.id,
-                    self.issue.iid,
+                    &self.issue.id,
+                    &self.issue.iid,
                     false,
                     ctx,
                     data,
@@ -81,8 +81,8 @@ impl IssueActions for TrackedIssue {
             KeyAction::ToggleState => {
                 fetch_or_show_status_chord(
                     &self.project_path,
-                    self.issue.id,
-                    self.issue.iid,
+                    &self.issue.id,
+                    &self.issue.iid,
                     true,
                     ctx,
                     data,
@@ -134,7 +134,7 @@ impl IssueActions for TrackedIssue {
                 };
             }
             KeyAction::MoveIteration => {
-                show_iteration_chord(self.issue.id, data, ui);
+                show_iteration_chord(&self.issue.id, data, ui);
             }
             _ => return EventResult::Bubble,
         }
@@ -170,7 +170,7 @@ impl IssueActions for TrackedIssue {
             .collect();
 
         self.issue.labels = labels.to_vec();
-        let issue_id = self.issue.id;
+        let issue_id = self.issue.id.clone();
         let input = serde_json::json!({
             "labelsWidget": {
                 "addLabelIds": add_gids,
@@ -180,7 +180,7 @@ impl IssueActions for TrackedIssue {
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         tokio::spawn(async move {
-            let result = client.update_issue(issue_id, input).await;
+            let result = client.update_issue(&issue_id, input).await;
             let _ = tx.send(super::AsyncMsg::IssueUpdated(result));
         });
         ui.dirty.issues = true;
@@ -189,15 +189,13 @@ impl IssueActions for TrackedIssue {
     /// Update assignee via GraphQL.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
         let placeholder = User {
-            id: 0,
+            id: String::new(),
             username: username.to_string(),
             name: username.to_string(),
-            avatar_url: None,
-            web_url: String::new(),
         };
         self.issue.assignees = vec![placeholder];
 
-        let issue_id = self.issue.id;
+        let issue_id = self.issue.id.clone();
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         let username = username.to_string();
@@ -211,7 +209,7 @@ impl IssueActions for TrackedIssue {
                                 "assigneeIds": [format!("gid://gitlab/User/{}", user.id)]
                             }
                         });
-                        let result = client.update_issue(issue_id, input).await;
+                        let result = client.update_issue(&issue_id, input).await;
                         let _ = tx.send(super::AsyncMsg::IssueUpdated(result));
                     } else {
                         let _ = tx.send(super::AsyncMsg::ActionDone(Err(anyhow::anyhow!(
@@ -239,23 +237,23 @@ impl IssueActions for TrackedIssue {
         let tx = ctx.async_tx.clone();
         let body = body.to_string();
         let project = self.project_path.clone();
-        let iid = self.issue.iid;
+        let iid = self.issue.iid.clone();
 
         ui.loading = true;
         tokio::spawn(async move {
             let create_result = match &reply_discussion_id {
                 Some(disc_id) => {
                     client
-                        .reply_to_issue_discussion(&project, iid, disc_id, &body)
+                        .reply_to_issue_discussion(&project, &iid, disc_id, &body)
                         .await
                 }
-                None => client.create_issue_note(&project, iid, &body).await,
+                None => client.create_issue_note(&project, &iid, &body).await,
             };
             if let Err(e) = create_result {
                 let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
                 return;
             }
-            let discussions = client.list_issue_discussions(&project, iid).await;
+            let discussions = client.list_issue_discussions(&project, &iid).await;
             let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
         });
     }
@@ -264,8 +262,8 @@ impl IssueActions for TrackedIssue {
 /// Open status chord from cached statuses, or trigger async fetch.
 fn fetch_or_show_status_chord(
     project: &str,
-    issue_id: u64,
-    iid: u64,
+    issue_id: &str,
+    iid: &str,
     close_only: bool,
     ctx: &AppCtx,
     data: &AppData,
@@ -281,6 +279,8 @@ fn fetch_or_show_status_chord(
     let client = ctx.client.clone();
     let tx = ctx.async_tx.clone();
     let project = project.to_string();
+    let issue_id = issue_id.to_string();
+    let iid = iid.to_string();
     ui.loading = true;
     tokio::spawn(async move {
         let result = client.fetch_work_item_statuses(&project).await;
@@ -293,13 +293,15 @@ fn fetch_or_show_status_chord(
 /// Build the status chord from already-cached statuses.
 pub fn build_status_chord(
     project: &str,
-    issue_id: u64,
-    iid: u64,
+    issue_id: &str,
+    iid: &str,
     close_only: bool,
     statuses: &[glab_core::domain::WorkItemStatus],
     data: &AppData,
     ui: &mut UiState,
 ) {
+    let iid_owned = iid.to_string();
+    let issue_id_owned = issue_id.to_string();
     let is_duplicate =
         |s: &glab_core::domain::WorkItemStatus| s.name.to_lowercase().contains("duplicate");
 
@@ -366,7 +368,7 @@ pub fn build_status_chord(
             state: chord_popup::ChordState::from_options("Close As", options, max_code_len)
                 .with_kind(chord_popup::ChordKind::Status),
             on_complete: Box::new(move |value, app| {
-                app.set_issue_status(&project_owned, issue_id, iid, &value);
+                app.set_issue_status(&project_owned, &issue_id_owned, &iid_owned, &value);
             }),
         };
     } else {
@@ -381,14 +383,15 @@ pub fn build_status_chord(
             state: chord_popup::ChordState::from_options("Set Status", options, max_code_len)
                 .with_kind(chord_popup::ChordKind::Status),
             on_complete: Box::new(move |value, app| {
-                app.set_issue_status(&project_owned, issue_id, iid, &value);
+                app.set_issue_status(&project_owned, &issue_id_owned, &iid_owned, &value);
             }),
         };
     }
 }
 
 /// Show a close/reopen confirm dialog for issues without custom statuses.
-pub fn show_close_reopen_confirm(issue_id: u64, iid: u64, item_state: &str, ui: &mut UiState) {
+pub fn show_close_reopen_confirm(issue_id: &str, iid: &str, item_state: &str, ui: &mut UiState) {
+    let issue_id = issue_id.to_string();
     if item_state == "opened" {
         ui.overlay = Overlay::Confirm {
             title: "Close Issue".to_string(),
@@ -421,7 +424,8 @@ pub fn show_close_reopen_confirm(issue_id: u64, iid: u64, item_state: &str, ui: 
 }
 
 /// Open the iteration move chord.
-fn show_iteration_chord(issue_id: u64, data: &AppData, ui: &mut UiState) {
+fn show_iteration_chord(issue_id: &str, data: &AppData, ui: &mut UiState) {
+    let issue_id = issue_id.to_string();
     let current_pos = data.iterations.iter().position(|i| i.state == "current");
 
     let mut display_opts: Vec<(String, String)> = Vec::new();
@@ -434,10 +438,11 @@ fn show_iteration_chord(issue_id: u64, data: &AppData, ui: &mut UiState) {
             if let Some(it) = data.iterations.get(pos + i) {
                 let start = it.start_date.as_deref().unwrap_or("?");
                 let end = it.due_date.as_deref().unwrap_or("?");
-                let title = if it.title.is_empty() {
+                let it_title = it.title.as_deref().unwrap_or("");
+                let title = if it_title.is_empty() {
                     format!("{start} \u{2192} {end}")
                 } else {
-                    format!("{} ({} \u{2192} {})", it.title, start, end)
+                    format!("{it_title} ({start} \u{2192} {end})")
                 };
 
                 let code = prefix_char.to_string();
@@ -462,7 +467,7 @@ fn show_iteration_chord(issue_id: u64, data: &AppData, ui: &mut UiState) {
                 .into_iter()
                 .find(|(t, _)| t == &value)
                 .and_then(|(_, it)| it);
-            app.apply_iteration_move(issue_id, target.as_ref());
+            app.apply_iteration_move(&issue_id, target.as_ref());
         }),
     };
 }

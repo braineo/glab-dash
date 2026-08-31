@@ -89,14 +89,14 @@ impl AutocompleteState {
                     .iter()
                     .map(|ti| CompletionItem {
                         label: format!("{} {}", ti.issue.iid, ti.issue.title),
-                        insert: ti.issue.iid.to_string(),
+                        insert: ti.issue.iid.clone(),
                     })
                     .collect(),
                 CompletionKind::MergeRequest => mrs
                     .iter()
                     .map(|tm| CompletionItem {
                         label: format!("{} {}", tm.mr.iid, tm.mr.title),
-                        insert: tm.mr.iid.to_string(),
+                        insert: tm.mr.iid.clone(),
                     })
                     .collect(),
             };

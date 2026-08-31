@@ -1,7 +1,7 @@
 //! TEA handle phase for async messages: process results from background tasks.
 
 use crate::cmd::Cmd;
-use glab_core::domain::{TrackedIssue, TrackedMergeRequest};
+use glab_core::domain::{StatusValue, TrackedIssue, TrackedMergeRequest};
 
 use super::issue_actions;
 use super::{App, AsyncMsg, FetchState, View};
@@ -139,8 +139,10 @@ impl App {
                             .iter()
                             .position(|e| e.issue.iid == iid && e.project_path == project_path)
                         {
-                            self.data.issues[pos].issue.custom_status = Some(status_name);
-                            self.data.issues[pos].issue.custom_status_category = category;
+                            self.data.issues[pos].issue.status = Some(StatusValue {
+                                name: status_name,
+                                category,
+                            });
                         }
                         self.ui.error = None;
                         self.ui.dirty.issues = true;
@@ -158,7 +160,7 @@ impl App {
             }
             AsyncMsg::StatusesLoaded(result, project, issue_id, iid, close_only) => {
                 self.ui.loading = false;
-                let is_background = issue_id == 0 && iid == 0;
+                let is_background = issue_id.is_empty() && iid.is_empty();
                 match result {
                     Ok(statuses) => {
                         if statuses.is_empty() && !is_background {
@@ -171,8 +173,8 @@ impl App {
                                 .or_else(|| self.current_detail_issue())
                                 .map_or("opened".to_string(), |i| i.issue.state.clone());
                             issue_actions::show_close_reopen_confirm(
-                                issue_id,
-                                iid,
+                                &issue_id,
+                                &iid,
                                 &item_state,
                                 &mut self.ui,
                             );
@@ -189,8 +191,8 @@ impl App {
                             {
                                 issue_actions::build_status_chord(
                                     &project,
-                                    issue_id,
-                                    iid,
+                                    &issue_id,
+                                    &iid,
                                     close_only,
                                     statuses,
                                     &self.data,

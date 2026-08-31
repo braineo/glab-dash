@@ -348,12 +348,7 @@ impl IterationBoardState {
             if self.columns.is_empty() {
                 continue;
             }
-            let status_lower = item
-                .issue
-                .custom_status
-                .as_deref()
-                .unwrap_or("")
-                .to_lowercase();
+            let status_lower = item.issue.status_name().unwrap_or("").to_lowercase();
             let col_idx = self
                 .columns
                 .iter()
@@ -419,7 +414,7 @@ pub fn render(
     current_iteration: Option<&Iteration>,
     health: Option<&mut IterationHealth>,
     shadow_work_cache: &[TrackedIssue],
-    unplanned_work_cache: &HashMap<u64, DateTime<Utc>>,
+    unplanned_work_cache: &HashMap<String, DateTime<Utc>>,
 ) {
     let chunks = Layout::vertical([
         Constraint::Length(3),      // Header
@@ -511,15 +506,13 @@ fn render_iteration_board(
 
     let iter_label = current_iteration.map_or_else(
         || "No current iteration".to_string(),
-        |i| {
-            if i.title.is_empty() {
-                match (&i.start_date, &i.due_date) {
-                    (Some(s), Some(d)) => format!("{s} \u{2014} {d}"),
-                    _ => "Current".to_string(),
-                }
-            } else {
-                i.title.clone()
-            }
+        |i| match i.title.as_deref().filter(|t| !t.is_empty()) {
+            Some(title) => title.to_string(),
+            // Titles are often null for auto-generated iterations.
+            None => match (&i.start_date, &i.due_date) {
+                (Some(s), Some(d)) => format!("{s} \u{2014} {d}"),
+                _ => "Current".to_string(),
+            },
         },
     );
 
@@ -774,7 +767,7 @@ fn render_iteration_health(
     is_focused: bool,
     issues: &[TrackedIssue],
     shadow_work_cache: &[TrackedIssue],
-    unplanned_work_cache: &HashMap<u64, DateTime<Utc>>,
+    unplanned_work_cache: &HashMap<String, DateTime<Utc>>,
 ) {
     let border_color = if is_focused {
         styles::CYAN
@@ -842,15 +835,13 @@ fn render_progress_line(
 ) {
     let iter_label = current_iteration.map_or_else(
         || "Iteration".to_string(),
-        |i| {
-            if i.title.is_empty() {
-                match (&i.start_date, &i.due_date) {
-                    (Some(s), Some(d)) => format!("{s} \u{2014} {d}"),
-                    _ => "Current".to_string(),
-                }
-            } else {
-                i.title.clone()
-            }
+        |i| match i.title.as_deref().filter(|t| !t.is_empty()) {
+            Some(title) => title.to_string(),
+            // Titles are often null for auto-generated iterations.
+            None => match (&i.start_date, &i.due_date) {
+                (Some(s), Some(d)) => format!("{s} \u{2014} {d}"),
+                _ => "Current".to_string(),
+            },
         },
     );
 
@@ -982,7 +973,7 @@ fn render_health_list(
     is_focused: bool,
     issues: &[TrackedIssue],
     shadow_work_cache: &[TrackedIssue],
-    unplanned_work_cache: &HashMap<u64, DateTime<Utc>>,
+    unplanned_work_cache: &HashMap<String, DateTime<Utc>>,
 ) {
     let list = health.active_list();
     let tab = health.active_tab;
@@ -1111,10 +1102,7 @@ fn render_stats_summary(
         .filter(|i| i.issue.assignees.is_empty())
         .count();
     let open_mrs = mrs.iter().filter(|m| m.mr.state == "opened").count();
-    let draft_mrs = mrs
-        .iter()
-        .filter(|m| m.mr.draft || m.mr.work_in_progress)
-        .count();
+    let draft_mrs = mrs.iter().filter(|m| m.mr.draft).count();
     let my_review_mrs = mrs
         .iter()
         .filter(|m| {
@@ -1273,7 +1261,7 @@ fn render_member_table(
 pub fn compute_health(
     issues: &[TrackedIssue],
     current_iteration: &Iteration,
-    unplanned_work_cache: &HashMap<u64, DateTime<Utc>>,
+    unplanned_work_cache: &HashMap<String, DateTime<Utc>>,
     unplanned_work_loading: bool,
     shadow_work_cache: &[TrackedIssue],
     prev_health: Option<&IterationHealth>,
@@ -1317,8 +1305,7 @@ pub fn compute_health(
     // Determine "done" via status category or state
     let is_done = |ti: &TrackedIssue| -> bool {
         ti.issue
-            .custom_status_category
-            .as_deref()
+            .status_category()
             .map_or(ti.issue.state == "closed", |cat| cat == "done")
     };
 
@@ -1380,8 +1367,7 @@ pub fn compute_health(
     // Exclude "canceled" category (duplicates, won't do, etc.) — only real completed work.
     let is_canceled = |ti: &TrackedIssue| -> bool {
         ti.issue
-            .custom_status_category
-            .as_deref()
+            .status_category()
             .is_some_and(|cat| cat == "canceled")
     };
 
@@ -1406,8 +1392,7 @@ pub fn compute_health(
     let stale_threshold = Utc::now() - chrono::Duration::days(5);
     let is_active_status = |ti: &TrackedIssue| -> bool {
         ti.issue
-            .custom_status_category
-            .as_deref()
+            .status_category()
             .is_some_and(|cat| cat == "active")
     };
 
@@ -1468,8 +1453,8 @@ mod tests {
         TrackedIssue {
             project_path: "test/project".to_string(),
             issue: Issue {
-                id,
-                iid: id,
+                id: id.to_string(),
+                iid: id.to_string(),
                 title: format!("Issue {id}"),
                 state: "opened".to_string(),
                 author: None,
@@ -1482,12 +1467,11 @@ mod tests {
                 web_url: String::new(),
                 description: None,
                 user_notes_count: 0,
-                references: None,
-                custom_status: None,
-                custom_status_category: None,
+                reference: None,
+                status: None,
                 iteration: iteration_id.map(|id| glab_core::domain::Iteration {
                     id: id.to_string(),
-                    title: "Sprint 1".to_string(),
+                    title: Some("Sprint 1".to_string()),
                     start_date: None,
                     due_date: None,
                     state: "current".to_string(),
@@ -1504,7 +1488,7 @@ mod tests {
 
         let iter = glab_core::domain::Iteration {
             id: "gid://gitlab/Iteration/1".to_string(),
-            title: "Sprint 1".to_string(),
+            title: Some("Sprint 1".to_string()),
             start_date: Some("2026-04-01".to_string()),
             due_date: Some("2026-04-14".to_string()),
             state: "current".to_string(),
@@ -1545,14 +1529,17 @@ mod tests {
 
         let iter = glab_core::domain::Iteration {
             id: "gid://gitlab/Iteration/1".to_string(),
-            title: "Sprint 1".to_string(),
+            title: Some("Sprint 1".to_string()),
             start_date: None,
             due_date: None,
             state: "current".to_string(),
         };
 
         let mut in_progress = make_issue(1, Some("gid://gitlab/Iteration/1"));
-        in_progress.issue.custom_status = Some("In Progress".to_string());
+        in_progress.issue.status = Some(glab_core::domain::StatusValue {
+            name: "In Progress".to_string(),
+            category: None,
+        });
         let no_status = make_issue(2, Some("gid://gitlab/Iteration/1"));
 
         let issues = vec![in_progress, no_status];
