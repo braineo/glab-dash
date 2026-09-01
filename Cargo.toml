@@ -17,8 +17,8 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"        # fires on every pub getter once this is a lib
 implicit_hasher = "allow"           # internal API; callers all use the default hasher
-should_implement_trait = "allow"    # `Field::from_str` etc. return Option, not Result;
-                                    # they become real `FromStr` impls if presets get typed
+should_implement_trait = "allow"    # `Field::from_str` etc. wrap the strum-derived
+                                    # `FromStr` to return Option, not Result
 
 [workspace.dependencies]
 anyhow = "1"
@@ -38,6 +38,7 @@ rpassword = "7"
 rusqlite = { version = "0.33", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+strum = { version = "0.26", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tracing = "0.1"

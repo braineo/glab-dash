@@ -2,10 +2,20 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::domain::{Issue, MergeRequest};
+use serde::{Deserialize, Serialize};
+use strum::{EnumString, IntoStaticStr, VariantArray};
 
 use super::label_order::compare_by_label_scope;
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+/// A sortable attribute of an issue or merge request.
+///
+/// As with `Field`, the snake_case strum strings are the config-file names and
+/// the serde representation stays at the default PascalCase, because persisted
+/// view state is written in that shape.
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, EnumString, VariantArray,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum SortField {
     Iid,
     Title,
@@ -16,6 +26,8 @@ pub enum SortField {
     Assignee,
     Label,
     Milestone,
+    /// Named `comments` in config; the GraphQL spelling is accepted too.
+    #[strum(to_string = "comments", serialize = "user_notes_count")]
     UserNotesCount,
     Project,
     Weight,
@@ -26,6 +38,8 @@ pub enum SortField {
 }
 
 impl SortField {
+    /// The fields offered for issues. Hand-written because it is a subset:
+    /// `VariantArray` only knows every variant, not which kind each belongs to.
     pub fn all_issue() -> &'static [SortField] {
         &[
             SortField::Iid,
@@ -44,6 +58,7 @@ impl SortField {
         ]
     }
 
+    /// The fields offered for merge requests. See [`SortField::all_issue`].
     pub fn all_mr() -> &'static [SortField] {
         &[
             SortField::Iid,
@@ -63,48 +78,16 @@ impl SortField {
     }
 
     pub fn name(&self) -> &'static str {
-        match self {
-            SortField::Iid => "iid",
-            SortField::Title => "title",
-            SortField::UpdatedAt => "updated_at",
-            SortField::CreatedAt => "created_at",
-            SortField::State => "state",
-            SortField::Author => "author",
-            SortField::Assignee => "assignee",
-            SortField::Label => "label",
-            SortField::Milestone => "milestone",
-            SortField::UserNotesCount => "comments",
-            SortField::Project => "project",
-            SortField::Weight => "weight",
-            SortField::Iteration => "iteration",
-            SortField::Pipeline => "pipeline",
-            SortField::Draft => "draft",
-        }
+        self.into()
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "iid" => Some(SortField::Iid),
-            "title" => Some(SortField::Title),
-            "updated_at" => Some(SortField::UpdatedAt),
-            "created_at" => Some(SortField::CreatedAt),
-            "state" => Some(SortField::State),
-            "author" => Some(SortField::Author),
-            "assignee" => Some(SortField::Assignee),
-            "label" => Some(SortField::Label),
-            "milestone" => Some(SortField::Milestone),
-            "comments" | "user_notes_count" => Some(SortField::UserNotesCount),
-            "project" => Some(SortField::Project),
-            "weight" => Some(SortField::Weight),
-            "iteration" => Some(SortField::Iteration),
-            "pipeline" => Some(SortField::Pipeline),
-            "draft" => Some(SortField::Draft),
-            _ => None,
-        }
+        s.parse().ok()
     }
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, EnumString)]
+#[strum(serialize_all = "snake_case")]
 pub enum SortDirection {
     Asc,
     Desc,
@@ -119,15 +102,11 @@ impl SortDirection {
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "asc" => Some(SortDirection::Asc),
-            "desc" => Some(SortDirection::Desc),
-            _ => None,
-        }
+        s.parse().ok()
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SortSpec {
     pub field: SortField,
     pub direction: SortDirection,

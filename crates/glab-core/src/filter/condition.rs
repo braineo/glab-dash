@@ -1,6 +1,17 @@
 use crate::domain::{Issue, MergeRequest};
+use serde::{Deserialize, Serialize};
+// `VariantArray` is imported as both the derive and the trait carrying `VARIANTS`.
+use strum::{EnumString, IntoStaticStr, VariantArray};
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+/// A filterable attribute of an issue or merge request.
+///
+/// The snake_case strum strings are the names used in config files and in a
+/// condition's rendered form. The serde representation is deliberately left at
+/// the default PascalCase: it is the on-disk shape of persisted view state.
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, EnumString, VariantArray,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum Field {
     Assignee,
     Author,
@@ -19,95 +30,53 @@ pub enum Field {
 
 impl Field {
     pub fn all() -> &'static [Field] {
-        &[
-            Field::Assignee,
-            Field::Author,
-            Field::Reviewer,
-            Field::Label,
-            Field::Milestone,
-            Field::State,
-            Field::Draft,
-            Field::ApprovedBy,
-            Field::Title,
-            Field::Project,
-            Field::Team,
-            Field::Iteration,
-            Field::Weight,
-        ]
+        Self::VARIANTS
     }
 
     pub fn name(&self) -> &'static str {
-        match self {
-            Field::Assignee => "assignee",
-            Field::Author => "author",
-            Field::Reviewer => "reviewer",
-            Field::Label => "label",
-            Field::Milestone => "milestone",
-            Field::State => "state",
-            Field::Draft => "draft",
-            Field::ApprovedBy => "approved_by",
-            Field::Title => "title",
-            Field::Project => "project",
-            Field::Team => "team",
-            Field::Iteration => "iteration",
-            Field::Weight => "weight",
-        }
+        self.into()
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "assignee" => Some(Field::Assignee),
-            "author" => Some(Field::Author),
-            "reviewer" => Some(Field::Reviewer),
-            "label" => Some(Field::Label),
-            "milestone" => Some(Field::Milestone),
-            "state" => Some(Field::State),
-            "draft" => Some(Field::Draft),
-            "approved_by" => Some(Field::ApprovedBy),
-            "title" => Some(Field::Title),
-            "project" => Some(Field::Project),
-            "team" => Some(Field::Team),
-            "iteration" => Some(Field::Iteration),
-            "weight" => Some(Field::Weight),
-            _ => None,
-        }
+        s.parse().ok()
     }
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+/// A comparison operator.
+///
+/// `to_string` carries the symbol, which is what `symbol()` returns and what a
+/// rendered condition shows; the extra `serialize` spelling is the long form
+/// accepted in config files. strum prefers `to_string` over the LONGEST
+/// `serialize`, so the symbols must be declared this way round.
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, EnumString, VariantArray,
+)]
 pub enum Op {
+    #[strum(to_string = "=", serialize = "eq")]
     Eq,
+    #[strum(to_string = "!=", serialize = "neq")]
     Neq,
+    #[strum(to_string = "~", serialize = "contains")]
     Contains,
+    #[strum(to_string = "!~", serialize = "not_contains")]
     NotContains,
 }
 
 impl Op {
     pub fn all() -> &'static [Op] {
-        &[Op::Eq, Op::Neq, Op::Contains, Op::NotContains]
+        Self::VARIANTS
     }
 
     pub fn symbol(&self) -> &'static str {
-        match self {
-            Op::Eq => "=",
-            Op::Neq => "!=",
-            Op::Contains => "~",
-            Op::NotContains => "!~",
-        }
+        self.into()
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "eq" | "=" => Some(Op::Eq),
-            "neq" | "!=" => Some(Op::Neq),
-            "contains" | "~" => Some(Op::Contains),
-            "not_contains" | "!~" => Some(Op::NotContains),
-            _ => None,
-        }
+        s.parse().ok()
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterCondition {
     pub field: Field,
     pub op: Op,
