@@ -191,7 +191,6 @@ impl IssueActions for TrackedIssue {
         let placeholder = User {
             id: String::new(),
             username: username.to_string(),
-            name: username.to_string(),
         };
         self.issue.assignees = vec![placeholder];
 

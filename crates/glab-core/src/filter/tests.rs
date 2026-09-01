@@ -6,7 +6,6 @@ fn make_user(username: &str) -> User {
     User {
         id: "gid://gitlab/User/1".to_string(),
         username: username.to_string(),
-        name: username.to_string(),
     }
 }
 
@@ -70,7 +69,6 @@ fn make_tracked_mr(
             web_url: None,
             description: None,
             draft,
-            merge_status: None,
             source_branch: "feature".to_string(),
             target_branch: "main".to_string(),
             head_pipeline: None,
