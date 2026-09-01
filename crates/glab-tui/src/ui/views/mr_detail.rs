@@ -339,7 +339,12 @@ fn render_discussions(lines: &mut Vec<Line<'_>>, state: &MrDetailState) {
                     styles::help_key_style(),
                 ),
                 Span::styled(
-                    format!("  {}", note.created_at.format("%Y-%m-%d %H:%M")),
+                    format!(
+                        "  {}",
+                        note.created_at
+                            .with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d %H:%M")
+                    ),
                     styles::help_desc_style(),
                 ),
             ]));
