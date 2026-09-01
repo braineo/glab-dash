@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::keybindings::{self, KeyAction};
 use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
 use crate::ui::{RenderCtx, components, styles};
-use glab_core::domain::{Iteration, TrackedIssue};
+use glab_core::domain::{Issue, Iteration};
 use glab_core::sort;
 
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ pub enum PlanningLayout {
 
 #[derive(Default)]
 pub struct PlanningColumn {
-    pub list: ItemList<TrackedIssue>,
+    pub list: ItemList<Issue>,
     pub filter: UserFilter,
 }
 
@@ -133,7 +133,7 @@ impl PlanningViewState {
 
     // ── Query ───────────────────────────────────────────────────────
 
-    pub fn selected_issue<'a>(&self, issues: &'a [TrackedIssue]) -> Option<&'a TrackedIssue> {
+    pub fn selected_issue<'a>(&self, issues: &'a [Issue]) -> Option<&'a Issue> {
         self.columns[self.focused_column].list.selected_item(issues)
     }
 
@@ -186,7 +186,7 @@ impl PlanningViewState {
     /// then apply each column's fuzzy search and sort.
     pub fn partition_issues(
         &mut self,
-        issues: &[TrackedIssue],
+        issues: &[Issue],
         label_orders: &HashMap<String, Vec<String>>,
     ) {
         for col in &mut self.columns {
@@ -202,7 +202,7 @@ impl PlanningViewState {
                 let next_id = self.next_iteration.as_ref().map(|i| i.id.as_str());
 
                 for (i, item) in issues.iter().enumerate() {
-                    let iter_id = item.issue.iteration.as_ref().map(|it| it.id.as_str());
+                    let iter_id = item.iteration.as_ref().map(|it| it.id.as_str());
                     if iter_id == prev_id && prev_id.is_some() {
                         self.columns[0].list.indices.push(i);
                     } else if iter_id == current_id && current_id.is_some() {
@@ -214,7 +214,7 @@ impl PlanningViewState {
             }
             PlanningLayout::TwoColumn => {
                 for (i, item) in issues.iter().enumerate() {
-                    let iter_id = item.issue.iteration.as_ref().map(|it| it.id.as_str());
+                    let iter_id = item.iteration.as_ref().map(|it| it.id.as_str());
                     if iter_id == current_id && current_id.is_some() {
                         self.columns[1].list.indices.push(i);
                     } else {
@@ -228,12 +228,12 @@ impl PlanningViewState {
         for col in &mut self.columns {
             col.list.indices.retain(|&i| {
                 let item = &issues[i];
-                let mut haystack = item.issue.title.to_lowercase();
-                for a in &item.issue.assignees {
+                let mut haystack = item.title.to_lowercase();
+                for a in &item.assignees {
                     haystack.push(' ');
                     haystack.push_str(&a.username.to_lowercase());
                 }
-                for l in &item.issue.labels {
+                for l in &item.labels {
                     haystack.push(' ');
                     haystack.push_str(&l.to_lowercase());
                 }
@@ -256,7 +256,7 @@ pub fn render(
     frame: &mut Frame,
     area: Rect,
     state: &mut PlanningViewState,
-    issues: &[TrackedIssue],
+    issues: &[Issue],
     config: &Config,
     active_team: Option<usize>,
     ctx: &RenderCtx,
@@ -301,7 +301,7 @@ fn render_column(
     area: Rect,
     state: &mut PlanningViewState,
     col_idx: usize,
-    issues: &[TrackedIssue],
+    issues: &[Issue],
     team_members: &[String],
     is_focused: bool,
     _ctx: &RenderCtx,
@@ -314,7 +314,7 @@ fn render_column(
         .indices
         .iter()
         .filter_map(|&i| issues.get(i))
-        .filter_map(|item| item.issue.weight)
+        .filter_map(|item| item.weight)
         .sum();
     let header_text = format!("{title}  ({count} issues, {total_weight}w)");
 
@@ -424,27 +424,18 @@ fn render_column(
         .filter_map(|&i| issues.get(i))
         .map(|item| {
             let status_icon = item
-                .issue
                 .status_name()
                 .map_or(styles::ICON_UNCHECK, styles::status_icon);
-            let iid = format!("#{}", item.issue.iid);
-            let assignee = item
-                .issue
-                .assignees
-                .first()
-                .map_or("-", |u| u.username.as_str());
-            let weight = item
-                .issue
-                .weight
-                .map(|w| format!("{w}w"))
-                .unwrap_or_default();
+            let iid = format!("#{}", item.iid);
+            let assignee = item.assignees.first().map_or("-", |u| u.username.as_str());
+            let weight = item.weight.map(|w| format!("{w}w")).unwrap_or_default();
 
-            let title = &item.issue.title;
+            let title = &item.title;
 
             Row::new(vec![
                 Cell::from(Span::styled(
                     status_icon,
-                    styles::status_style(item.issue.status_name().unwrap_or(&item.issue.state)),
+                    styles::status_style(item.status_name().unwrap_or(&item.state)),
                 )),
                 Cell::from(Span::styled(iid, Style::default().fg(styles::TEXT_DIM))),
                 Cell::from(Span::styled(
@@ -536,7 +527,7 @@ fn column_title(state: &PlanningViewState, col_idx: usize) -> String {
 
 fn member_stats(
     indices: &[usize],
-    issues: &[TrackedIssue],
+    issues: &[Issue],
     team_members: &[String],
 ) -> Vec<(String, usize, u32)> {
     let mut stats: Vec<(String, usize, u32)> = Vec::new();
@@ -546,13 +537,12 @@ fn member_stats(
         for &idx in indices {
             if let Some(item) = issues.get(idx)
                 && item
-                    .issue
                     .assignees
                     .iter()
                     .any(|a| a.username.eq_ignore_ascii_case(member))
             {
                 count += 1;
-                weight += item.issue.weight.unwrap_or(0);
+                weight += item.weight.unwrap_or(0);
             }
         }
         if count > 0 {

@@ -14,32 +14,29 @@ fn make_user(username: &str) -> User {
     }
 }
 
-fn make_issue(iid: u64, title: &str, labels: &[&str], updated_days_ago: i64) -> TrackedIssue {
-    TrackedIssue {
-        issue: Issue {
-            id: iid.to_string(),
-            iid: iid.to_string(),
-            title: title.to_string(),
-            state: "opened".to_string(),
-            author: Some(make_user("author")),
-            assignees: vec![],
-            labels: labels
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            milestone: None,
-            created_at: Utc::now() - Duration::days(updated_days_ago + 10),
-            updated_at: Utc::now() - Duration::days(updated_days_ago),
-            closed_at: None,
-            web_url: String::new(),
-            description: None,
-            user_notes_count: 0,
-            reference: None,
-            status: None,
-            iteration: None,
-            weight: None,
-        },
-        project_path: "org/repo".to_string(),
+fn make_issue(iid: u64, title: &str, labels: &[&str], updated_days_ago: i64) -> Issue {
+    Issue {
+        id: iid.to_string(),
+        iid: iid.to_string(),
+        title: title.to_string(),
+        state: "opened".to_string(),
+        author: Some(make_user("author")),
+        assignees: vec![],
+        labels: labels
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
+        milestone: None,
+        created_at: Utc::now() - Duration::days(updated_days_ago + 10),
+        updated_at: Utc::now() - Duration::days(updated_days_ago),
+        closed_at: None,
+        web_url: String::new(),
+        description: None,
+        user_notes_count: 0,
+        reference: format!("org/repo#{iid}"),
+        status: None,
+        iteration: None,
+        weight: None,
     }
 }
 
@@ -85,9 +82,9 @@ fn test_multi_key_sort() {
         make_issue(2, "B", &[], 5),
         make_issue(3, "C", &[], 1),
     ];
-    issues[0].issue.state = "opened".to_string();
-    issues[1].issue.state = "closed".to_string();
-    issues[2].issue.state = "opened".to_string();
+    issues[0].state = "opened".to_string();
+    issues[1].state = "closed".to_string();
+    issues[2].state = "opened".to_string();
 
     let mut indices: Vec<usize> = vec![0, 1, 2];
     let specs = vec![

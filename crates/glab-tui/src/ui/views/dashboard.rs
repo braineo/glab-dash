@@ -12,7 +12,7 @@ use crate::config::{Config, KanbanColumnConfig};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::styles;
 use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
-use glab_core::domain::{Iteration, TrackedIssue, TrackedMergeRequest, WorkItemStatus};
+use glab_core::domain::{Issue, Iteration, MergeRequest, WorkItemStatus};
 use glab_core::sort;
 
 use std::collections::HashMap;
@@ -67,9 +67,9 @@ pub struct IterationHealth {
     pub burn_rate: BurnRate,
     // Focusable lists (indices into App::issues for unplanned_work/at_risk,
     // into App::shadow_work_cache for shadow_work)
-    pub unplanned_work: ItemList<TrackedIssue>,
-    pub shadow_work: ItemList<TrackedIssue>,
-    pub at_risk: ItemList<TrackedIssue>,
+    pub unplanned_work: ItemList<Issue>,
+    pub shadow_work: ItemList<Issue>,
+    pub at_risk: ItemList<Issue>,
     // Loading states (derived from fetch state, not stored separately)
     pub unplanned_work_loading: bool,
     // Tab navigation
@@ -96,7 +96,7 @@ impl IterationHealth {
         EventResult::Bubble
     }
 
-    pub fn active_list(&self) -> &ItemList<TrackedIssue> {
+    pub fn active_list(&self) -> &ItemList<Issue> {
         match self.active_tab {
             HealthTab::UnplannedWork => &self.unplanned_work,
             HealthTab::ShadowWork => &self.shadow_work,
@@ -104,7 +104,7 @@ impl IterationHealth {
         }
     }
 
-    pub fn active_list_mut(&mut self) -> &mut ItemList<TrackedIssue> {
+    pub fn active_list_mut(&mut self) -> &mut ItemList<Issue> {
         match self.active_tab {
             HealthTab::UnplannedWork => &mut self.unplanned_work,
             HealthTab::ShadowWork => &mut self.shadow_work,
@@ -124,9 +124,9 @@ impl IterationHealth {
     /// `shadow_work_cache` is the separate shadow work source.
     pub fn selected_issue<'a>(
         &self,
-        issues: &'a [TrackedIssue],
-        shadow_work_cache: &'a [TrackedIssue],
-    ) -> Option<&'a TrackedIssue> {
+        issues: &'a [Issue],
+        shadow_work_cache: &'a [Issue],
+    ) -> Option<&'a Issue> {
         match self.active_tab {
             HealthTab::UnplannedWork => self.unplanned_work.selected_item(issues),
             HealthTab::ShadowWork => self.shadow_work.selected_item(shadow_work_cache),
@@ -138,7 +138,7 @@ impl IterationHealth {
 // ── Iteration Board ──
 
 pub struct StatusColumn {
-    pub list: ItemList<TrackedIssue>,
+    pub list: ItemList<Issue>,
     pub status_name: String,
     /// Status names that map to this column (lowercase for matching).
     pub status_matches: Vec<String>,
@@ -325,7 +325,7 @@ impl IterationBoardState {
     /// Partition current-iteration issues into status columns, apply shared fuzzy/sort.
     pub fn partition_issues(
         &mut self,
-        issues: &[TrackedIssue],
+        issues: &[Issue],
         current_iteration: Option<&Iteration>,
         label_orders: &HashMap<String, Vec<String>>,
         me: &str,
@@ -339,7 +339,7 @@ impl IterationBoardState {
 
         for (i, item) in issues.iter().enumerate() {
             // Prefilter: only current iteration
-            let iter_id = item.issue.iteration.as_ref().map(|it| it.id.as_str());
+            let iter_id = item.iteration.as_ref().map(|it| it.id.as_str());
             if iter_id != current_id || current_id.is_none() {
                 continue;
             }
@@ -348,7 +348,7 @@ impl IterationBoardState {
             if self.columns.is_empty() {
                 continue;
             }
-            let status_lower = item.issue.status_name().unwrap_or("").to_lowercase();
+            let status_lower = item.status_name().unwrap_or("").to_lowercase();
             let col_idx = self
                 .columns
                 .iter()
@@ -370,12 +370,12 @@ impl IterationBoardState {
                 ) {
                     return false;
                 }
-                let mut haystack = item.issue.title.to_lowercase();
-                for a in &item.issue.assignees {
+                let mut haystack = item.title.to_lowercase();
+                for a in &item.assignees {
                     haystack.push(' ');
                     haystack.push_str(&a.username.to_lowercase());
                 }
-                for l in &item.issue.labels {
+                for l in &item.labels {
                     haystack.push(' ');
                     haystack.push_str(&l.to_lowercase());
                 }
@@ -391,7 +391,7 @@ impl IterationBoardState {
         }
     }
 
-    pub fn selected_issue<'a>(&self, issues: &'a [TrackedIssue]) -> Option<&'a TrackedIssue> {
+    pub fn selected_issue<'a>(&self, issues: &'a [Issue]) -> Option<&'a Issue> {
         self.columns
             .get(self.focused_column)
             .and_then(|col| col.list.selected_item(issues))
@@ -406,14 +406,14 @@ pub fn render(
     area: Rect,
     config: &Config,
     active_team: Option<usize>,
-    issues: &[TrackedIssue],
-    mrs: &[TrackedMergeRequest],
+    issues: &[Issue],
+    mrs: &[MergeRequest],
     loading: bool,
     board: &mut IterationBoardState,
-    board_issues: &[TrackedIssue],
+    board_issues: &[Issue],
     current_iteration: Option<&Iteration>,
     health: Option<&mut IterationHealth>,
-    shadow_work_cache: &[TrackedIssue],
+    shadow_work_cache: &[Issue],
     unplanned_work_cache: &HashMap<String, DateTime<Utc>>,
 ) {
     let chunks = Layout::vertical([
@@ -491,7 +491,7 @@ fn render_iteration_board(
     frame: &mut Frame,
     area: Rect,
     board: &mut IterationBoardState,
-    issues: &[TrackedIssue],
+    issues: &[Issue],
     current_iteration: Option<&Iteration>,
     board_focused: bool,
 ) {
@@ -624,7 +624,7 @@ fn render_board_column(
     area: Rect,
     board: &mut IterationBoardState,
     col_idx: usize,
-    issues: &[TrackedIssue],
+    issues: &[Issue],
     is_focused: bool,
 ) {
     let col = &board.columns[col_idx];
@@ -672,17 +672,13 @@ fn render_board_column(
         .iter()
         .filter_map(|&i| issues.get(i))
         .map(|item| {
-            let iid = format!("#{}", item.issue.iid);
-            let assignee = item
-                .issue
-                .assignees
-                .first()
-                .map_or("-", |u| u.username.as_str());
+            let iid = format!("#{}", item.iid);
+            let assignee = item.assignees.first().map_or("-", |u| u.username.as_str());
 
             Row::new(vec![
                 Cell::from(Span::styled(iid, Style::default().fg(styles::TEXT_DIM))),
                 Cell::from(Span::styled(
-                    item.issue.title.as_str(),
+                    item.title.as_str(),
                     Style::default().fg(styles::TEXT),
                 )),
                 Cell::from(Span::styled(assignee, Style::default().fg(styles::CYAN))),
@@ -765,8 +761,8 @@ fn render_iteration_health(
     health: Option<&mut IterationHealth>,
     current_iteration: Option<&Iteration>,
     is_focused: bool,
-    issues: &[TrackedIssue],
-    shadow_work_cache: &[TrackedIssue],
+    issues: &[Issue],
+    shadow_work_cache: &[Issue],
     unplanned_work_cache: &HashMap<String, DateTime<Utc>>,
 ) {
     let border_color = if is_focused {
@@ -971,8 +967,8 @@ fn render_health_list(
     area: Rect,
     health: &mut IterationHealth,
     is_focused: bool,
-    issues: &[TrackedIssue],
-    shadow_work_cache: &[TrackedIssue],
+    issues: &[Issue],
+    shadow_work_cache: &[Issue],
     unplanned_work_cache: &HashMap<String, DateTime<Utc>>,
 ) {
     let list = health.active_list();
@@ -994,7 +990,7 @@ fn render_health_list(
     }
 
     // Pick the right source slice for this tab
-    let source: &[TrackedIssue] = match tab {
+    let source: &[Issue] = match tab {
         HealthTab::UnplannedWork | HealthTab::AtRisk => issues,
         HealthTab::ShadowWork => shadow_work_cache,
     };
@@ -1005,29 +1001,28 @@ fn render_health_list(
         .filter_map(|&i| source.get(i))
         .enumerate()
         .map(|(i, item)| {
-            let iid_str = format!(" #{}", item.issue.iid);
+            let iid_str = format!(" #{}", item.iid);
             let assignee = item
-                .issue
                 .assignees
                 .first()
                 .map_or(String::new(), |a| format!("@{}", a.username));
             let detail = match tab {
                 HealthTab::UnplannedWork => unplanned_work_cache
-                    .get(&item.issue.id)
+                    .get(&item.id)
                     .map_or_else(String::new, |dt| format!("added {}", dt.format("%b %d"))),
                 HealthTab::ShadowWork => {
-                    let closed = item.issue.closed_at.unwrap_or(item.issue.updated_at);
+                    let closed = item.closed_at.unwrap_or(item.updated_at);
                     format!("closed {}", closed.format("%b %d"))
                 }
                 HealthTab::AtRisk => {
-                    let days = (Utc::now() - item.issue.updated_at).num_days();
+                    let days = (Utc::now() - item.updated_at).num_days();
                     format!("{days}d no update")
                 }
             };
             let row = Row::new(vec![
                 Cell::from(Span::styled(iid_str, Style::default().fg(styles::TEXT_DIM))),
                 Cell::from(Span::styled(
-                    item.issue.title.as_str(),
+                    item.title.as_str(),
                     Style::default().fg(styles::TEXT),
                 )),
                 Cell::from(Span::styled(assignee, Style::default().fg(styles::CYAN))),
@@ -1064,8 +1059,8 @@ fn render_quick_stats(
     area: Rect,
     config: &Config,
     active_team: Option<usize>,
-    issues: &[TrackedIssue],
-    mrs: &[TrackedMergeRequest],
+    issues: &[Issue],
+    mrs: &[MergeRequest],
 ) {
     let outer = styles::block("Overview");
     let inner = outer.inner(area);
@@ -1086,27 +1081,24 @@ fn render_stats_summary(
     frame: &mut Frame,
     area: Rect,
     config: &Config,
-    issues: &[TrackedIssue],
-    mrs: &[TrackedMergeRequest],
+    issues: &[Issue],
+    mrs: &[MergeRequest],
 ) {
     let tracking_issues = issues
         .iter()
-        .filter(|i| config.is_tracking_project(&i.project_path))
+        .filter(|i| config.is_tracking_project(i.project_path()))
         .count();
     let external_issues = issues
         .iter()
-        .filter(|i| !config.is_tracking_project(&i.project_path))
+        .filter(|i| !config.is_tracking_project(i.project_path()))
         .count();
-    let unassigned_issues = issues
-        .iter()
-        .filter(|i| i.issue.assignees.is_empty())
-        .count();
-    let open_mrs = mrs.iter().filter(|m| m.mr.state == "opened").count();
-    let draft_mrs = mrs.iter().filter(|m| m.mr.draft).count();
+    let unassigned_issues = issues.iter().filter(|i| i.assignees.is_empty()).count();
+    let open_mrs = mrs.iter().filter(|m| m.state == "opened").count();
+    let draft_mrs = mrs.iter().filter(|m| m.draft).count();
     let my_review_mrs = mrs
         .iter()
         .filter(|m| {
-            m.mr.reviewers
+            m.reviewers
                 .iter()
                 .any(|r| r.username.eq_ignore_ascii_case(&config.me))
         })
@@ -1181,8 +1173,8 @@ fn render_member_table(
     area: Rect,
     config: &Config,
     active_team: Option<usize>,
-    issues: &[TrackedIssue],
-    mrs: &[TrackedMergeRequest],
+    issues: &[Issue],
+    mrs: &[MergeRequest],
 ) {
     let members = match active_team {
         Some(idx) => config.team_members(idx),
@@ -1197,7 +1189,6 @@ fn render_member_table(
                 .iter()
                 .filter(|issue| {
                     issue
-                        .issue
                         .assignees
                         .iter()
                         .any(|a| a.username.eq_ignore_ascii_case(member))
@@ -1206,11 +1197,10 @@ fn render_member_table(
             let mr_count = mrs
                 .iter()
                 .filter(|m| {
-                    m.mr.assignees
+                    m.assignees
                         .iter()
                         .any(|a| a.username.eq_ignore_ascii_case(member))
-                        || m.mr
-                            .reviewers
+                        || m.reviewers
                             .iter()
                             .any(|r| r.username.eq_ignore_ascii_case(member))
                 })
@@ -1259,11 +1249,11 @@ fn render_member_table(
 /// This is a pure function that derives all health metrics from the provided data.
 /// Called from `App::compute_iteration_health()`.
 pub fn compute_health(
-    issues: &[TrackedIssue],
+    issues: &[Issue],
     current_iteration: &Iteration,
     unplanned_work_cache: &HashMap<String, DateTime<Utc>>,
     unplanned_work_loading: bool,
-    shadow_work_cache: &[TrackedIssue],
+    shadow_work_cache: &[Issue],
     prev_health: Option<&IterationHealth>,
 ) -> IterationHealth {
     let current_id = &current_iteration.id;
@@ -1290,23 +1280,17 @@ pub fn compute_health(
     };
 
     // Collect iteration issues
-    let iter_issues: Vec<&TrackedIssue> = issues
+    let iter_issues: Vec<&Issue> = issues
         .iter()
-        .filter(|i| {
-            i.issue
-                .iteration
-                .as_ref()
-                .is_some_and(|it| it.id == *current_id)
-        })
+        .filter(|i| i.iteration.as_ref().is_some_and(|it| it.id == *current_id))
         .collect();
 
     let total_issues = iter_issues.len();
 
     // Determine "done" via status category or state
-    let is_done = |ti: &TrackedIssue| -> bool {
-        ti.issue
-            .status_category()
-            .map_or(ti.issue.state == "closed", |cat| cat == "done")
+    let is_done = |ti: &Issue| -> bool {
+        ti.status_category()
+            .map_or(ti.state == "closed", |cat| cat == "done")
     };
 
     let done_issues = iter_issues.iter().filter(|i| is_done(i)).count();
@@ -1336,16 +1320,15 @@ pub fn compute_health(
     // Unplanned work: issues added 3+ days after iteration start (indices into `issues`)
     let unplanned_threshold = start_date
         .map(|s| s.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc() + chrono::Duration::days(3));
-    let mut unplanned_work = ItemList::<TrackedIssue>::default();
+    let mut unplanned_work = ItemList::<Issue>::default();
     if let Some(threshold) = unplanned_threshold {
         for (i, item) in issues.iter().enumerate() {
             let in_iter = item
-                .issue
                 .iteration
                 .as_ref()
                 .is_some_and(|it| it.id == *current_id);
             if in_iter
-                && let Some(added_at) = unplanned_work_cache.get(&item.issue.id)
+                && let Some(added_at) = unplanned_work_cache.get(&item.id)
                 && *added_at > threshold
             {
                 unplanned_work.indices.push(i);
@@ -1354,34 +1337,31 @@ pub fn compute_health(
     }
     unplanned_work.indices.sort_by(|&a, &b| {
         let added_a = unplanned_work_cache
-            .get(&issues[a].issue.id)
-            .unwrap_or(&issues[a].issue.created_at);
+            .get(&issues[a].id)
+            .unwrap_or(&issues[a].created_at);
         let added_b = unplanned_work_cache
-            .get(&issues[b].issue.id)
-            .unwrap_or(&issues[b].issue.created_at);
+            .get(&issues[b].id)
+            .unwrap_or(&issues[b].created_at);
         added_b.cmp(added_a)
     });
     unplanned_work.clamp_selection();
 
     // Shadow work: closed issues updated during iteration but not in it (indices into `shadow_work_cache`).
     // Exclude "canceled" category (duplicates, won't do, etc.) — only real completed work.
-    let is_canceled = |ti: &TrackedIssue| -> bool {
-        ti.issue
-            .status_category()
-            .is_some_and(|cat| cat == "canceled")
-    };
+    let is_canceled =
+        |ti: &Issue| -> bool { ti.status_category().is_some_and(|cat| cat == "canceled") };
 
     // Shadow work: DB already filters by closed_at range and excludes current iteration.
     // Here we just exclude canceled issues (status category check needs Rust).
-    let mut shadow_work = ItemList::<TrackedIssue>::default();
+    let mut shadow_work = ItemList::<Issue>::default();
     for (i, ti) in shadow_work_cache.iter().enumerate() {
         if !is_canceled(ti) {
             shadow_work.indices.push(i);
         }
     }
     shadow_work.indices.sort_by(|&a, &b| {
-        let issue_a = &shadow_work_cache[a].issue;
-        let issue_b = &shadow_work_cache[b].issue;
+        let issue_a = &shadow_work_cache[a];
+        let issue_b = &shadow_work_cache[b];
         let closed_a = issue_a.closed_at.unwrap_or(issue_a.updated_at);
         let closed_b = issue_b.closed_at.unwrap_or(issue_b.updated_at);
         closed_b.cmp(&closed_a)
@@ -1390,30 +1370,23 @@ pub fn compute_health(
 
     // At risk: iteration issues with "active" category status, not updated in 5+ days (indices into `issues`)
     let stale_threshold = Utc::now() - chrono::Duration::days(5);
-    let is_active_status = |ti: &TrackedIssue| -> bool {
-        ti.issue
-            .status_category()
-            .is_some_and(|cat| cat == "active")
-    };
+    let is_active_status =
+        |ti: &Issue| -> bool { ti.status_category().is_some_and(|cat| cat == "active") };
 
-    let mut at_risk = ItemList::<TrackedIssue>::default();
+    let mut at_risk = ItemList::<Issue>::default();
     for (i, item) in issues.iter().enumerate() {
         let in_iter = item
-            .issue
             .iteration
             .as_ref()
             .is_some_and(|it| it.id == *current_id);
-        if in_iter
-            && is_active_status(item)
-            && item.issue.updated_at < stale_threshold
-            && !is_done(item)
+        if in_iter && is_active_status(item) && item.updated_at < stale_threshold && !is_done(item)
         {
             at_risk.indices.push(i);
         }
     }
     at_risk.indices.sort_by(|&a, &b| {
-        let issue_a = &issues[a].issue;
-        let issue_b = &issues[b].issue;
+        let issue_a = &issues[a];
+        let issue_b = &issues[b];
         issue_a.updated_at.cmp(&issue_b.updated_at)
     });
     at_risk.clamp_selection();
@@ -1449,35 +1422,32 @@ mod tests {
     use super::*;
     use glab_core::domain::Issue;
 
-    fn make_issue(id: u64, iteration_id: Option<&str>) -> TrackedIssue {
-        TrackedIssue {
-            project_path: "test/project".to_string(),
-            issue: Issue {
+    fn make_issue(id: u64, iteration_id: Option<&str>) -> Issue {
+        Issue {
+            id: id.to_string(),
+            iid: id.to_string(),
+            title: format!("Issue {id}"),
+            state: "opened".to_string(),
+            author: None,
+            assignees: vec![],
+            labels: vec![],
+            milestone: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            closed_at: None,
+            web_url: String::new(),
+            description: None,
+            user_notes_count: 0,
+            reference: format!("test/project#{id}"),
+            status: None,
+            iteration: iteration_id.map(|id| glab_core::domain::Iteration {
                 id: id.to_string(),
-                iid: id.to_string(),
-                title: format!("Issue {id}"),
-                state: "opened".to_string(),
-                author: None,
-                assignees: vec![],
-                labels: vec![],
-                milestone: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                closed_at: None,
-                web_url: String::new(),
-                description: None,
-                user_notes_count: 0,
-                reference: None,
-                status: None,
-                iteration: iteration_id.map(|id| glab_core::domain::Iteration {
-                    id: id.to_string(),
-                    title: Some("Sprint 1".to_string()),
-                    start_date: None,
-                    due_date: None,
-                    state: "current".to_string(),
-                }),
-                weight: None,
-            },
+                title: Some("Sprint 1".to_string()),
+                start_date: None,
+                due_date: None,
+                state: "current".to_string(),
+            }),
+            weight: None,
         }
     }
 
@@ -1536,7 +1506,7 @@ mod tests {
         };
 
         let mut in_progress = make_issue(1, Some("gid://gitlab/Iteration/1"));
-        in_progress.issue.status = Some(glab_core::domain::StatusValue {
+        in_progress.status = Some(glab_core::domain::StatusValue {
             name: "In Progress".to_string(),
             category: None,
         });

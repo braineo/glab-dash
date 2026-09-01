@@ -1,7 +1,7 @@
 //! TEA handle phase for async messages: process results from background tasks.
 
 use crate::cmd::Cmd;
-use glab_core::domain::{StatusValue, TrackedIssue, TrackedMergeRequest};
+use glab_core::domain::{Issue, MergeRequest, StatusValue};
 
 use super::issue_actions;
 use super::{App, AsyncMsg, FetchState, View};
@@ -17,7 +17,7 @@ impl App {
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
-                    self.data.issues.retain(|i| i.issue.state == "opened");
+                    self.data.issues.retain(|i| i.state == "opened");
                     let now = Self::now_secs();
                     self.ui.last_fetched_at = Some(now);
                     self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
@@ -40,7 +40,7 @@ impl App {
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
-                    self.data.mrs.retain(|m| m.mr.state == "opened");
+                    self.data.mrs.retain(|m| m.state == "opened");
                     let now = Self::now_secs();
                     self.ui.last_fetched_at = Some(now);
                     self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
@@ -86,17 +86,15 @@ impl App {
                 self.ui.loading = false;
                 match result {
                     Ok(issue) => {
-                        if let Some(pos) =
-                            self.data.issues.iter().position(|e| e.issue.id == issue.id)
-                        {
-                            self.data.issues[pos].issue = issue;
+                        if let Some(pos) = self.data.issues.iter().position(|e| e.id == issue.id) {
+                            self.data.issues[pos] = issue;
                         }
                         // Persist full snapshot (including closed) then remove closed
                         // from memory — same pattern as IssuesLoaded.
                         self.ui
                             .pending_cmds
                             .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
-                        self.data.issues.retain(|i| i.issue.state == "opened");
+                        self.data.issues.retain(|i| i.state == "opened");
                         self.ui.error = None;
                         self.ui.dirty.issues = true;
                     }
@@ -111,9 +109,9 @@ impl App {
                             .data
                             .mrs
                             .iter()
-                            .position(|e| e.mr.iid == mr.iid && e.project_path == project_path)
+                            .position(|e| e.iid == mr.iid && e.project_path() == project_path)
                         {
-                            self.data.mrs[pos].mr = mr;
+                            self.data.mrs[pos] = mr;
                         }
                         self.ui.error = None;
                         self.ui.dirty.mrs = true;
@@ -137,9 +135,9 @@ impl App {
                             .data
                             .issues
                             .iter()
-                            .position(|e| e.issue.iid == iid && e.project_path == project_path)
+                            .position(|e| e.iid == iid && e.project_path() == project_path)
                         {
-                            self.data.issues[pos].issue.status = Some(StatusValue {
+                            self.data.issues[pos].status = Some(StatusValue {
                                 name: status_name,
                                 category,
                             });
@@ -171,7 +169,7 @@ impl App {
                                 .issue_list
                                 .selected_issue(&self.data.issues)
                                 .or_else(|| self.current_detail_issue())
-                                .map_or("opened".to_string(), |i| i.issue.state.clone());
+                                .map_or("opened".to_string(), |i| i.state.clone());
                             issue_actions::show_close_reopen_confirm(
                                 &issue_id,
                                 &iid,
@@ -229,10 +227,8 @@ impl App {
                     }
                     Err(e) => {
                         // Revert the optimistic update
-                        if let Some(pos) =
-                            self.data.issues.iter().position(|i| i.issue.id == issue_id)
-                        {
-                            self.data.issues[pos].issue.iteration = old_iteration;
+                        if let Some(pos) = self.data.issues.iter().position(|i| i.id == issue_id) {
+                            self.data.issues[pos].iteration = old_iteration;
                             self.ui.dirty.issues = true;
                         }
                         self.show_error(format!("Move iteration: {e:#}"));
@@ -252,16 +248,11 @@ impl App {
     }
 
     /// Merge incoming issues into `self.data.issues`, preserving newer cached entries.
-    fn merge_issues(&mut self, issues: Vec<TrackedIssue>, incremental: bool) {
+    fn merge_issues(&mut self, issues: Vec<Issue>, incremental: bool) {
         if incremental {
             for item in issues {
-                if let Some(pos) = self
-                    .data
-                    .issues
-                    .iter()
-                    .position(|i| i.issue.id == item.issue.id)
-                {
-                    if self.data.issues[pos].issue.updated_at <= item.issue.updated_at {
+                if let Some(pos) = self.data.issues.iter().position(|i| i.id == item.id) {
+                    if self.data.issues[pos].updated_at <= item.updated_at {
                         self.data.issues[pos] = item;
                     }
                 } else {
@@ -271,14 +262,9 @@ impl App {
         } else {
             let mut new_issues = issues;
             for new_iss in &mut new_issues {
-                if let Some(pos) = self
-                    .data
-                    .issues
-                    .iter()
-                    .position(|i| i.issue.id == new_iss.issue.id)
-                {
+                if let Some(pos) = self.data.issues.iter().position(|i| i.id == new_iss.id) {
                     let old_iss = &self.data.issues[pos];
-                    if old_iss.issue.updated_at > new_iss.issue.updated_at {
+                    if old_iss.updated_at > new_iss.updated_at {
                         *new_iss = old_iss.clone();
                     }
                 }
@@ -289,12 +275,12 @@ impl App {
 
     /// Merge incoming MRs into `self.data.mrs`, preserving newer cached entries.
     /// Uses second precision: GraphQL truncates sub-second timestamps.
-    fn merge_mrs(&mut self, mrs: Vec<TrackedMergeRequest>, incremental: bool) {
+    fn merge_mrs(&mut self, mrs: Vec<MergeRequest>, incremental: bool) {
         if incremental {
             for item in mrs {
-                if let Some(pos) = self.data.mrs.iter().position(|m| m.mr.id == item.mr.id) {
-                    let old_secs = self.data.mrs[pos].mr.updated_at.timestamp();
-                    let new_secs = item.mr.updated_at.timestamp();
+                if let Some(pos) = self.data.mrs.iter().position(|m| m.id == item.id) {
+                    let old_secs = self.data.mrs[pos].updated_at.timestamp();
+                    let new_secs = item.updated_at.timestamp();
                     if old_secs <= new_secs {
                         self.data.mrs[pos] = item;
                     }
@@ -305,10 +291,10 @@ impl App {
         } else {
             let mut new_mrs = mrs;
             for new_mr in &mut new_mrs {
-                if let Some(pos) = self.data.mrs.iter().position(|m| m.mr.id == new_mr.mr.id) {
+                if let Some(pos) = self.data.mrs.iter().position(|m| m.id == new_mr.id) {
                     let old_mr = &self.data.mrs[pos];
-                    let old_secs = old_mr.mr.updated_at.timestamp();
-                    let new_secs = new_mr.mr.updated_at.timestamp();
+                    let old_secs = old_mr.updated_at.timestamp();
+                    let new_secs = new_mr.updated_at.timestamp();
                     if old_secs > new_secs {
                         *new_mr = old_mr.clone();
                     }

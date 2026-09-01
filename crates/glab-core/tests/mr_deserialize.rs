@@ -36,7 +36,8 @@ fn deserializes_graphql_response() {
     // GitLab reports SUCCESS; the UI matches and sorts on lowercase.
     assert_eq!(mr.pipeline_status(), Some("success"));
 
-    assert_eq!(mr.reference.as_deref(), Some("group/proj!146"));
+    assert_eq!(mr.reference, "group/proj!146");
+    assert_eq!(mr.project_path(), "group/proj");
     assert_eq!(mr.state, "opened");
     assert!(!mr.draft);
 }

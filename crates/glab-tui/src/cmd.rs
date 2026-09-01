@@ -1,4 +1,4 @@
-use glab_core::domain::{Iteration, TrackedIssue, TrackedMergeRequest};
+use glab_core::domain::{Issue, Iteration, MergeRequest};
 
 /// Side-effect descriptors returned from update logic.
 ///
@@ -20,9 +20,9 @@ pub enum Cmd {
     /// Persist a snapshot of all issues (open + closed) taken before the
     /// in-memory open-only filter.  Used by `IssuesLoaded` so closed issues
     /// accumulate in the DB for shadow-work queries.
-    PersistIssuesFull(Vec<TrackedIssue>),
+    PersistIssuesFull(Vec<Issue>),
     /// Same as `PersistIssuesFull` but for merge requests.
-    PersistMrsFull(Vec<TrackedMergeRequest>),
+    PersistMrsFull(Vec<MergeRequest>),
     PersistLabels,
     PersistIterations,
     PersistStatuses {

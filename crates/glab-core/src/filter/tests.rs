@@ -9,42 +9,39 @@ fn make_user(username: &str) -> User {
     }
 }
 
-fn make_tracked_issue(
+fn make_issue(
     title: &str,
     state: &str,
     assignees: &[&str],
     labels: &[&str],
     project: &str,
-) -> TrackedIssue {
-    TrackedIssue {
-        issue: Issue {
-            id: "gid://gitlab/User/1".to_string(),
-            iid: "1".to_string(),
-            title: title.to_string(),
-            state: state.to_string(),
-            author: Some(make_user("author")),
-            assignees: assignees.iter().map(|u| make_user(u)).collect(),
-            labels: labels
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            milestone: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            closed_at: None,
-            web_url: String::new(),
-            description: None,
-            user_notes_count: 0,
-            reference: None,
-            status: None,
-            iteration: None,
-            weight: None,
-        },
-        project_path: project.to_string(),
+) -> Issue {
+    Issue {
+        id: "gid://gitlab/User/1".to_string(),
+        iid: "1".to_string(),
+        title: title.to_string(),
+        state: state.to_string(),
+        author: Some(make_user("author")),
+        assignees: assignees.iter().map(|u| make_user(u)).collect(),
+        labels: labels
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
+        milestone: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        closed_at: None,
+        web_url: String::new(),
+        description: None,
+        user_notes_count: 0,
+        reference: format!("{project}#1"),
+        status: None,
+        iteration: None,
+        weight: None,
     }
 }
 
-fn make_tracked_mr(
+fn make_mr(
     title: &str,
     state: &str,
     assignees: &[&str],
@@ -52,41 +49,38 @@ fn make_tracked_mr(
     draft: bool,
     approved_by: &[&str],
     project: &str,
-) -> TrackedMergeRequest {
-    TrackedMergeRequest {
-        mr: MergeRequest {
-            id: "gid://gitlab/User/1".to_string(),
-            iid: "1".to_string(),
-            title: title.to_string(),
-            state: state.to_string(),
-            author: Some(make_user("author")),
-            assignees: assignees.iter().map(|u| make_user(u)).collect(),
-            reviewers: reviewers.iter().map(|u| make_user(u)).collect(),
-            labels: Vec::new(),
-            milestone: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            web_url: None,
-            description: None,
-            draft,
-            source_branch: "feature".to_string(),
-            target_branch: "main".to_string(),
-            head_pipeline: None,
-            user_notes_count: None,
-            reference: None,
-            approved_by: approved_by.iter().map(|u| make_user(u)).collect(),
-            diff_stats_summary: None,
-            approved: None,
-            resolvable_discussions_count: None,
-            resolved_discussions_count: None,
-        },
-        project_path: project.to_string(),
+) -> MergeRequest {
+    MergeRequest {
+        id: "gid://gitlab/User/1".to_string(),
+        iid: "1".to_string(),
+        title: title.to_string(),
+        state: state.to_string(),
+        author: Some(make_user("author")),
+        assignees: assignees.iter().map(|u| make_user(u)).collect(),
+        reviewers: reviewers.iter().map(|u| make_user(u)).collect(),
+        labels: Vec::new(),
+        milestone: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        web_url: None,
+        description: None,
+        draft,
+        source_branch: "feature".to_string(),
+        target_branch: "main".to_string(),
+        head_pipeline: None,
+        user_notes_count: None,
+        reference: format!("{project}!1"),
+        approved_by: approved_by.iter().map(|u| make_user(u)).collect(),
+        diff_stats_summary: None,
+        approved: None,
+        resolvable_discussions_count: None,
+        resolved_discussions_count: None,
     }
 }
 
 #[test]
 fn test_filter_assignee_eq() {
-    let issue = make_tracked_issue("Test issue", "opened", &["alice"], &[], "org/repo");
+    let issue = make_issue("Test issue", "opened", &["alice"], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Assignee,
         op: Op::Eq,
@@ -104,7 +98,7 @@ fn test_filter_assignee_eq() {
 
 #[test]
 fn test_filter_assignee_none() {
-    let issue = make_tracked_issue("Unassigned", "opened", &[], &[], "org/repo");
+    let issue = make_issue("Unassigned", "opened", &[], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Assignee,
         op: Op::Eq,
@@ -115,7 +109,7 @@ fn test_filter_assignee_none() {
 
 #[test]
 fn test_filter_state() {
-    let issue = make_tracked_issue("Closed", "closed", &[], &[], "org/repo");
+    let issue = make_issue("Closed", "closed", &[], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::State,
         op: Op::Eq,
@@ -133,7 +127,7 @@ fn test_filter_state() {
 
 #[test]
 fn test_filter_label_contains() {
-    let issue = make_tracked_issue("Bug", "opened", &["alice"], &["bug", "urgent"], "org/repo");
+    let issue = make_issue("Bug", "opened", &["alice"], &["bug", "urgent"], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Label,
         op: Op::Contains,
@@ -151,7 +145,7 @@ fn test_filter_label_contains() {
 
 #[test]
 fn test_filter_me_variable() {
-    let issue = make_tracked_issue("My issue", "opened", &["binbin"], &[], "org/repo");
+    let issue = make_issue("My issue", "opened", &["binbin"], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Assignee,
         op: Op::Eq,
@@ -163,7 +157,7 @@ fn test_filter_me_variable() {
 
 #[test]
 fn test_filter_multiple_conditions() {
-    let issue = make_tracked_issue("Important bug", "opened", &["alice"], &["bug"], "org/repo");
+    let issue = make_issue("Important bug", "opened", &["alice"], &["bug"], "org/repo");
 
     // All conditions must match (AND)
     let conditions = vec![
@@ -203,7 +197,7 @@ fn test_filter_multiple_conditions() {
 
 #[test]
 fn test_filter_title() {
-    let issue = make_tracked_issue("Fix authentication bug", "opened", &[], &[], "org/repo");
+    let issue = make_issue("Fix authentication bug", "opened", &[], &[], "org/repo");
     let conditions = vec![FilterCondition {
         field: Field::Title,
         op: Op::Contains,
@@ -214,7 +208,7 @@ fn test_filter_title() {
 
 #[test]
 fn test_mr_filter_draft() {
-    let draft_mr = make_tracked_mr(
+    let draft_mr = make_mr(
         "WIP: feature",
         "opened",
         &["alice"],
@@ -223,7 +217,7 @@ fn test_mr_filter_draft() {
         &[],
         "org/repo",
     );
-    let ready_mr = make_tracked_mr(
+    let ready_mr = make_mr(
         "Ready feature",
         "opened",
         &["alice"],
@@ -244,7 +238,7 @@ fn test_mr_filter_draft() {
 
 #[test]
 fn test_mr_filter_approved_by() {
-    let mr = make_tracked_mr(
+    let mr = make_mr(
         "Feature",
         "opened",
         &["alice"],
@@ -267,7 +261,7 @@ fn test_mr_filter_approved_by() {
 
 #[test]
 fn test_mr_filter_reviewer() {
-    let mr = make_tracked_mr(
+    let mr = make_mr(
         "Feature",
         "opened",
         &[],
@@ -294,7 +288,7 @@ fn test_mr_filter_reviewer() {
 
 #[test]
 fn test_empty_conditions_matches_all() {
-    let issue = make_tracked_issue("Anything", "opened", &[], &[], "org/repo");
+    let issue = make_issue("Anything", "opened", &[], &[], "org/repo");
     assert!(matches_issue(&issue, &[], "me", &[]));
 }
 
@@ -338,7 +332,7 @@ fn test_condition_display() {
 
 #[test]
 fn test_filter_project() {
-    let issue = make_tracked_issue("Bug", "opened", &[], &[], "other/project");
+    let issue = make_issue("Bug", "opened", &[], &[], "other/project");
     let conditions = vec![FilterCondition {
         field: Field::Project,
         op: Op::Eq,

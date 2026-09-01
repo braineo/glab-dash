@@ -1,19 +1,19 @@
 //! Key handling for focused merge requests.
 //!
-//! `TrackedMergeRequest` lives in `glab-core`, so these are hung off it with
-//! the [`MrActions`] extension trait rather than an inherent impl.
+//! `MergeRequest` lives in `glab-core`, so these are hung off it with the
+//! [`MrActions`] extension trait rather than an inherent impl.
 
 use crossterm::event::KeyEvent;
 
 use crate::cmd::{Cmd, EventResult};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
-use glab_core::domain::{ProjectLabel, TrackedMergeRequest, User};
+use glab_core::domain::{MergeRequest, ProjectLabel, User};
 
 use super::{AppCtx, AppData, Overlay, UiState, View};
 
 /// Merge-request actions that need the app's context, ui and data. Implemented
-/// for `TrackedMergeRequest`, which this crate does not own.
+/// for `MergeRequest`, which this crate does not own.
 pub trait MrActions {
     /// Handle a key press against the MR-action bindings.
     fn handle_action_key(
@@ -43,7 +43,7 @@ pub trait MrActions {
     );
 }
 
-impl MrActions for TrackedMergeRequest {
+impl MrActions for MergeRequest {
     fn handle_action_key(
         &self,
         key: &KeyEvent,
@@ -55,7 +55,7 @@ impl MrActions for TrackedMergeRequest {
             if keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
                 == Some(KeyAction::OpenBrowser)
             {
-                if let Some(url) = &self.mr.web_url {
+                if let Some(url) = &self.web_url {
                     let _ = open::that_detached(url);
                 }
                 return EventResult::Consumed;
@@ -65,8 +65,8 @@ impl MrActions for TrackedMergeRequest {
 
         match action {
             KeyAction::ToggleState => {
-                let project = self.project_path.clone();
-                let iid = self.mr.iid.clone();
+                let project = self.project_path().to_string();
+                let iid = self.iid.clone();
                 ui.overlay = Overlay::Confirm {
                     title: "Close MR".to_string(),
                     message: format!("Close MR !{iid}?"),
@@ -75,10 +75,10 @@ impl MrActions for TrackedMergeRequest {
                             .data
                             .mrs
                             .iter()
-                            .position(|m| m.project_path == project && m.mr.iid == iid)
+                            .position(|m| m.project_path() == project && m.iid == iid)
                         {
-                            app.data.mrs[pos].mr.state = "closed".to_string();
-                            app.data.mrs[pos].mr.updated_at = chrono::Utc::now();
+                            app.data.mrs[pos].state = "closed".to_string();
+                            app.data.mrs[pos].updated_at = chrono::Utc::now();
                             app.ui.dirty.mrs = true;
                             app.ui.pending_cmds.push(Cmd::PersistMrs);
                         }
@@ -87,8 +87,8 @@ impl MrActions for TrackedMergeRequest {
                 };
             }
             KeyAction::Approve => {
-                let project = self.project_path.clone();
-                let iid = self.mr.iid.clone();
+                let project = self.project_path().to_string();
+                let iid = self.iid.clone();
                 ui.overlay = Overlay::Confirm {
                     title: "Approve MR".to_string(),
                     message: format!("Approve MR !{iid}?"),
@@ -100,8 +100,8 @@ impl MrActions for TrackedMergeRequest {
                 };
             }
             KeyAction::Merge => {
-                let project = self.project_path.clone();
-                let iid = self.mr.iid.clone();
+                let project = self.project_path().to_string();
+                let iid = self.iid.clone();
                 ui.overlay = Overlay::Confirm {
                     title: "Merge MR".to_string(),
                     message: format!("Merge MR !{iid}?"),
@@ -110,10 +110,10 @@ impl MrActions for TrackedMergeRequest {
                             .data
                             .mrs
                             .iter()
-                            .position(|m| m.project_path == project && m.mr.iid == iid)
+                            .position(|m| m.project_path() == project && m.iid == iid)
                         {
-                            app.data.mrs[pos].mr.state = "merged".to_string();
-                            app.data.mrs[pos].mr.updated_at = chrono::Utc::now();
+                            app.data.mrs[pos].state = "merged".to_string();
+                            app.data.mrs[pos].updated_at = chrono::Utc::now();
                             app.ui.dirty.mrs = true;
                             app.ui.pending_cmds.push(Cmd::PersistMrs);
                         }
@@ -124,11 +124,11 @@ impl MrActions for TrackedMergeRequest {
             KeyAction::EditLabels => {
                 let label_names: Vec<String> = data.labels.iter().map(|l| l.name.clone()).collect();
                 let issue_labels: Vec<Vec<String>> =
-                    data.issues.iter().map(|i| i.issue.labels.clone()).collect();
+                    data.issues.iter().map(|i| i.labels.clone()).collect();
                 ui.overlay = Overlay::LabelEditor {
                     state: label_editor::LabelEditorState::new(
                         label_names,
-                        &self.mr.labels,
+                        &self.labels,
                         &data.label_usage,
                         &issue_labels,
                         20,
@@ -180,9 +180,9 @@ impl MrActions for TrackedMergeRequest {
         ctx: &AppCtx,
         ui: &mut UiState,
     ) {
-        self.mr.labels = labels.to_vec();
-        let project = self.project_path.clone();
-        let iid = self.mr.iid.clone();
+        self.labels = labels.to_vec();
+        let project = self.project_path().to_string();
+        let iid = self.iid.clone();
         // The mutation takes label GIDs, so resolve each title against the
         // project's label list; a title with no match is dropped.
         let label_ids: Vec<u64> = labels
@@ -201,13 +201,13 @@ impl MrActions for TrackedMergeRequest {
     /// Replace assignees via `mergeRequestSetAssignees`, which takes usernames
     /// directly — no `search_users` round-trip needed.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
-        self.mr.assignees = vec![User {
+        self.assignees = vec![User {
             id: String::new(),
             username: username.to_string(),
         }];
 
-        let project = self.project_path.clone();
-        let iid = self.mr.iid.clone();
+        let project = self.project_path().to_string();
+        let iid = self.iid.clone();
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         let usernames = vec![username.to_string()];
@@ -228,8 +228,8 @@ impl MrActions for TrackedMergeRequest {
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         let body = body.to_string();
-        let project = self.project_path.clone();
-        let iid = self.mr.iid.clone();
+        let project = self.project_path().to_string();
+        let iid = self.iid.clone();
 
         ui.loading = true;
         tokio::spawn(async move {

@@ -5,9 +5,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use glab_core::domain::{
-    Iteration, ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus,
-};
+use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
 use glab_core::filter::FilterCondition;
 use glab_core::sort::SortSpec;
 
@@ -132,7 +130,7 @@ impl Db {
 
     // ── Batch upserts (after API fetch) ─────────────────────────────
 
-    pub fn upsert_issues(&self, issues: &[TrackedIssue]) -> Result<()> {
+    pub fn upsert_issues(&self, issues: &[Issue]) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         {
             let mut stmt = tx.prepare_cached(
@@ -140,14 +138,14 @@ impl Db {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
             for item in issues {
-                let data = serde_json::to_string(item).context("serialize TrackedIssue")?;
+                let data = serde_json::to_string(item).context("serialize Issue")?;
                 stmt.execute(params![
-                    item.issue.id,
-                    item.issue.iid,
-                    item.project_path,
-                    item.issue.state,
-                    item.issue.updated_at.to_rfc3339(),
-                    item.issue.closed_at.map(|dt| dt.to_rfc3339()),
+                    item.id,
+                    item.iid,
+                    item.project_path(),
+                    item.state,
+                    item.updated_at.to_rfc3339(),
+                    item.closed_at.map(|dt| dt.to_rfc3339()),
                     data,
                 ])?;
             }
@@ -156,7 +154,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn upsert_mrs(&self, mrs: &[TrackedMergeRequest]) -> Result<()> {
+    pub fn upsert_mrs(&self, mrs: &[MergeRequest]) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         {
             let mut stmt = tx.prepare_cached(
@@ -164,13 +162,13 @@ impl Db {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )?;
             for item in mrs {
-                let data = serde_json::to_string(item).context("serialize TrackedMergeRequest")?;
+                let data = serde_json::to_string(item).context("serialize MergeRequest")?;
                 stmt.execute(params![
-                    item.mr.id,
-                    item.mr.iid,
-                    item.project_path,
-                    item.mr.state,
-                    item.mr.updated_at.to_rfc3339(),
+                    item.id,
+                    item.iid,
+                    item.project_path(),
+                    item.state,
+                    item.updated_at.to_rfc3339(),
                     data,
                 ])?;
             }
@@ -218,7 +216,7 @@ impl Db {
 
     // ── Reads ───────────────────────────────────────────────────────
 
-    pub fn load_issues(&self, state: Option<&str>) -> Result<Vec<TrackedIssue>> {
+    pub fn load_issues(&self, state: Option<&str>) -> Result<Vec<Issue>> {
         let mut items = Vec::new();
         if let Some(state) = state {
             let mut stmt = self
@@ -244,7 +242,7 @@ impl Db {
         Ok(items)
     }
 
-    pub fn load_mrs(&self, state: Option<&str>) -> Result<Vec<TrackedMergeRequest>> {
+    pub fn load_mrs(&self, state: Option<&str>) -> Result<Vec<MergeRequest>> {
         let mut items = Vec::new();
         if let Some(state) = state {
             let mut stmt = self
@@ -317,7 +315,7 @@ impl Db {
 
     /// Load a single issue by project path + iid (for detail views).
     #[allow(dead_code)] // Will be used when sync_issue_list_for_detail is removed
-    pub fn load_issue_by_key(&self, project: &str, iid: &str) -> Result<Option<TrackedIssue>> {
+    pub fn load_issue_by_key(&self, project: &str, iid: &str) -> Result<Option<Issue>> {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT data FROM issues WHERE project_path = ?1 AND iid = ?2")?;
@@ -337,7 +335,7 @@ impl Db {
         closed_after: &str,
         closed_before: &str,
         exclude_iteration_id: Option<&str>,
-    ) -> Result<Vec<TrackedIssue>> {
+    ) -> Result<Vec<Issue>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT data FROM issues WHERE state = 'closed' AND closed_at >= ?1 AND closed_at <= ?2",
         )?;
@@ -347,13 +345,10 @@ impl Db {
         let mut items = Vec::new();
         for row in rows {
             let json = row?;
-            if let Ok(item) = serde_json::from_str::<TrackedIssue>(&json) {
+            if let Ok(item) = serde_json::from_str::<Issue>(&json) {
                 // Exclude issues that belong to the current iteration
                 let dominated = exclude_iteration_id.is_some_and(|iter_id| {
-                    item.issue
-                        .iteration
-                        .as_ref()
-                        .is_some_and(|i| i.id == iter_id)
+                    item.iteration.as_ref().is_some_and(|i| i.id == iter_id)
                 });
                 if !dominated {
                     items.push(item);
@@ -394,65 +389,59 @@ mod tests {
     use chrono::Utc;
     use glab_core::domain::{Issue, MergeRequest};
 
-    fn make_issue(id: u64, state: &str) -> TrackedIssue {
-        TrackedIssue {
-            project_path: "test/project".to_string(),
-            issue: Issue {
-                id: id.to_string(),
-                iid: id.to_string(),
-                title: format!("Issue {id}"),
-                state: state.to_string(),
-                author: None,
-                assignees: vec![],
-                labels: vec![],
-                milestone: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                closed_at: if state == "closed" {
-                    Some(Utc::now())
-                } else {
-                    None
-                },
-                web_url: String::new(),
-                description: None,
-                user_notes_count: 0,
-                reference: None,
-                status: None,
-                iteration: None,
-                weight: None,
+    fn make_issue(id: u64, state: &str) -> Issue {
+        Issue {
+            id: id.to_string(),
+            iid: id.to_string(),
+            title: format!("Issue {id}"),
+            state: state.to_string(),
+            author: None,
+            assignees: vec![],
+            labels: vec![],
+            milestone: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            closed_at: if state == "closed" {
+                Some(Utc::now())
+            } else {
+                None
             },
+            web_url: String::new(),
+            description: None,
+            user_notes_count: 0,
+            reference: format!("test/project#{id}"),
+            status: None,
+            iteration: None,
+            weight: None,
         }
     }
 
-    fn make_mr(id: u64, state: &str) -> TrackedMergeRequest {
-        TrackedMergeRequest {
-            project_path: "test/project".to_string(),
-            mr: MergeRequest {
-                id: id.to_string(),
-                iid: id.to_string(),
-                title: format!("MR {id}"),
-                state: state.to_string(),
-                author: None,
-                assignees: vec![],
-                reviewers: vec![],
-                labels: vec![],
-                milestone: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                web_url: None,
-                description: None,
-                draft: false,
-                source_branch: "feature".to_string(),
-                target_branch: "main".to_string(),
-                head_pipeline: None,
-                user_notes_count: None,
-                reference: None,
-                approved_by: vec![],
-                diff_stats_summary: None,
-                approved: None,
-                resolvable_discussions_count: None,
-                resolved_discussions_count: None,
-            },
+    fn make_mr(id: u64, state: &str) -> MergeRequest {
+        MergeRequest {
+            id: id.to_string(),
+            iid: id.to_string(),
+            title: format!("MR {id}"),
+            state: state.to_string(),
+            author: None,
+            assignees: vec![],
+            reviewers: vec![],
+            labels: vec![],
+            milestone: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            web_url: None,
+            description: None,
+            draft: false,
+            source_branch: "feature".to_string(),
+            target_branch: "main".to_string(),
+            head_pipeline: None,
+            user_notes_count: None,
+            reference: format!("test/project!{id}"),
+            approved_by: vec![],
+            diff_stats_summary: None,
+            approved: None,
+            resolvable_discussions_count: None,
+            resolved_discussions_count: None,
         }
     }
 
@@ -467,11 +456,11 @@ mod tests {
 
         let opened = db.load_issues(Some("opened")).unwrap();
         assert_eq!(opened.len(), 1);
-        assert_eq!(opened[0].issue.id, "1");
+        assert_eq!(opened[0].id, "1");
 
         let closed = db.load_issues(Some("closed")).unwrap();
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].issue.id, "2");
+        assert_eq!(closed[0].id, "2");
     }
 
     #[test]
@@ -493,12 +482,12 @@ mod tests {
         let mut issue = make_issue(1, "opened");
         db.upsert_issues(&[issue.clone()]).unwrap();
 
-        issue.issue.state = "closed".to_string();
+        issue.state = "closed".to_string();
         db.upsert_issues(&[issue]).unwrap();
 
         let all = db.load_issues(None).unwrap();
         assert_eq!(all.len(), 1);
-        assert_eq!(all[0].issue.state, "closed");
+        assert_eq!(all[0].state, "closed");
     }
 
     #[test]
@@ -569,14 +558,14 @@ mod tests {
     fn test_shadow_work_query() {
         let db = Db::open_in_memory().unwrap();
         let mut closed = make_issue(1, "closed");
-        closed.issue.closed_at = Some(
+        closed.closed_at = Some(
             chrono::DateTime::parse_from_rfc3339("2026-04-10T12:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
         );
 
         let mut old_closed = make_issue(2, "closed");
-        old_closed.issue.closed_at = Some(
+        old_closed.closed_at = Some(
             chrono::DateTime::parse_from_rfc3339("2026-03-01T12:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
@@ -592,6 +581,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(shadow.len(), 1);
-        assert_eq!(shadow[0].issue.id, "1");
+        assert_eq!(shadow[0].id, "1");
     }
 }
