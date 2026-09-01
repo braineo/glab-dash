@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use crate::domain::{TrackedIssue, TrackedMergeRequest};
+use crate::domain::{Issue, MergeRequest};
 
 use super::label_order::compare_by_label_scope;
 
@@ -149,7 +149,7 @@ impl SortSpec {
 
 pub fn sort_issues(
     indices: &mut [usize],
-    issues: &[TrackedIssue],
+    issues: &[Issue],
     specs: &[SortSpec],
     label_orders: &HashMap<String, Vec<String>>,
 ) {
@@ -173,7 +173,7 @@ pub fn sort_issues(
 
 pub fn sort_mrs(
     indices: &mut [usize],
-    mrs: &[TrackedMergeRequest],
+    mrs: &[MergeRequest],
     specs: &[SortSpec],
     label_orders: &HashMap<String, Vec<String>>,
 ) {
@@ -196,48 +196,44 @@ pub fn sort_mrs(
 }
 
 fn compare_issue(
-    a: &TrackedIssue,
-    b: &TrackedIssue,
+    a: &Issue,
+    b: &Issue,
     spec: &SortSpec,
     label_orders: &HashMap<String, Vec<String>>,
 ) -> Ordering {
     match spec.field {
-        SortField::Iid => a.issue.iid.cmp(&b.issue.iid),
-        SortField::Title => a
-            .issue
-            .title
-            .to_lowercase()
-            .cmp(&b.issue.title.to_lowercase()),
-        SortField::UpdatedAt => a.issue.updated_at.cmp(&b.issue.updated_at),
-        SortField::CreatedAt => a.issue.created_at.cmp(&b.issue.created_at),
-        SortField::State => cmp_state(&a.issue.state, &b.issue.state),
+        SortField::Iid => a.iid.cmp(&b.iid),
+        SortField::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+        SortField::UpdatedAt => a.updated_at.cmp(&b.updated_at),
+        SortField::CreatedAt => a.created_at.cmp(&b.created_at),
+        SortField::State => cmp_state(&a.state, &b.state),
         SortField::Author => cmp_optional_str(
-            a.issue.author.as_ref().map(|u| u.username.as_str()),
-            b.issue.author.as_ref().map(|u| u.username.as_str()),
+            a.author.as_ref().map(|u| u.username.as_str()),
+            b.author.as_ref().map(|u| u.username.as_str()),
         ),
         SortField::Assignee => cmp_optional_str(
-            a.issue.assignees.first().map(|u| u.username.as_str()),
-            b.issue.assignees.first().map(|u| u.username.as_str()),
+            a.assignees.first().map(|u| u.username.as_str()),
+            b.assignees.first().map(|u| u.username.as_str()),
         ),
         SortField::Label => {
             let scope = spec.label_scope.as_deref().unwrap_or("");
             let priority = label_orders.get(scope).map_or([].as_slice(), Vec::as_slice);
-            compare_by_label_scope(&a.issue.labels, &b.issue.labels, scope, priority)
+            compare_by_label_scope(&a.labels, &b.labels, scope, priority)
         }
         SortField::Milestone => cmp_optional_str(
-            a.issue.milestone.as_ref().map(|m| m.title.as_str()),
-            b.issue.milestone.as_ref().map(|m| m.title.as_str()),
+            a.milestone.as_ref().map(|m| m.title.as_str()),
+            b.milestone.as_ref().map(|m| m.title.as_str()),
         ),
-        SortField::UserNotesCount => a.issue.user_notes_count.cmp(&b.issue.user_notes_count),
-        SortField::Project => a.project_path.cmp(&b.project_path),
+        SortField::UserNotesCount => a.user_notes_count.cmp(&b.user_notes_count),
+        SortField::Project => a.project_path().cmp(b.project_path()),
         SortField::Weight => {
-            let wa = a.issue.weight.unwrap_or(0);
-            let wb = b.issue.weight.unwrap_or(0);
+            let wa = a.weight.unwrap_or(0);
+            let wb = b.weight.unwrap_or(0);
             wa.cmp(&wb)
         }
         SortField::Iteration => cmp_optional_str(
-            a.issue.iteration.as_ref().and_then(|i| i.title.as_deref()),
-            b.issue.iteration.as_ref().and_then(|i| i.title.as_deref()),
+            a.iteration.as_ref().and_then(|i| i.title.as_deref()),
+            b.iteration.as_ref().and_then(|i| i.title.as_deref()),
         ),
         // MR-only fields are no-ops for issues
         SortField::Pipeline | SortField::Draft => Ordering::Equal,
@@ -245,36 +241,36 @@ fn compare_issue(
 }
 
 fn compare_mr(
-    a: &TrackedMergeRequest,
-    b: &TrackedMergeRequest,
+    a: &MergeRequest,
+    b: &MergeRequest,
     spec: &SortSpec,
     label_orders: &HashMap<String, Vec<String>>,
 ) -> Ordering {
     match spec.field {
-        SortField::Iid => a.mr.iid.cmp(&b.mr.iid),
-        SortField::Title => a.mr.title.to_lowercase().cmp(&b.mr.title.to_lowercase()),
-        SortField::UpdatedAt => a.mr.updated_at.cmp(&b.mr.updated_at),
-        SortField::CreatedAt => a.mr.created_at.cmp(&b.mr.created_at),
-        SortField::State => cmp_state(&a.mr.state, &b.mr.state),
+        SortField::Iid => a.iid.cmp(&b.iid),
+        SortField::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+        SortField::UpdatedAt => a.updated_at.cmp(&b.updated_at),
+        SortField::CreatedAt => a.created_at.cmp(&b.created_at),
+        SortField::State => cmp_state(&a.state, &b.state),
         SortField::Author => cmp_optional_str(
-            a.mr.author.as_ref().map(|u| u.username.as_str()),
-            b.mr.author.as_ref().map(|u| u.username.as_str()),
+            a.author.as_ref().map(|u| u.username.as_str()),
+            b.author.as_ref().map(|u| u.username.as_str()),
         ),
         SortField::Assignee => cmp_optional_str(
-            a.mr.assignees.first().map(|u| u.username.as_str()),
-            b.mr.assignees.first().map(|u| u.username.as_str()),
+            a.assignees.first().map(|u| u.username.as_str()),
+            b.assignees.first().map(|u| u.username.as_str()),
         ),
         SortField::Label => {
             let scope = spec.label_scope.as_deref().unwrap_or("");
             let priority = label_orders.get(scope).map_or([].as_slice(), Vec::as_slice);
-            compare_by_label_scope(&a.mr.labels, &b.mr.labels, scope, priority)
+            compare_by_label_scope(&a.labels, &b.labels, scope, priority)
         }
         SortField::Milestone => cmp_optional_str(
-            a.mr.milestone.as_ref().map(|m| m.title.as_str()),
-            b.mr.milestone.as_ref().map(|m| m.title.as_str()),
+            a.milestone.as_ref().map(|m| m.title.as_str()),
+            b.milestone.as_ref().map(|m| m.title.as_str()),
         ),
-        SortField::UserNotesCount => a.mr.user_notes_count.cmp(&b.mr.user_notes_count),
-        SortField::Project => a.project_path.cmp(&b.project_path),
+        SortField::UserNotesCount => a.user_notes_count.cmp(&b.user_notes_count),
+        SortField::Project => a.project_path().cmp(b.project_path()),
         SortField::Pipeline => {
             let rank = |s: Option<&str>| match s {
                 Some("success" | "passed") => 0,
@@ -283,15 +279,15 @@ fn compare_mr(
                 Some("failed") => 3,
                 _ => 4,
             };
-            let ra = rank(a.mr.pipeline_status());
-            let rb = rank(b.mr.pipeline_status());
+            let ra = rank(a.pipeline_status());
+            let rb = rank(b.pipeline_status());
             ra.cmp(&rb)
         }
         // Issue-only fields are no-ops for MRs
         SortField::Weight | SortField::Iteration => Ordering::Equal,
         SortField::Draft => {
-            let da = a.mr.draft;
-            let db = b.mr.draft;
+            let da = a.draft;
+            let db = b.draft;
             da.cmp(&db) // false (0) < true (1), so non-drafts first
         }
     }

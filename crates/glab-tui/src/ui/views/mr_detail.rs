@@ -11,7 +11,7 @@ use crate::ui::components::input::CommentInput;
 use crate::ui::components::picker;
 use crate::ui::views::issue_detail::build_thread_picker_display;
 use crate::ui::{markdown, styles};
-use glab_core::domain::{Discussion, TrackedMergeRequest};
+use glab_core::domain::{Discussion, MergeRequest};
 
 #[derive(Default)]
 pub struct MrDetailState {
@@ -137,7 +137,7 @@ impl MrDetailState {
 pub fn render(
     frame: &mut Frame,
     area: Rect,
-    item: &TrackedMergeRequest,
+    item: &MergeRequest,
     state: &MrDetailState,
     ctx: &crate::ui::RenderCtx<'_>,
 ) {
@@ -146,27 +146,24 @@ pub fn render(
 
     // Header
     let assignees = item
-        .mr
         .assignees
         .iter()
         .map(|a| a.username.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     let reviewers = item
-        .mr
         .reviewers
         .iter()
         .map(|r| r.username.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     let approved = item
-        .mr
         .approved_by
         .iter()
         .map(|a| a.username.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let pipeline_status = item.mr.pipeline_status().unwrap_or("none");
+    let pipeline_status = item.pipeline_status().unwrap_or("none");
 
     let pipeline_icon = match pipeline_status {
         "success" | "passed" => styles::ICON_PIPELINE_OK,
@@ -176,24 +173,24 @@ pub fn render(
         _ => " ",
     };
 
-    let state_icon = match item.mr.state.as_str() {
+    let state_icon = match item.state.as_str() {
         "opened" => styles::ICON_OPEN,
         "closed" => styles::ICON_CLOSED,
         "merged" => styles::ICON_MERGED,
         _ => " ",
     };
 
-    let title_prefix = if item.mr.draft {
+    let title_prefix = if item.draft {
         format!("{} DRAFT: ", styles::ICON_DRAFT)
     } else {
         String::new()
     };
     let header_lines = vec![
         Line::from(vec![
-            Span::styled(format!("!{} ", item.mr.iid), styles::title_style()),
+            Span::styled(format!("!{} ", item.iid), styles::title_style()),
             Span::styled(
-                format!("{title_prefix}{}", item.mr.title),
-                if item.mr.draft {
+                format!("{title_prefix}{}", item.title),
+                if item.draft {
                     styles::draft_style()
                 } else {
                     styles::title_style()
@@ -203,8 +200,8 @@ pub fn render(
         Line::from(vec![
             Span::styled("State: ", styles::help_desc_style()),
             Span::styled(
-                format!("{state_icon} {}", item.mr.state),
-                styles::state_style(&item.mr.state),
+                format!("{state_icon} {}", item.state),
+                styles::state_style(&item.state),
             ),
             Span::raw("  "),
             Span::styled("Pipeline: ", styles::help_desc_style()),
@@ -213,12 +210,12 @@ pub fn render(
                 styles::pipeline_style(pipeline_status),
             ),
             Span::raw("  "),
-            Span::styled(&item.mr.source_branch, Style::default().fg(styles::TEAL)),
+            Span::styled(&item.source_branch, Style::default().fg(styles::TEAL)),
             Span::styled(
                 format!(" {} ", styles::ICON_ARROW),
                 styles::help_desc_style(),
             ),
-            Span::styled(&item.mr.target_branch, Style::default().fg(styles::TEAL)),
+            Span::styled(&item.target_branch, Style::default().fg(styles::TEAL)),
         ]),
         Line::from(vec![
             Span::styled("Assignees: ", styles::help_desc_style()),
@@ -243,10 +240,10 @@ pub fn render(
         ]),
         {
             let mut spans = vec![Span::styled("Labels: ", styles::help_desc_style())];
-            if item.mr.labels.is_empty() {
+            if item.labels.is_empty() {
                 spans.push(Span::styled("none", styles::help_desc_style()));
             } else {
-                for (i, label) in item.mr.labels.iter().enumerate() {
+                for (i, label) in item.labels.iter().enumerate() {
                     if i > 0 {
                         spans.push(Span::raw(" "));
                     }
@@ -286,7 +283,7 @@ pub fn render(
     // Body + comments
     let mut body_lines: Vec<Line> = Vec::new();
 
-    if let Some(desc) = &item.mr.description {
+    if let Some(desc) = &item.description {
         body_lines.push(Line::from(Span::styled(
             format!(" {} Description", styles::ICON_SECTION),
             styles::section_header_style(),

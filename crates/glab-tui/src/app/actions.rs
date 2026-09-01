@@ -1,6 +1,6 @@
 //! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
-use glab_core::domain::{StatusValue, TrackedIssue, TrackedMergeRequest};
+use glab_core::domain::{Issue, MergeRequest, StatusValue};
 
 use super::issue_actions::IssueActions;
 use super::mr_actions::MrActions;
@@ -34,9 +34,9 @@ impl App {
             .data
             .issues
             .iter()
-            .position(|e| e.issue.iid == iid && e.project_path == project)
+            .position(|e| e.iid == iid && e.project_path() == project)
         {
-            self.data.issues[pos].issue.status = Some(StatusValue {
+            self.data.issues[pos].status = Some(StatusValue {
                 name: status_name.to_string(),
                 category: status_category,
             });
@@ -71,7 +71,7 @@ impl App {
     pub(super) fn dispatch_update_labels(&mut self, labels: &[String]) {
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { id, .. }) => {
-                if let Some(issue) = self.data.issues.iter_mut().find(|i| i.issue.id == id) {
+                if let Some(issue) = self.data.issues.iter_mut().find(|i| i.id == id) {
                     issue.update_labels(labels, &self.data.labels, &self.ctx, &mut self.ui);
                 }
             }
@@ -80,7 +80,7 @@ impl App {
                     .data
                     .mrs
                     .iter_mut()
-                    .find(|m| m.mr.iid == iid && m.project_path == project)
+                    .find(|m| m.iid == iid && m.project_path() == project)
                 {
                     mr.update_labels(labels, &self.data.labels, &self.ctx, &mut self.ui);
                 }
@@ -93,7 +93,7 @@ impl App {
     pub(super) fn dispatch_update_assignee(&mut self, username: &str) {
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { id, .. }) => {
-                if let Some(issue) = self.data.issues.iter_mut().find(|i| i.issue.id == id) {
+                if let Some(issue) = self.data.issues.iter_mut().find(|i| i.id == id) {
                     issue.update_assignee(username, &self.ctx, &mut self.ui);
                 }
             }
@@ -102,7 +102,7 @@ impl App {
                     .data
                     .mrs
                     .iter_mut()
-                    .find(|m| m.mr.iid == iid && m.project_path == project)
+                    .find(|m| m.iid == iid && m.project_path() == project)
                 {
                     mr.update_assignee(username, &self.ctx, &mut self.ui);
                 }
@@ -120,7 +120,7 @@ impl App {
         let reply_id = reply_discussion_id.map(String::from);
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { id, .. }) => {
-                if let Some(issue) = self.data.issues.iter().find(|i| i.issue.id == id) {
+                if let Some(issue) = self.data.issues.iter().find(|i| i.id == id) {
                     issue.submit_comment(body, reply_id, &self.ctx, &mut self.ui);
                 }
             }
@@ -129,7 +129,7 @@ impl App {
                     .data
                     .mrs
                     .iter()
-                    .find(|m| m.mr.iid == iid && m.project_path == project)
+                    .find(|m| m.iid == iid && m.project_path() == project)
                 {
                     mr.submit_comment(body, reply_id, &self.ctx, &mut self.ui);
                 }
@@ -139,7 +139,7 @@ impl App {
     }
 
     /// Look up the issue shown in the detail view by its stored (project, iid).
-    pub(super) fn current_detail_issue(&self) -> Option<&TrackedIssue> {
+    pub(super) fn current_detail_issue(&self) -> Option<&Issue> {
         let d = &self.ui.views.issue_detail;
         if d.project.is_empty() {
             return None;
@@ -147,17 +147,17 @@ impl App {
         self.data
             .issues
             .iter()
-            .find(|i| i.issue.iid == d.iid && i.project_path == d.project)
+            .find(|i| i.iid == d.iid && i.project_path() == d.project)
             .or_else(|| {
                 self.data
                     .shadow_work_cache
                     .iter()
-                    .find(|i| i.issue.iid == d.iid && i.project_path == d.project)
+                    .find(|i| i.iid == d.iid && i.project_path() == d.project)
             })
     }
 
     /// Look up the MR shown in the detail view by its stored (project, iid).
-    pub(super) fn current_detail_mr(&self) -> Option<&TrackedMergeRequest> {
+    pub(super) fn current_detail_mr(&self) -> Option<&MergeRequest> {
         let d = &self.ui.views.mr_detail;
         if d.project.is_empty() {
             return None;
@@ -165,7 +165,7 @@ impl App {
         self.data
             .mrs
             .iter()
-            .find(|m| m.mr.iid == d.iid && m.project_path == d.project)
+            .find(|m| m.iid == d.iid && m.project_path() == d.project)
     }
 
     pub(super) fn action_open_detail(&mut self) {
@@ -192,16 +192,16 @@ impl App {
         issue_id: &str,
         target: Option<&glab_core::domain::Iteration>,
     ) {
-        let issue_idx = self.data.issues.iter().position(|i| i.issue.id == issue_id);
+        let issue_idx = self.data.issues.iter().position(|i| i.id == issue_id);
         let Some(issue_idx) = issue_idx else {
             return;
         };
 
-        let old_iteration = self.data.issues[issue_idx].issue.iteration.clone();
+        let old_iteration = self.data.issues[issue_idx].iteration.clone();
 
         // Optimistic update
-        self.data.issues[issue_idx].issue.iteration = target.cloned();
-        self.data.issues[issue_idx].issue.updated_at = chrono::Utc::now();
+        self.data.issues[issue_idx].iteration = target.cloned();
+        self.data.issues[issue_idx].updated_at = chrono::Utc::now();
         self.ui.dirty.issues = true;
 
         let target_gid = target.as_ref().map(|i| i.id.clone());

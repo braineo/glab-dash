@@ -5,8 +5,8 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use glab_core::domain::{
-    Discussion, Issue, Iteration, MergeRequest, Milestone, Note, ProjectLabel, StatusValue,
-    TrackedIssue, TrackedMergeRequest, User, WorkItemStatus,
+    Discussion, Issue, Iteration, MergeRequest, Milestone, Note, ProjectLabel, StatusValue, User,
+    WorkItemStatus,
 };
 
 // ── GraphQL response types (serde-driven) ──
@@ -69,20 +69,9 @@ struct GqlWorkItem {
     closed_at: Option<DateTime<FixedOffset>>,
     #[serde(rename = "webUrl")]
     web_url: String,
-    #[serde(default)]
-    reference: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    namespace: Option<GqlItemNamespace>,
+    reference: String,
     #[serde(default)]
     widgets: Vec<GqlWidget>,
-}
-
-#[derive(Deserialize)]
-#[allow(dead_code)]
-struct GqlItemNamespace {
-    #[serde(rename = "fullPath")]
-    full_path: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -915,7 +904,7 @@ impl GitLabClient {
         &self,
         state: &str,
         updated_after: Option<&str>,
-    ) -> Result<Vec<TrackedIssue>> {
+    ) -> Result<Vec<Issue>> {
         let gql_state = if state == "all" { None } else { Some(state) };
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
@@ -925,15 +914,8 @@ impl GitLabClient {
                 .await?;
 
             for issue in issues {
-                let project_path = issue
-                    .reference
-                    .as_deref()
-                    .map_or_else(|| project.clone(), extract_project_from_ref);
                 if seen_ids.insert(issue.id.clone()) {
-                    all.push(TrackedIssue {
-                        issue,
-                        project_path,
-                    });
+                    all.push(issue);
                 }
             }
         }
@@ -948,7 +930,7 @@ impl GitLabClient {
         &self,
         projects: &[String],
         updated_after: Option<&str>,
-    ) -> Result<Vec<TrackedIssue>> {
+    ) -> Result<Vec<Issue>> {
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
         for project in projects {
@@ -956,15 +938,8 @@ impl GitLabClient {
                 .graphql_list_work_items(project, None, None, updated_after)
                 .await?;
             for issue in issues {
-                let project_path = issue
-                    .reference
-                    .as_deref()
-                    .map_or_else(|| project.clone(), extract_project_from_ref);
                 if seen_ids.insert(issue.id.clone()) {
-                    all.push(TrackedIssue {
-                        issue,
-                        project_path,
-                    });
+                    all.push(issue);
                 }
             }
         }
@@ -978,7 +953,7 @@ impl GitLabClient {
         members: &[String],
         state: &str,
         updated_after: Option<&str>,
-    ) -> Result<Vec<TrackedIssue>> {
+    ) -> Result<Vec<Issue>> {
         let gql_state = match state {
             "opened" => serde_json::json!("opened"),
             "closed" => serde_json::json!("closed"),
@@ -1028,23 +1003,14 @@ impl GitLabClient {
 
                 let connection = resp.data.issues;
                 for issue in connection.nodes {
-                    let project_path = issue
-                        .reference
-                        .as_deref()
-                        .map(extract_project_from_ref)
-                        .unwrap_or_default();
-
                     // Skip tracking project issues and duplicates
-                    if self.config.is_tracking_project(&project_path)
+                    if self.config.is_tracking_project(issue.project_path())
                         || !seen_ids.insert(issue.id.clone())
                     {
                         continue;
                     }
 
-                    all.push(TrackedIssue {
-                        issue,
-                        project_path,
-                    });
+                    all.push(issue);
                 }
 
                 match connection.page_info {
@@ -1116,7 +1082,6 @@ impl GitLabClient {
             author { ...UserFields }
             createdAt updatedAt closedAt webUrl
             reference(full: true)
-            namespace { fullPath }
             widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION, ITERATION, WEIGHT]) {
                 ... on WorkItemWidgetAssignees {
                     assignees { nodes { ...UserFields } }
@@ -1223,7 +1188,7 @@ impl GitLabClient {
         &self,
         state: &str,
         updated_after: Option<&str>,
-    ) -> Result<Vec<TrackedMergeRequest>> {
+    ) -> Result<Vec<MergeRequest>> {
         let gql_state = if state == "all" { None } else { Some(state) };
         let mut all = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
@@ -1232,12 +1197,8 @@ impl GitLabClient {
                 .graphql_list_project_mrs(project, gql_state, updated_after)
                 .await?;
             for mr in mrs {
-                let project_path = mr
-                    .reference
-                    .as_deref()
-                    .map_or_else(|| project.clone(), extract_project_from_ref);
                 if seen_ids.insert(mr.id.clone()) {
-                    all.push(TrackedMergeRequest { mr, project_path });
+                    all.push(mr);
                 }
             }
         }
@@ -1249,7 +1210,7 @@ impl GitLabClient {
         members: &[String],
         state: &str,
         updated_after: Option<&str>,
-    ) -> Result<Vec<TrackedMergeRequest>> {
+    ) -> Result<Vec<MergeRequest>> {
         let gql_state = match state {
             "opened" => serde_json::json!("opened"),
             "merged" => serde_json::json!("merged"),
@@ -1315,8 +1276,8 @@ impl GitLabClient {
                             "fetch_user_mrs_page ✓"
                         );
                         for item in items {
-                            if !self.config.is_tracking_project(&item.project_path)
-                                && seen_ids.insert(item.mr.id.clone())
+                            if !self.config.is_tracking_project(item.project_path())
+                                && seen_ids.insert(item.id.clone())
                             {
                                 all.push(item);
                             }
@@ -1350,7 +1311,7 @@ impl GitLabClient {
         member: &str,
         state: &serde_json::Value,
         updated_after: Option<&str>,
-    ) -> Result<Vec<TrackedMergeRequest>> {
+    ) -> Result<Vec<MergeRequest>> {
         let mut results = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
@@ -1375,14 +1336,7 @@ impl GitLabClient {
                 .as_ref()
                 .is_some_and(|pi| pi.has_next_page);
 
-            for mr in user.mrs.nodes {
-                let project_path = mr
-                    .reference
-                    .as_deref()
-                    .map(extract_project_from_ref)
-                    .unwrap_or_default();
-                results.push(TrackedMergeRequest { mr, project_path });
-            }
+            results.extend(user.mrs.nodes);
 
             if has_next {
                 cursor = user.mrs.page_info.and_then(|pi| pi.end_cursor);
@@ -1525,15 +1479,5 @@ impl GitLabClient {
         resp.json::<T>()
             .await
             .context("Failed to parse GitLab response")
-    }
-}
-
-/// Extract project path from a full reference like "myorg/myrepo#123" or "myorg/myrepo!45"
-fn extract_project_from_ref(full_ref: &str) -> String {
-    // Full refs look like "group/project#123" or "group/subgroup/project!45"
-    if let Some(idx) = full_ref.rfind(['#', '!']) {
-        full_ref[..idx].to_string()
-    } else {
-        full_ref.to_string()
     }
 }

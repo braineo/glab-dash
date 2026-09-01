@@ -1,4 +1,4 @@
-use crate::domain::{TrackedIssue, TrackedMergeRequest};
+use crate::domain::{Issue, MergeRequest};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Field {
@@ -127,7 +127,7 @@ impl std::fmt::Display for FilterCondition {
 }
 
 pub fn matches_issue(
-    item: &TrackedIssue,
+    item: &Issue,
     conditions: &[FilterCondition],
     me: &str,
     team_members: &[String],
@@ -137,7 +137,6 @@ pub fn matches_issue(
         match c.field {
             Field::Assignee => match_string_list(
                 &item
-                    .issue
                     .assignees
                     .iter()
                     .map(|u| u.username.as_str())
@@ -146,31 +145,25 @@ pub fn matches_issue(
                 &value,
             ),
             Field::Author => match_optional_string(
-                item.issue.author.as_ref().map(|u| u.username.as_str()),
+                item.author.as_ref().map(|u| u.username.as_str()),
                 &c.op,
                 &value,
             ),
             Field::Label => match_string_list(
-                &item
-                    .issue
-                    .labels
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
+                &item.labels.iter().map(String::as_str).collect::<Vec<_>>(),
                 &c.op,
                 &value,
             ),
             Field::Milestone => match_optional_string(
-                item.issue.milestone.as_ref().map(|m| m.title.as_str()),
+                item.milestone.as_ref().map(|m| m.title.as_str()),
                 &c.op,
                 &value,
             ),
-            Field::State => match_string(&item.issue.state, &c.op, &value),
-            Field::Title => match_string_contains(&item.issue.title, &c.op, &value),
-            Field::Project => match_string(&item.project_path, &c.op, &value),
+            Field::State => match_string(&item.state, &c.op, &value),
+            Field::Title => match_string_contains(&item.title, &c.op, &value),
+            Field::Project => match_string(item.project_path(), &c.op, &value),
             Field::Team => match_team_membership(
                 &item
-                    .issue
                     .assignees
                     .iter()
                     .map(|u| u.username.clone())
@@ -180,15 +173,12 @@ pub fn matches_issue(
                 team_members,
             ),
             Field::Iteration => match_optional_string(
-                item.issue
-                    .iteration
-                    .as_ref()
-                    .and_then(|i| i.title.as_deref()),
+                item.iteration.as_ref().and_then(|i| i.title.as_deref()),
                 &c.op,
                 &value,
             ),
             Field::Weight => {
-                let w = item.issue.weight.unwrap_or(0).to_string();
+                let w = item.weight.unwrap_or(0).to_string();
                 match_string(&w, &c.op, &value)
             }
             // Issue doesn't have these fields
@@ -198,7 +188,7 @@ pub fn matches_issue(
 }
 
 pub fn matches_mr(
-    item: &TrackedMergeRequest,
+    item: &MergeRequest,
     conditions: &[FilterCondition],
     me: &str,
     team_members: &[String],
@@ -208,7 +198,6 @@ pub fn matches_mr(
         match c.field {
             Field::Assignee => match_string_list(
                 &item
-                    .mr
                     .assignees
                     .iter()
                     .map(|u| u.username.as_str())
@@ -217,13 +206,12 @@ pub fn matches_mr(
                 &value,
             ),
             Field::Author => match_optional_string(
-                item.mr.author.as_ref().map(|u| u.username.as_str()),
+                item.author.as_ref().map(|u| u.username.as_str()),
                 &c.op,
                 &value,
             ),
             Field::Reviewer => match_string_list(
                 &item
-                    .mr
                     .reviewers
                     .iter()
                     .map(|u| u.username.as_str())
@@ -232,28 +220,22 @@ pub fn matches_mr(
                 &value,
             ),
             Field::Label => match_string_list(
-                &item
-                    .mr
-                    .labels
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
+                &item.labels.iter().map(String::as_str).collect::<Vec<_>>(),
                 &c.op,
                 &value,
             ),
             Field::Milestone => match_optional_string(
-                item.mr.milestone.as_ref().map(|m| m.title.as_str()),
+                item.milestone.as_ref().map(|m| m.title.as_str()),
                 &c.op,
                 &value,
             ),
-            Field::State => match_string(&item.mr.state, &c.op, &value),
+            Field::State => match_string(&item.state, &c.op, &value),
             Field::Draft => {
-                let is_draft = item.mr.draft;
+                let is_draft = item.draft;
                 match_bool(is_draft, &c.op, &value)
             }
             Field::ApprovedBy => match_string_list(
                 &item
-                    .mr
                     .approved_by
                     .iter()
                     .map(|a| a.username.as_str())
@@ -261,13 +243,12 @@ pub fn matches_mr(
                 &c.op,
                 &value,
             ),
-            Field::Title => match_string_contains(&item.mr.title, &c.op, &value),
-            Field::Project => match_string(&item.project_path, &c.op, &value),
+            Field::Title => match_string_contains(&item.title, &c.op, &value),
+            Field::Project => match_string(item.project_path(), &c.op, &value),
             // MRs don't have iteration/weight
             Field::Iteration | Field::Weight => true,
             Field::Team => match_team_membership(
                 &item
-                    .mr
                     .assignees
                     .iter()
                     .map(|u| u.username.clone())

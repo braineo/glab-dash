@@ -19,9 +19,7 @@ use crate::db::{Db, ViewState};
 use crate::gitlab::client::GitLabClient;
 use crate::ui::views::Views;
 use crate::ui::views::{dashboard, filter_editor};
-use glab_core::domain::{
-    Issue, Iteration, MergeRequest, ProjectLabel, TrackedIssue, TrackedMergeRequest, WorkItemStatus,
-};
+use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -90,11 +88,8 @@ pub struct ThreadPickerInfo {
 
 /// Messages from async operations
 pub enum AsyncMsg {
-    IssuesLoaded(Result<Vec<TrackedIssue>>, bool),
-    MrsLoaded(
-        Result<(Vec<TrackedMergeRequest>, Vec<TrackedMergeRequest>)>,
-        bool,
-    ),
+    IssuesLoaded(Result<Vec<Issue>>, bool),
+    MrsLoaded(Result<(Vec<MergeRequest>, Vec<MergeRequest>)>, bool),
     DiscussionsLoaded(Result<Vec<glab_core::domain::Discussion>>),
     ActionDone(Result<String>),
     /// An issue was mutated; carry the updated object.
@@ -135,16 +130,16 @@ pub struct AppCtx {
 
 /// Domain data — mutated by handlers.
 pub struct AppData {
-    pub issues: Vec<TrackedIssue>,
-    pub mrs: Vec<TrackedMergeRequest>,
+    pub issues: Vec<Issue>,
+    pub mrs: Vec<MergeRequest>,
     pub labels: Vec<ProjectLabel>,
     pub label_color_map: crate::ui::styles::LabelColors,
     pub iterations: Vec<Iteration>,
     pub work_item_statuses: std::collections::HashMap<String, Vec<WorkItemStatus>>,
     pub label_usage: std::collections::HashMap<String, u32>,
     pub label_sort_orders: std::collections::HashMap<String, Vec<String>>,
-    pub board_issues: Vec<TrackedIssue>,
-    pub shadow_work_cache: Vec<TrackedIssue>,
+    pub board_issues: Vec<Issue>,
+    pub shadow_work_cache: Vec<Issue>,
     pub unplanned_work_cache: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
     pub unplanned_work_state: FetchState,
 }
@@ -292,13 +287,13 @@ impl App {
     fn refresh_focused(&mut self) {
         self.ui.focused = match self.ui.view {
             View::IssueDetail => self.current_detail_issue().map(|item| FocusedItem::Issue {
-                project: item.project_path.clone(),
-                id: item.issue.id.clone(),
-                iid: item.issue.iid.clone(),
+                project: item.project_path().to_string(),
+                id: item.id.clone(),
+                iid: item.iid.clone(),
             }),
             View::MrDetail => self.current_detail_mr().map(|item| FocusedItem::Mr {
-                project: item.project_path.clone(),
-                iid: item.mr.iid.clone(),
+                project: item.project_path().to_string(),
+                iid: item.iid.clone(),
             }),
             View::IssueList => self
                 .ui
@@ -306,9 +301,9 @@ impl App {
                 .issue_list
                 .selected_issue(&self.data.issues)
                 .map(|item| FocusedItem::Issue {
-                    project: item.project_path.clone(),
-                    id: item.issue.id.clone(),
-                    iid: item.issue.iid.clone(),
+                    project: item.project_path().to_string(),
+                    id: item.id.clone(),
+                    iid: item.iid.clone(),
                 }),
             View::MrList => self
                 .ui
@@ -316,8 +311,8 @@ impl App {
                 .mr_list
                 .selected_mr(&self.data.mrs)
                 .map(|item| FocusedItem::Mr {
-                    project: item.project_path.clone(),
-                    iid: item.mr.iid.clone(),
+                    project: item.project_path().to_string(),
+                    iid: item.iid.clone(),
                 }),
             View::Planning => self
                 .ui
@@ -325,9 +320,9 @@ impl App {
                 .planning
                 .selected_issue(&self.data.issues)
                 .map(|item| FocusedItem::Issue {
-                    project: item.project_path.clone(),
-                    id: item.issue.id.clone(),
-                    iid: item.issue.iid.clone(),
+                    project: item.project_path().to_string(),
+                    id: item.id.clone(),
+                    iid: item.iid.clone(),
                 }),
             View::Dashboard if self.ui.views.board.health_focused => self
                 .ui
@@ -338,9 +333,9 @@ impl App {
                     h.selected_issue(&self.data.board_issues, &self.data.shadow_work_cache)
                 })
                 .map(|item| FocusedItem::Issue {
-                    project: item.project_path.clone(),
-                    id: item.issue.id.clone(),
-                    iid: item.issue.iid.clone(),
+                    project: item.project_path().to_string(),
+                    id: item.id.clone(),
+                    iid: item.iid.clone(),
                 }),
             View::Dashboard => self
                 .ui
@@ -348,9 +343,9 @@ impl App {
                 .board
                 .selected_issue(&self.data.board_issues)
                 .map(|item| FocusedItem::Issue {
-                    project: item.project_path.clone(),
-                    id: item.issue.id.clone(),
-                    iid: item.issue.iid.clone(),
+                    project: item.project_path().to_string(),
+                    id: item.id.clone(),
+                    iid: item.iid.clone(),
                 }),
         };
     }
@@ -560,16 +555,13 @@ impl App {
                 .data
                 .board_issues
                 .iter()
-                .map(|i| i.issue.id.clone())
+                .map(|i| i.id.clone())
                 .collect();
             self.data
                 .board_issues
                 .extend(closed.into_iter().filter(|i| {
-                    !existing.contains(&i.issue.id)
-                        && i.issue
-                            .iteration
-                            .as_ref()
-                            .is_some_and(|it| it.id == *iter_id)
+                    !existing.contains(&i.id)
+                        && i.iteration.as_ref().is_some_and(|it| it.id == *iter_id)
                 }));
         }
     }

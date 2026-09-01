@@ -38,7 +38,8 @@ fn deserializes_graphql_response() {
     // `userNotesCount` is selected now; it used to be hardcoded to 0.
     assert_eq!(issue.user_notes_count, 3);
 
-    assert_eq!(issue.reference.as_deref(), Some("group/proj#5998"));
+    assert_eq!(issue.reference, "group/proj#5998");
+    assert_eq!(issue.project_path(), "group/proj");
     assert_eq!(issue.state, "opened");
     assert!(issue.closed_at.is_none());
 }

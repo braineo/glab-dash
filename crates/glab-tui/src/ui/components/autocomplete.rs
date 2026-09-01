@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 
 use crate::ui::styles;
-use glab_core::domain::{TrackedIssue, TrackedMergeRequest};
+use glab_core::domain::{Issue, MergeRequest};
 
 const MAX_VISIBLE: usize = 6;
 
@@ -42,8 +42,8 @@ impl AutocompleteState {
         text: &str,
         cursor_byte_pos: usize,
         members: &[String],
-        issues: &[TrackedIssue],
-        mrs: &[TrackedMergeRequest],
+        issues: &[Issue],
+        mrs: &[MergeRequest],
     ) {
         // Scan backwards from cursor to find a trigger character
         let before = &text[..cursor_byte_pos];
@@ -88,15 +88,15 @@ impl AutocompleteState {
                 CompletionKind::Issue => issues
                     .iter()
                     .map(|ti| CompletionItem {
-                        label: format!("{} {}", ti.issue.iid, ti.issue.title),
-                        insert: ti.issue.iid.clone(),
+                        label: format!("{} {}", ti.iid, ti.title),
+                        insert: ti.iid.clone(),
                     })
                     .collect(),
                 CompletionKind::MergeRequest => mrs
                     .iter()
                     .map(|tm| CompletionItem {
-                        label: format!("{} {}", tm.mr.iid, tm.mr.title),
-                        insert: tm.mr.iid.clone(),
+                        label: format!("{} {}", tm.iid, tm.title),
+                        insert: tm.iid.clone(),
                     })
                     .collect(),
             };

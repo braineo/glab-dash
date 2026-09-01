@@ -10,13 +10,13 @@ use std::collections::HashMap;
 use crate::cmd::{Cmd, Dirty, EventResult};
 use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
 use crate::ui::{components, styles};
-use glab_core::domain::TrackedIssue;
+use glab_core::domain::Issue;
 use glab_core::filter::matches_issue;
 use glab_core::sort;
 
 #[derive(Default)]
 pub struct IssueListState {
-    pub list: ItemList<TrackedIssue>,
+    pub list: ItemList<Issue>,
     pub filter: UserFilter,
 }
 
@@ -85,7 +85,7 @@ impl IssueListState {
 
     pub fn apply_filters(
         &mut self,
-        issues: &[TrackedIssue],
+        issues: &[Issue],
         me: &str,
         team_members: &[String],
         label_orders: &HashMap<String, Vec<String>>,
@@ -97,21 +97,20 @@ impl IssueListState {
                 // Implicit team filter: when a team is selected, only show items
                 // assigned to team members or unassigned items.
                 team_members.is_empty()
-                    || item.issue.assignees.is_empty()
+                    || item.assignees.is_empty()
                     || item
-                        .issue
                         .assignees
                         .iter()
                         .any(|a| team_members.contains(&a.username))
             })
             .filter(|(_, item)| matches_issue(item, &self.filter.conditions, me, team_members))
             .filter(|(_, item)| {
-                let mut haystack = item.issue.title.to_lowercase();
-                for a in &item.issue.assignees {
+                let mut haystack = item.title.to_lowercase();
+                for a in &item.assignees {
                     haystack.push(' ');
                     haystack.push_str(&a.username.to_lowercase());
                 }
-                for l in &item.issue.labels {
+                for l in &item.labels {
                     haystack.push(' ');
                     haystack.push_str(&l.to_lowercase());
                 }
@@ -130,7 +129,7 @@ impl IssueListState {
         self.list.clamp_selection();
     }
 
-    pub fn selected_issue<'a>(&self, issues: &'a [TrackedIssue]) -> Option<&'a TrackedIssue> {
+    pub fn selected_issue<'a>(&self, issues: &'a [Issue]) -> Option<&'a Issue> {
         self.list.selected_item(issues)
     }
 }
@@ -139,7 +138,7 @@ pub fn render(
     frame: &mut Frame,
     area: Rect,
     state: &mut IssueListState,
-    issues: &[TrackedIssue],
+    issues: &[Issue],
     ctx: &crate::ui::RenderCtx<'_>,
 ) {
     let label_colors = ctx.label_colors;
@@ -172,53 +171,48 @@ pub fn render(
         .map(|(row_idx, &idx)| {
             let item = &issues[idx];
             let source_span = {
-                let p = &item.project_path;
+                let p = item.project_path();
                 let short = p.rsplit('/').next().unwrap_or(p);
                 Span::styled(short.to_string(), styles::source_external_style())
             };
             let assignees = item
-                .issue
                 .assignees
                 .iter()
                 .map(|a| a.username.as_str())
                 .collect::<Vec<_>>()
                 .join(",");
-            let author = item
-                .issue
-                .author
-                .as_ref()
-                .map_or("-", |a| a.username.as_str());
-            let labels = styles::labels_compact(&item.issue.labels, 30, label_colors);
-            let age = list_model::format_age(&item.issue.updated_at, now);
+            let author = item.author.as_ref().map_or("-", |a| a.username.as_str());
+            let labels = styles::labels_compact(&item.labels, 30, label_colors);
+            let age = list_model::format_age(&item.updated_at, now);
 
             // Show custom status if available, otherwise fall back to state
-            let (state_icon, state_text) = if let Some(status) = item.issue.status_name() {
+            let (state_icon, state_text) = if let Some(status) = item.status_name() {
                 (styles::status_icon(status), status.to_string())
             } else {
-                let icon = match item.issue.state.as_str() {
+                let icon = match item.state.as_str() {
                     "opened" => styles::ICON_OPEN,
                     "closed" => styles::ICON_CLOSED,
                     _ => " ",
                 };
-                (icon, item.issue.state.clone())
+                (icon, item.state.clone())
             };
 
-            let state_style = if item.issue.status_name().is_some() {
+            let state_style = if item.status_name().is_some() {
                 styles::status_style(&state_text)
             } else {
-                styles::state_style(&item.issue.state)
+                styles::state_style(&item.state)
             };
 
             let row = Row::new([
                 Cell::from(Span::styled(
-                    format!("#{}", item.issue.iid),
+                    format!("#{}", item.iid),
                     Style::default().fg(styles::TEXT_DIM),
                 )),
                 Cell::from(Span::styled(
                     source_span.to_string(),
                     styles::source_external_style(),
                 )),
-                Cell::from(item.issue.title.clone()),
+                Cell::from(item.title.clone()),
                 Cell::from(Line::from(Span::styled(
                     format!("{state_icon} {state_text}"),
                     state_style,
@@ -235,7 +229,7 @@ pub fn render(
                 Cell::from(Span::styled(age, Style::default().fg(styles::TEXT_DIM))),
             ]);
             let is_selected = selected_idx == Some(row_idx);
-            let is_closed = item.issue.state == "closed";
+            let is_closed = item.state == "closed";
             if is_selected {
                 row.style(styles::selected_style())
             } else if is_closed {
@@ -277,10 +271,10 @@ pub fn render(
     // Preview pane: show full labels of selected item
     if let Some(item) = state.list.selected_item(issues) {
         let mut spans: Vec<Span> = vec![Span::styled(" Labels: ", styles::help_desc_style())];
-        if item.issue.labels.is_empty() {
+        if item.labels.is_empty() {
             spans.push(Span::styled("none", styles::help_desc_style()));
         } else {
-            for (i, label) in item.issue.labels.iter().enumerate() {
+            for (i, label) in item.labels.iter().enumerate() {
                 if i > 0 {
                     spans.push(Span::raw(" "));
                 }
@@ -293,8 +287,7 @@ pub fn render(
             Line::from(vec![
                 Span::styled(" Assignees: ", styles::help_desc_style()),
                 Span::styled(
-                    item.issue
-                        .assignees
+                    item.assignees
                         .iter()
                         .map(|a| a.username.as_str())
                         .collect::<Vec<_>>()
@@ -303,7 +296,7 @@ pub fn render(
                 ),
                 Span::styled("  Source: ", styles::help_desc_style()),
                 Span::styled(
-                    item.project_path.clone(),
+                    item.project_path().to_string(),
                     ratatui::style::Style::default().fg(styles::TEXT),
                 ),
             ]),

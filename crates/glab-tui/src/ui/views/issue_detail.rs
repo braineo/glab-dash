@@ -10,7 +10,7 @@ use crate::keybindings::{self, KeyAction};
 use crate::ui::components::input::CommentInput;
 use crate::ui::components::picker;
 use crate::ui::{markdown, styles};
-use glab_core::domain::{Discussion, TrackedIssue};
+use glab_core::domain::{Discussion, Issue};
 
 #[derive(Default)]
 pub struct IssueDetailState {
@@ -171,7 +171,7 @@ pub(crate) fn build_thread_picker_display(
 pub fn render(
     frame: &mut Frame,
     area: Rect,
-    item: &TrackedIssue,
+    item: &Issue,
     state: &IssueDetailState,
     ctx: &crate::ui::RenderCtx<'_>,
 ) {
@@ -184,28 +184,27 @@ pub fn render(
 
     // Header
     let assignees = item
-        .issue
         .assignees
         .iter()
         .map(|a| a.username.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let (state_icon, state_text) = if let Some(status) = item.issue.status_name() {
+    let (state_icon, state_text) = if let Some(status) = item.status_name() {
         (styles::status_icon(status), status.to_string())
     } else {
-        let icon = match item.issue.state.as_str() {
+        let icon = match item.state.as_str() {
             "opened" => styles::ICON_OPEN,
             "closed" => styles::ICON_CLOSED,
             _ => " ",
         };
-        (icon, item.issue.state.clone())
+        (icon, item.state.clone())
     };
 
     let mut labels_line_spans = vec![Span::styled("Labels: ", styles::help_desc_style())];
-    if item.issue.labels.is_empty() {
+    if item.labels.is_empty() {
         labels_line_spans.push(Span::styled("none", styles::help_desc_style()));
     } else {
-        for (i, label) in item.issue.labels.iter().enumerate() {
+        for (i, label) in item.labels.iter().enumerate() {
             if i > 0 {
                 labels_line_spans.push(Span::raw(" "));
             }
@@ -216,32 +215,29 @@ pub fn render(
     labels_line_spans.push(Span::raw("  "));
     labels_line_spans.push(Span::styled("Source: ", styles::help_desc_style()));
     labels_line_spans.push(Span::styled(
-        item.project_path.clone(),
+        item.project_path().to_string(),
         Style::default().fg(styles::TEXT),
     ));
 
     let header_lines = vec![
         Line::from(vec![
-            Span::styled(format!("#{} ", item.issue.iid), styles::title_style()),
-            Span::styled(&item.issue.title, styles::title_style()),
+            Span::styled(format!("#{} ", item.iid), styles::title_style()),
+            Span::styled(&item.title, styles::title_style()),
         ]),
         Line::from(vec![
             Span::styled("Status: ", styles::help_desc_style()),
             Span::styled(
                 format!("{state_icon} {state_text}"),
-                if item.issue.status_name().is_some() {
+                if item.status_name().is_some() {
                     styles::status_style(&state_text)
                 } else {
-                    styles::state_style(&item.issue.state)
+                    styles::state_style(&item.state)
                 },
             ),
             Span::raw("  "),
             Span::styled("Author: ", styles::help_desc_style()),
             Span::styled(
-                item.issue
-                    .author
-                    .as_ref()
-                    .map_or("-", |a| a.username.as_str()),
+                item.author.as_ref().map_or("-", |a| a.username.as_str()),
                 Style::default().fg(styles::TEXT_BRIGHT),
             ),
             Span::raw("  "),
@@ -276,7 +272,7 @@ pub fn render(
     let mut body_lines: Vec<Line> = Vec::new();
 
     // Description
-    if let Some(desc) = &item.issue.description {
+    if let Some(desc) = &item.description {
         body_lines.push(Line::from(Span::styled(
             format!(" {} Description", styles::ICON_SECTION),
             styles::section_header_style(),

@@ -10,13 +10,13 @@ use std::collections::HashMap;
 use crate::cmd::{Cmd, Dirty, EventResult};
 use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
 use crate::ui::{components, styles};
-use glab_core::domain::TrackedMergeRequest;
+use glab_core::domain::MergeRequest;
 use glab_core::filter::matches_mr;
 use glab_core::sort;
 
 #[derive(Default)]
 pub struct MrListState {
-    pub list: ItemList<TrackedMergeRequest>,
+    pub list: ItemList<MergeRequest>,
     pub filter: UserFilter,
 }
 
@@ -75,7 +75,7 @@ impl MrListState {
 
     pub fn apply_filters(
         &mut self,
-        mrs: &[TrackedMergeRequest],
+        mrs: &[MergeRequest],
         me: &str,
         team_members: &[String],
         label_orders: &HashMap<String, Vec<String>>,
@@ -87,21 +87,20 @@ impl MrListState {
                 // Implicit team filter: when a team is selected, only show items
                 // assigned to team members or unassigned items.
                 team_members.is_empty()
-                    || item.mr.assignees.is_empty()
+                    || item.assignees.is_empty()
                     || item
-                        .mr
                         .assignees
                         .iter()
                         .any(|a| team_members.contains(&a.username))
             })
             .filter(|(_, item)| matches_mr(item, &self.filter.conditions, me, team_members))
             .filter(|(_, item)| {
-                let mut haystack = item.mr.title.to_lowercase();
-                if let Some(a) = &item.mr.author {
+                let mut haystack = item.title.to_lowercase();
+                if let Some(a) = &item.author {
                     haystack.push(' ');
                     haystack.push_str(&a.username.to_lowercase());
                 }
-                for a in &item.mr.assignees {
+                for a in &item.assignees {
                     haystack.push(' ');
                     haystack.push_str(&a.username.to_lowercase());
                 }
@@ -120,10 +119,7 @@ impl MrListState {
         self.list.clamp_selection();
     }
 
-    pub fn selected_mr<'a>(
-        &self,
-        mrs: &'a [TrackedMergeRequest],
-    ) -> Option<&'a TrackedMergeRequest> {
+    pub fn selected_mr<'a>(&self, mrs: &'a [MergeRequest]) -> Option<&'a MergeRequest> {
         self.list.selected_item(mrs)
     }
 }
@@ -132,7 +128,7 @@ pub fn render(
     frame: &mut Frame,
     area: Rect,
     state: &mut MrListState,
-    mrs: &[TrackedMergeRequest],
+    mrs: &[MergeRequest],
     ctx: &crate::ui::RenderCtx<'_>,
 ) {
     let label_colors = ctx.label_colors;
@@ -164,12 +160,12 @@ pub fn render(
         .map(|(row_idx, &idx)| {
             let item = &mrs[idx];
             let source_str = {
-                let p = &item.project_path;
+                let p = item.project_path();
                 p.rsplit('/').next().unwrap_or(p).to_string()
             };
-            let author = item.mr.author.as_ref().map_or("-", |a| a.username.as_str());
+            let author = item.author.as_ref().map_or("-", |a| a.username.as_str());
 
-            let pipeline_status = item.mr.pipeline_status().unwrap_or("-");
+            let pipeline_status = item.pipeline_status().unwrap_or("-");
             let pipeline_icon = match pipeline_status {
                 "success" | "passed" => styles::ICON_PIPELINE_OK,
                 "failed" => styles::ICON_PIPELINE_FAIL,
@@ -178,14 +174,13 @@ pub fn render(
                 _ => " ",
             };
 
-            let title = if item.mr.draft {
-                format!("{} {}", styles::ICON_DRAFT, item.mr.title)
+            let title = if item.draft {
+                format!("{} {}", styles::ICON_DRAFT, item.title)
             } else {
-                item.mr.title.clone()
+                item.title.clone()
             };
 
             let reviewers = item
-                .mr
                 .reviewers
                 .iter()
                 .map(|r| r.username.as_str())
@@ -193,7 +188,7 @@ pub fn render(
                 .join(",");
 
             // Diff: green additions, red deletions
-            let diff_cell = match item.mr.diff_stats() {
+            let diff_cell = match item.diff_stats() {
                 Some(d) => Cell::from(Line::from(vec![
                     Span::styled(
                         format!("+{}", d.additions),
@@ -209,7 +204,7 @@ pub fn render(
             };
 
             // Approval: green check, red uncheck
-            let approval_cell = match item.mr.approved {
+            let approval_cell = match item.approved {
                 Some(true) => Cell::from(Span::styled(
                     styles::ICON_CHECK,
                     Style::default().fg(styles::GREEN),
@@ -218,7 +213,7 @@ pub fn render(
                     styles::ICON_UNCHECK,
                     Style::default().fg(styles::RED),
                 )),
-                None if !item.mr.approved_by.is_empty() => Cell::from(Span::styled(
+                None if !item.approved_by.is_empty() => Cell::from(Span::styled(
                     styles::ICON_CHECK,
                     Style::default().fg(styles::GREEN),
                 )),
@@ -226,7 +221,7 @@ pub fn render(
             };
 
             // Threads: unresolved in orange, total in dim
-            let threads_cell = match (item.mr.unresolved_threads(), item.mr.notes_count()) {
+            let threads_cell = match (item.unresolved_threads(), item.notes_count()) {
                 (u, n) if u > 0 && n > 0 => Cell::from(Line::from(vec![
                     Span::styled(format!("{u}!"), Style::default().fg(styles::ORANGE)),
                     Span::styled(format!(" {n}"), Style::default().fg(styles::TEXT_DIM)),
@@ -242,11 +237,11 @@ pub fn render(
                 _ => Cell::default(),
             };
 
-            let age = list_model::format_age(&item.mr.updated_at, now);
+            let age = list_model::format_age(&item.updated_at, now);
 
             let row = Row::new([
                 Cell::from(Span::styled(
-                    format!("!{}", item.mr.iid),
+                    format!("!{}", item.iid),
                     Style::default().fg(styles::TEXT_DIM),
                 )),
                 Cell::from(Span::styled(source_str, styles::source_external_style())),
@@ -271,7 +266,7 @@ pub fn render(
             let is_selected = selected_idx == Some(row_idx);
             if is_selected {
                 row.style(styles::selected_style())
-            } else if item.mr.draft {
+            } else if item.draft {
                 row.style(styles::draft_style())
             } else if row_idx % 2 == 1 {
                 row.style(styles::row_alt_style())
@@ -313,10 +308,10 @@ pub fn render(
     // Preview pane: show full labels and details of selected MR
     if let Some(item) = state.list.selected_item(mrs) {
         let mut spans: Vec<Span> = vec![Span::styled(" Labels: ", styles::help_desc_style())];
-        if item.mr.labels.is_empty() {
+        if item.labels.is_empty() {
             spans.push(Span::styled("none", styles::help_desc_style()));
         } else {
-            for (i, label) in item.mr.labels.iter().enumerate() {
+            for (i, label) in item.labels.iter().enumerate() {
                 if i > 0 {
                     spans.push(Span::raw(" "));
                 }
@@ -324,13 +319,13 @@ pub fn render(
                 spans.extend(styles::label_spans(label, color));
             }
         }
-        let pipeline_status = item.mr.pipeline_status().unwrap_or("none");
+        let pipeline_status = item.pipeline_status().unwrap_or("none");
 
         // Build detail line: branch info, pipeline, approvals, diff stats
         let mut detail_spans = vec![
             Span::styled(" Branch: ", styles::help_desc_style()),
             Span::styled(
-                &item.mr.source_branch,
+                &item.source_branch,
                 ratatui::style::Style::default().fg(styles::TEAL),
             ),
             Span::styled(
@@ -338,7 +333,7 @@ pub fn render(
                 styles::help_desc_style(),
             ),
             Span::styled(
-                &item.mr.target_branch,
+                &item.target_branch,
                 ratatui::style::Style::default().fg(styles::TEAL),
             ),
             Span::styled("  Pipeline: ", styles::help_desc_style()),
@@ -347,7 +342,6 @@ pub fn render(
 
         // Approvals
         let approved_by: Vec<&str> = item
-            .mr
             .approved_by
             .iter()
             .map(|a| a.username.as_str())
@@ -361,7 +355,7 @@ pub fn render(
         }
 
         // Diff stats
-        if let Some(stats) = item.mr.diff_stats() {
+        if let Some(stats) = item.diff_stats() {
             detail_spans.push(Span::styled("  Diff: ", styles::help_desc_style()));
             detail_spans.push(Span::styled(
                 format!("+{}", stats.additions),

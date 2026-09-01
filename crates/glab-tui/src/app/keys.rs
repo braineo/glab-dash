@@ -37,7 +37,7 @@ impl App {
     }
 
     /// Focused item handles item-specific actions.  The domain type
-    /// (`TrackedIssue` / `TrackedMergeRequest`) owns its key handling.
+    /// (`Issue` / `MergeRequest`) owns its key handling.
     fn dispatch_focused_item(&mut self, key: &KeyEvent) -> EventResult {
         let focused = match &self.ui.focused {
             Some(f) => f.clone(),
@@ -46,17 +46,12 @@ impl App {
         // Disjoint borrows: &data (immutable) + &ctx (immutable) + &mut ui (mutable)
         match &focused {
             FocusedItem::Issue { id, .. } => {
-                let Some(issue) =
-                    self.data
-                        .issues
-                        .iter()
-                        .find(|i| i.issue.id == *id)
-                        .or_else(|| {
-                            self.data
-                                .shadow_work_cache
-                                .iter()
-                                .find(|i| i.issue.id == *id)
-                        })
+                let Some(issue) = self
+                    .data
+                    .issues
+                    .iter()
+                    .find(|i| i.id == *id)
+                    .or_else(|| self.data.shadow_work_cache.iter().find(|i| i.id == *id))
                 else {
                     return EventResult::Bubble;
                 };
@@ -67,7 +62,7 @@ impl App {
                     .data
                     .mrs
                     .iter()
-                    .find(|m| m.mr.iid == *iid && m.project_path == *project)
+                    .find(|m| m.iid == *iid && m.project_path() == *project)
                 else {
                     return EventResult::Bubble;
                 };

@@ -63,7 +63,7 @@ pub struct Issue {
     pub description: Option<String>,
     pub user_notes_count: u64,
     /// `reference(full: true)` — `group/project#123`.
-    pub reference: Option<String>,
+    pub reference: String,
     /// Custom workflow status, from GitLab's work-item status system.
     pub status: Option<StatusValue>,
     pub iteration: Option<Iteration>,
@@ -71,6 +71,12 @@ pub struct Issue {
 }
 
 impl Issue {
+    /// The project the issue lives in, e.g. `group/project`, taken from the
+    /// full reference.
+    pub fn project_path(&self) -> &str {
+        project_from_reference(&self.reference)
+    }
+
     /// The custom workflow status name, if the issue has one.
     pub fn status_name(&self) -> Option<&str> {
         self.status.as_ref().map(|s| s.name.as_str())
@@ -128,7 +134,7 @@ pub struct MergeRequest {
     pub target_branch: String,
     /// `reference(full: true)` — `group/project!123`, used to recover the
     /// project an externally-fetched merge request belongs to.
-    pub reference: Option<String>,
+    pub reference: String,
     pub diff_stats_summary: Option<DiffStats>,
     pub approved: Option<bool>,
     #[serde(deserialize_with = "crate::de::nodes")]
@@ -141,6 +147,12 @@ pub struct MergeRequest {
 }
 
 impl MergeRequest {
+    /// The project the merge request lives in, e.g. `group/project`, taken
+    /// from the full reference.
+    pub fn project_path(&self) -> &str {
+        project_from_reference(&self.reference)
+    }
+
     /// Discussion threads still open, from the two counters GraphQL reports.
     /// Both are nullable; a missing counter reads as zero.
     pub fn unresolved_threads(&self) -> u64 {
@@ -200,14 +212,30 @@ pub struct WorkItemStatus {
     pub category: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackedIssue {
-    pub issue: Issue,
-    pub project_path: String,
+/// Strip the `#123` / `!45` suffix off a full reference, leaving the project
+/// path. Full refs look like `group/project#123` or `group/sub/project!45`.
+fn project_from_reference(full_ref: &str) -> &str {
+    match full_ref.rfind(['#', '!']) {
+        Some(idx) => &full_ref[..idx],
+        None => full_ref,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackedMergeRequest {
-    pub mr: MergeRequest,
-    pub project_path: String,
+#[cfg(test)]
+mod tests {
+    use super::project_from_reference;
+
+    #[test]
+    fn strips_the_iid_suffix_from_a_full_reference() {
+        assert_eq!(project_from_reference("group/project#123"), "group/project");
+        assert_eq!(
+            project_from_reference("group/sub/project!45"),
+            "group/sub/project"
+        );
+    }
+
+    #[test]
+    fn a_reference_without_an_iid_is_already_a_project_path() {
+        assert_eq!(project_from_reference("group/project"), "group/project");
+    }
 }

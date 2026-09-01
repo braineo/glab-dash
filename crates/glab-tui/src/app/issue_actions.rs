@@ -1,8 +1,8 @@
 //! Key handling for focused issues.
 //!
-//! `TrackedIssue` lives in `glab-core`, so the methods that take one are hung
-//! off it with the [`IssueActions`] extension trait; the chord and confirm
-//! builders, which never had a receiver, are plain module functions.
+//! `Issue` lives in `glab-core`, so the methods that take one are hung off it
+//! with the [`IssueActions`] extension trait; the chord and confirm builders,
+//! which never had a receiver, are plain module functions.
 //!
 //! `IssueActions::handle_action_key` is called from `dispatch_focused_item`
 //! with disjoint borrows: `&self` + `&AppData` (both immutable, from the
@@ -13,12 +13,12 @@ use crossterm::event::KeyEvent;
 use crate::cmd::{Cmd, EventResult};
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
-use glab_core::domain::{Iteration, ProjectLabel, TrackedIssue, User};
+use glab_core::domain::{Issue, Iteration, ProjectLabel, User};
 
 use super::{AppCtx, AppData, Overlay, UiState, View};
 
 /// Issue actions that need the app's context, ui and data. Implemented for
-/// `TrackedIssue`, which this crate does not own.
+/// `Issue`, which this crate does not own.
 pub trait IssueActions {
     /// Handle a key press against the issue-action bindings.
     fn handle_action_key(
@@ -48,7 +48,7 @@ pub trait IssueActions {
     );
 }
 
-impl IssueActions for TrackedIssue {
+impl IssueActions for Issue {
     fn handle_action_key(
         &self,
         key: &KeyEvent,
@@ -60,7 +60,7 @@ impl IssueActions for TrackedIssue {
             if keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
                 == Some(KeyAction::OpenBrowser)
             {
-                let _ = open::that_detached(&self.issue.web_url);
+                let _ = open::that_detached(&self.web_url);
                 return EventResult::Consumed;
             }
             return EventResult::Bubble;
@@ -69,9 +69,9 @@ impl IssueActions for TrackedIssue {
         match action {
             KeyAction::SetStatus => {
                 fetch_or_show_status_chord(
-                    &self.project_path,
-                    &self.issue.id,
-                    &self.issue.iid,
+                    self.project_path(),
+                    &self.id,
+                    &self.iid,
                     false,
                     ctx,
                     data,
@@ -80,9 +80,9 @@ impl IssueActions for TrackedIssue {
             }
             KeyAction::ToggleState => {
                 fetch_or_show_status_chord(
-                    &self.project_path,
-                    &self.issue.id,
-                    &self.issue.iid,
+                    self.project_path(),
+                    &self.id,
+                    &self.iid,
                     true,
                     ctx,
                     data,
@@ -92,11 +92,11 @@ impl IssueActions for TrackedIssue {
             KeyAction::EditLabels => {
                 let label_names: Vec<String> = data.labels.iter().map(|l| l.name.clone()).collect();
                 let issue_labels: Vec<Vec<String>> =
-                    data.issues.iter().map(|i| i.issue.labels.clone()).collect();
+                    data.issues.iter().map(|i| i.labels.clone()).collect();
                 ui.overlay = Overlay::LabelEditor {
                     state: label_editor::LabelEditorState::new(
                         label_names,
-                        &self.issue.labels,
+                        &self.labels,
                         &data.label_usage,
                         &issue_labels,
                         20,
@@ -134,7 +134,7 @@ impl IssueActions for TrackedIssue {
                 };
             }
             KeyAction::MoveIteration => {
-                show_iteration_chord(&self.issue.id, data, ui);
+                show_iteration_chord(&self.id, data, ui);
             }
             _ => return EventResult::Bubble,
         }
@@ -149,7 +149,7 @@ impl IssueActions for TrackedIssue {
         ctx: &AppCtx,
         ui: &mut UiState,
     ) {
-        let old_labels = &self.issue.labels;
+        let old_labels = &self.labels;
         let new_set: std::collections::HashSet<&str> = labels.iter().map(String::as_str).collect();
         let old_set: std::collections::HashSet<&str> =
             old_labels.iter().map(String::as_str).collect();
@@ -169,8 +169,8 @@ impl IssueActions for TrackedIssue {
             .map(|id| format!("gid://gitlab/Label/{id}"))
             .collect();
 
-        self.issue.labels = labels.to_vec();
-        let issue_id = self.issue.id.clone();
+        self.labels = labels.to_vec();
+        let issue_id = self.id.clone();
         let input = serde_json::json!({
             "labelsWidget": {
                 "addLabelIds": add_gids,
@@ -192,9 +192,9 @@ impl IssueActions for TrackedIssue {
             id: String::new(),
             username: username.to_string(),
         };
-        self.issue.assignees = vec![placeholder];
+        self.assignees = vec![placeholder];
 
-        let issue_id = self.issue.id.clone();
+        let issue_id = self.id.clone();
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         let username = username.to_string();
@@ -235,8 +235,8 @@ impl IssueActions for TrackedIssue {
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         let body = body.to_string();
-        let project = self.project_path.clone();
-        let iid = self.issue.iid.clone();
+        let project = self.project_path().to_string();
+        let iid = self.iid.clone();
 
         ui.loading = true;
         tokio::spawn(async move {
@@ -345,8 +345,8 @@ pub fn build_status_chord(
             let item_state = data
                 .issues
                 .iter()
-                .find(|i| i.issue.id == issue_id)
-                .map_or("opened", |i| i.issue.state.as_str());
+                .find(|i| i.id == issue_id)
+                .map_or("opened", |i| i.state.as_str());
             show_close_reopen_confirm(issue_id, iid, item_state, ui);
             return;
         }
@@ -396,9 +396,9 @@ pub fn show_close_reopen_confirm(issue_id: &str, iid: &str, item_state: &str, ui
             title: "Close Issue".to_string(),
             message: format!("Close issue #{iid}?"),
             on_accept: Some(Box::new(move |app| {
-                if let Some(pos) = app.data.issues.iter().position(|i| i.issue.id == issue_id) {
-                    app.data.issues[pos].issue.state = "closed".to_string();
-                    app.data.issues[pos].issue.updated_at = chrono::Utc::now();
+                if let Some(pos) = app.data.issues.iter().position(|i| i.id == issue_id) {
+                    app.data.issues[pos].state = "closed".to_string();
+                    app.data.issues[pos].updated_at = chrono::Utc::now();
                     app.ui.dirty.issues = true;
                     app.ui.pending_cmds.push(Cmd::PersistIssues);
                 }
@@ -410,9 +410,9 @@ pub fn show_close_reopen_confirm(issue_id: &str, iid: &str, item_state: &str, ui
             title: "Reopen Issue".to_string(),
             message: format!("Reopen issue #{iid}?"),
             on_accept: Some(Box::new(move |app| {
-                if let Some(pos) = app.data.issues.iter().position(|i| i.issue.id == issue_id) {
-                    app.data.issues[pos].issue.state = "opened".to_string();
-                    app.data.issues[pos].issue.updated_at = chrono::Utc::now();
+                if let Some(pos) = app.data.issues.iter().position(|i| i.id == issue_id) {
+                    app.data.issues[pos].state = "opened".to_string();
+                    app.data.issues[pos].updated_at = chrono::Utc::now();
                     app.ui.dirty.issues = true;
                     app.ui.pending_cmds.push(Cmd::PersistIssues);
                 }
