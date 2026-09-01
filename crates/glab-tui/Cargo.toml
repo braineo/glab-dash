@@ -13,6 +13,7 @@ comrak.workspace = true
 crossterm.workspace = true
 dirs.workspace = true
 futures.workspace = true
+glab-api.workspace = true
 glab-core.workspace = true
 fuzzy-matcher.workspace = true
 open.workspace = true

@@ -2,6 +2,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use glab_api::Issuable;
+
 use super::{App, AsyncMsg, FetchState};
 
 impl App {
@@ -78,6 +80,8 @@ impl App {
         let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
         let members = self.ctx.config.all_members();
+        let tracking_projects = self.ctx.config.tracking_projects.clone();
+        let config = self.ctx.config.clone();
 
         // Collect external projects that have open issues we track, so we can
         // detect state changes (closed, reassigned) even if those issues are
@@ -97,15 +101,19 @@ impl App {
         tokio::spawn(async move {
             let ua = updated_after.as_deref();
             let (tracking, assigned, external) = tokio::join!(
-                client.fetch_tracking_issues("all", ua),
-                client.fetch_assigned_issues(&members, "all", ua),
-                client.fetch_external_project_issues(&external_projects, ua),
+                client.list_namespace_issues(&tracking_projects, None, ua),
+                client.list_assigned_issues(&members, None, ua),
+                client.list_namespace_issues(&external_projects, None, ua),
             );
             let result = match (tracking, assigned, external) {
                 (Ok(mut t), Ok(a), Ok(ext)) => {
                     let mut seen: std::collections::HashSet<String> =
                         t.iter().map(|i| i.id.clone()).collect();
-                    t.extend(a.into_iter().filter(|i| seen.insert(i.id.clone())));
+                    // The assigned query is instance-wide; issues inside a
+                    // tracking namespace already came from the walk above.
+                    t.extend(a.into_iter().filter(|i| {
+                        !config.is_tracking_project(i.project_path()) && seen.insert(i.id.clone())
+                    }));
                     // Only merge external issues we already track — don't
                     // pull in new issues from those projects.
                     t.extend(
@@ -123,6 +131,8 @@ impl App {
     fn fetch_mrs(&self) {
         let client = self.ctx.client.clone();
         let members = self.ctx.config.all_members();
+        let tracking_projects = self.ctx.config.tracking_projects.clone();
+        let config = self.ctx.config.clone();
         let tx = self.ctx.async_tx.clone();
         let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
@@ -135,17 +145,17 @@ impl App {
         tokio::spawn(async move {
             let ua = updated_after.as_deref();
             let t0 = std::time::Instant::now();
-            let tracking = client.fetch_tracking_mrs("all", ua).await;
+            let tracking = client.list_project_mrs(&tracking_projects, None, ua).await;
             match &tracking {
                 Ok(t) => tracing::info!(
                     count = t.len(),
                     elapsed_ms = t0.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                    "fetch_tracking_mrs ✓"
+                    "list_project_mrs ✓"
                 ),
                 Err(e) => tracing::warn!(
                     error = ?e,
                     elapsed_ms = t0.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                    "fetch_tracking_mrs ✗"
+                    "list_project_mrs ✗"
                 ),
             }
             let t1 = std::time::Instant::now();
@@ -154,17 +164,26 @@ impl App {
             // through every merged/closed MR ever assigned to each member —
             // that's tens of thousands of requests for long-tenured teams and
             // causes the MR list to appear frozen on load.
-            let external = client.fetch_external_mrs(&members, "opened", ua).await;
+            let external = client
+                .list_user_mrs(&members, Some(glab_api::MrState::Opened), ua)
+                .await
+                // A user's MRs are instance-wide; the ones inside a tracking
+                // project already came from the per-project walk above.
+                .map(|mrs| {
+                    mrs.into_iter()
+                        .filter(|m| !config.is_tracking_project(m.project_path()))
+                        .collect::<Vec<_>>()
+                });
             match &external {
                 Ok(e) => tracing::info!(
                     count = e.len(),
                     elapsed_ms = t1.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                    "fetch_external_mrs ✓"
+                    "list_user_mrs ✓"
                 ),
                 Err(e) => tracing::warn!(
                     error = ?e,
                     elapsed_ms = t1.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                    "fetch_external_mrs ✗"
+                    "list_user_mrs ✗"
                 ),
             }
             let result = match (tracking, external) {
@@ -203,7 +222,9 @@ impl App {
         let iid = iid.to_string();
         let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
-            let result = client.list_issue_discussions(&project, &iid).await;
+            let result = client
+                .list_discussions(Issuable::Issue, &project, &iid)
+                .await;
             let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
         });
     }
@@ -214,7 +235,9 @@ impl App {
         let iid = iid.to_string();
         let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
-            let result = client.list_mr_discussions(&project, &iid).await;
+            let result = client
+                .list_discussions(Issuable::MergeRequest, &project, &iid)
+                .await;
             let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
         });
     }
@@ -222,8 +245,9 @@ impl App {
     fn fetch_iterations(&self) {
         let client = self.ctx.client.clone();
         let tx = self.ctx.async_tx.clone();
+        let group = self.ctx.config.primary_tracking_group().to_string();
         tokio::spawn(async move {
-            let result = client.fetch_iterations().await;
+            let result = client.list_group_iterations(&group).await;
             let _ = tx.send(AsyncMsg::IterationsLoaded(result));
         });
     }

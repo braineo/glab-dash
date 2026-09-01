@@ -4,6 +4,7 @@
 //! [`MrActions`] extension trait rather than an inherent impl.
 
 use crossterm::event::KeyEvent;
+use glab_api::Issuable;
 
 use crate::cmd::{Cmd, EventResult};
 use crate::keybindings::{self, KeyAction};
@@ -236,16 +237,22 @@ impl MrActions for MergeRequest {
             let create_result = match &reply_discussion_id {
                 Some(disc_id) => {
                     client
-                        .reply_to_mr_discussion(&project, &iid, disc_id, &body)
+                        .reply_to_discussion(Issuable::MergeRequest, &project, &iid, disc_id, &body)
                         .await
                 }
-                None => client.create_mr_note(&project, &iid, &body).await,
+                None => {
+                    client
+                        .create_note(Issuable::MergeRequest, &project, &iid, &body)
+                        .await
+                }
             };
             if let Err(e) = create_result {
                 let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
                 return;
             }
-            let discussions = client.list_mr_discussions(&project, &iid).await;
+            let discussions = client
+                .list_discussions(Issuable::MergeRequest, &project, &iid)
+                .await;
             let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
         });
     }

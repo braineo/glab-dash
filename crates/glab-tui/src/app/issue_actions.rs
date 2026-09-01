@@ -9,6 +9,7 @@
 //! same struct), `&AppCtx` (immutable infra), `&mut UiState` (mutable UI).
 
 use crossterm::event::KeyEvent;
+use glab_api::Issuable;
 
 use crate::cmd::{Cmd, EventResult};
 use crate::keybindings::{self, KeyAction};
@@ -243,16 +244,22 @@ impl IssueActions for Issue {
             let create_result = match &reply_discussion_id {
                 Some(disc_id) => {
                     client
-                        .reply_to_issue_discussion(&project, &iid, disc_id, &body)
+                        .reply_to_discussion(Issuable::Issue, &project, &iid, disc_id, &body)
                         .await
                 }
-                None => client.create_issue_note(&project, &iid, &body).await,
+                None => {
+                    client
+                        .create_note(Issuable::Issue, &project, &iid, &body)
+                        .await
+                }
             };
             if let Err(e) = create_result {
                 let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
                 return;
             }
-            let discussions = client.list_issue_discussions(&project, &iid).await;
+            let discussions = client
+                .list_discussions(Issuable::Issue, &project, &iid)
+                .await;
             let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
         });
     }
