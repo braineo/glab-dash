@@ -69,3 +69,18 @@ pub fn label_titles<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::E
 pub fn lower_opt<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     Ok(Option::<String>::deserialize(d)?.map(|s| s.to_lowercase()))
 }
+
+pub fn user_id<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Form {
+        Gid(String),
+        ID(u64),
+    }
+
+    Ok(match Option::<Form>::deserialize(d)? {
+        Some(Form::Gid(gid)) => gid,
+        Some(Form::ID(id)) => format!("gid://gitlab/User/{id}"),
+        None => String::new(),
+    })
+}
