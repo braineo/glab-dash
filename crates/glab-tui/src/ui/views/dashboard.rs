@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -1009,10 +1009,12 @@ fn render_health_list(
             let detail = match tab {
                 HealthTab::UnplannedWork => unplanned_work_cache
                     .get(&item.id)
-                    .map_or_else(String::new, |dt| format!("added {}", dt.format("%b %d"))),
+                    .map_or_else(String::new, |dt| {
+                        format!("added {}", dt.with_timezone(&Local).format("%b %d"))
+                    }),
                 HealthTab::ShadowWork => {
                     let closed = item.closed_at.unwrap_or(item.updated_at);
-                    format!("closed {}", closed.format("%b %d"))
+                    format!("closed {}", closed.with_timezone(&Local).format("%b %d"))
                 }
                 HealthTab::AtRisk => {
                     let days = (Utc::now() - item.updated_at).num_days();
