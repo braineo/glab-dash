@@ -1,42 +1,55 @@
 //! Non-interactive debug mode: exercise the fetch paths and log results.
 
 use anyhow::{Context, Result};
+use glab_api::{GitLabClient, IssueState, MrState};
 use glab_tui::app::App;
 use glab_tui::config::Config;
 use glab_tui::db::Db;
-use glab_tui::gitlab::client::GitLabClient;
 use tokio::sync::mpsc;
 
 /// Exercise the fetch paths and log results. Output goes to the tracing log
 /// file, not the terminal.
 pub async fn run() -> Result<()> {
     let config = Config::load().context("Failed to load configuration")?;
-    let client = GitLabClient::new(&config).context("Failed to create GitLab client")?;
+    let client = GitLabClient::new(&config.gitlab_url, &config.token)
+        .context("Failed to create GitLab client")?;
     let members = config.team_members(0);
 
     tracing::info!(
         projects = %config.tracking_projects.join(", "),
         "debug: fetching tracking issues"
     );
-    match client.fetch_tracking_issues("opened", None).await {
+    match client
+        .list_namespace_issues(&config.tracking_projects, Some(IssueState::Opened), None)
+        .await
+    {
         Ok(issues) => tracing::info!(count = issues.len(), "debug: tracking issues ✓"),
         Err(e) => tracing::error!(error = ?e, "debug: tracking issues ✗"),
     }
 
     tracing::info!(members = members.len(), "debug: fetching assigned issues");
-    match client.fetch_assigned_issues(&members, "opened", None).await {
+    match client
+        .list_assigned_issues(&members, Some(IssueState::Opened), None)
+        .await
+    {
         Ok(issues) => tracing::info!(count = issues.len(), "debug: assigned issues ✓"),
         Err(e) => tracing::error!(error = ?e, "debug: assigned issues ✗"),
     }
 
     tracing::info!("debug: fetching tracking MRs");
-    match client.fetch_tracking_mrs("opened", None).await {
+    match client
+        .list_project_mrs(&config.tracking_projects, Some(MrState::Opened), None)
+        .await
+    {
         Ok(mrs) => tracing::info!(count = mrs.len(), "debug: tracking MRs ✓"),
         Err(e) => tracing::error!(error = ?e, "debug: tracking MRs ✗"),
     }
 
     tracing::info!(members = members.len(), "debug: fetching external MRs");
-    match client.fetch_external_mrs(&members, "opened", None).await {
+    match client
+        .list_user_mrs(&members, Some(MrState::Opened), None)
+        .await
+    {
         Ok(mrs) => tracing::info!(count = mrs.len(), "debug: external MRs ✓"),
         Err(e) => tracing::error!(error = ?e, "debug: external MRs ✗"),
     }
@@ -54,12 +67,17 @@ pub async fn run() -> Result<()> {
     tracing::info!("debug: simulating app flow");
     let (async_tx, _async_rx) = mpsc::unbounded_channel();
     let db = Db::open().context("Failed to open database")?;
+    let projects = config.tracking_projects.clone();
     let mut app = App::new(config, client, async_tx, db);
-    let tracking = app.ctx.client.fetch_tracking_issues("opened", None).await?;
+    let tracking = app
+        .ctx
+        .client
+        .list_namespace_issues(&projects, Some(IssueState::Opened), None)
+        .await?;
     let assigned = app
         .ctx
         .client
-        .fetch_assigned_issues(&members, "opened", None)
+        .list_assigned_issues(&members, Some(IssueState::Opened), None)
         .await?;
     app.data.issues = tracking;
     app.data.issues.extend(assigned);

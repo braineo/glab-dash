@@ -16,9 +16,9 @@ use tokio::sync::mpsc;
 use crate::cmd::{Cmd, Dirty};
 use crate::config::Config;
 use crate::db::{Db, ViewState};
-use crate::gitlab::client::GitLabClient;
 use crate::ui::views::Views;
 use crate::ui::views::{dashboard, filter_editor};
+use glab_api::GitLabClient;
 use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

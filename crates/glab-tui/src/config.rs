@@ -120,6 +120,13 @@ impl Config {
         self.tracking_projects.first().map_or("", |s| s.as_str())
     }
 
+    /// The group the primary tracking project sits in — everything before the
+    /// last `/`. Iterations are defined on the group, not the project.
+    pub fn primary_tracking_group(&self) -> &str {
+        let primary = self.primary_tracking_project();
+        primary.rsplit_once('/').map_or(primary, |(group, _)| group)
+    }
+
     pub fn all_members(&self) -> Vec<String> {
         let mut members: Vec<String> = self.teams.iter().flat_map(|t| t.members.clone()).collect();
         if !members.contains(&self.me) {

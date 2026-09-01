@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+use glab_api::GitLabClient;
 use glab_tui::config::Config;
-use glab_tui::gitlab::client::GitLabClient;
 
 const LOGO: &str = r"
    __ _  _       _             _           _
@@ -39,19 +39,7 @@ pub async fn run_onboarding() -> Result<Config> {
     // Step 3: Validate connection
     print!("\n  Validating connection... ");
     io::stdout().flush()?;
-    let test_config = Config {
-        gitlab_url: gitlab_url.clone(),
-        token: token.clone(),
-        me: String::new(),
-        tracking_projects: Vec::new(),
-        refresh_interval_secs: 60,
-        teams: Vec::new(),
-        filters: Vec::new(),
-        sort_presets: Vec::new(),
-        label_sort_orders: Vec::new(),
-        kanban_columns: Vec::new(),
-    };
-    let client = GitLabClient::new(&test_config).context("Failed to create client")?;
+    let client = GitLabClient::new(&gitlab_url, &token).context("Failed to create client")?;
 
     let username = fetch_current_user(&client).await;
 

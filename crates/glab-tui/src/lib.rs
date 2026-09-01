@@ -4,9 +4,10 @@
 //! the [`ui`] layer that paints it, and the [`run`] event loop that drives the
 //! whole cycle in the terminal.
 //!
-//! The domain model, filters and sorts live in `glab-core`. This crate is
-//! still fat: [`config`], [`db`] and [`gitlab`] remain here and are carved out
-//! into their own crates in later steps.
+//! The domain model, filters and sorts live in `glab-core`; every HTTP
+//! round-trip to GitLab lives in `glab-api`. This crate is still fat:
+//! [`config`] and [`db`] remain here and are carved out into their own crates
+//! in later steps.
 
 pub mod app;
 pub mod cmd;
@@ -14,7 +15,6 @@ pub mod config;
 #[cfg(test)]
 mod config_tests;
 pub mod db;
-pub mod gitlab;
 pub mod keybindings;
 pub mod run;
 pub mod ui;

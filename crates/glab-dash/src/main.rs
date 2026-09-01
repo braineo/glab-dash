@@ -8,10 +8,10 @@ mod onboarding_tests;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use glab_api::GitLabClient;
 use glab_tui::app::App;
 use glab_tui::config::Config;
 use glab_tui::db::Db;
-use glab_tui::gitlab::client::GitLabClient;
 use tokio::sync::mpsc;
 
 /// Ultra-fast TUI for managing GitLab issues and merge requests across teams.
@@ -46,7 +46,8 @@ async fn run_dashboard() -> Result<()> {
     } else {
         Config::load().context("Failed to load configuration")?
     };
-    let client = GitLabClient::new(&config).context("Failed to create GitLab client")?;
+    let client = GitLabClient::new(&config.gitlab_url, &config.token)
+        .context("Failed to create GitLab client")?;
     let db = Db::open().context("Failed to open database")?;
 
     let (async_tx, async_rx) = mpsc::unbounded_channel();
