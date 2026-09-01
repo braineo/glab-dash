@@ -205,7 +205,7 @@ impl IssueActions for TrackedIssue {
                     if let Some(user) = users.first() {
                         let input = serde_json::json!({
                             "assigneesWidget": {
-                                "assigneeIds": [format!("gid://gitlab/User/{}", user.id)]
+                                "assigneeIds": [user.id]
                             }
                         });
                         let result = client.update_issue(&issue_id, input).await;

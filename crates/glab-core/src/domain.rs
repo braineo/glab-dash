@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
+    /// user id REST API returns number but new GraphQL returns "gid://gitlab/User/{id}"
+    #[serde(deserialize_with = "crate::de::user_id")]
     pub id: String,
     pub username: String,
 }
