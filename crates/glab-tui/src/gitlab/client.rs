@@ -114,10 +114,6 @@ struct GqlWidget {
 struct GqlAllowedStatus {
     id: String,
     name: String,
-    #[serde(default, rename = "iconName")]
-    icon_name: Option<String>,
-    #[serde(default)]
-    color: Option<String>,
     #[serde(default)]
     position: Option<i32>,
     #[serde(default)]
@@ -129,8 +125,6 @@ impl From<GqlAllowedStatus> for WorkItemStatus {
         WorkItemStatus {
             id: s.id,
             name: s.name,
-            icon_name: s.icon_name,
-            color: s.color,
             position: s.position,
             category: s.category,
         }
@@ -692,7 +686,7 @@ impl GitLabClient {
                             widgetDefinitions {
                                 type
                                 ... on WorkItemWidgetDefinitionStatus {
-                                    allowedStatuses { id name category color iconName position }
+                                    allowedStatuses { id name category position }
                                 }
                             }
                         }
@@ -1080,10 +1074,10 @@ impl GitLabClient {
             assignees { nodes { ...UserFields } }
             reviewers { nodes { ...UserFields } }
             labels { nodes { title } }
-            milestone { id title state }
+            milestone { title }
             createdAt updatedAt webUrl description
             userNotesCount
-            sourceBranch targetBranch mergeStatusEnum
+            sourceBranch targetBranch
             reference(full: true)
             diffStatsSummary { additions deletions fileCount }
             approved
@@ -1102,7 +1096,7 @@ impl GitLabClient {
             author { ...UserFields }
             assignees { nodes { ...UserFields } }
             labels { nodes { title } }
-            milestone { id title state }
+            milestone { title }
             createdAt updatedAt closedAt webUrl description
             userNotesCount
             reference(full: true)
@@ -1131,7 +1125,7 @@ impl GitLabClient {
                     labels { nodes { title } }
                 }
                 ... on WorkItemWidgetMilestone {
-                    milestone { id title state }
+                    milestone { title }
                 }
                 ... on WorkItemWidgetStatus {
                     status { name category }

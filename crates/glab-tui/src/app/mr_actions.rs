@@ -204,7 +204,6 @@ impl MrActions for TrackedMergeRequest {
         self.mr.assignees = vec![User {
             id: String::new(),
             username: username.to_string(),
-            name: username.to_string(),
         }];
 
         let project = self.project_path.clone();

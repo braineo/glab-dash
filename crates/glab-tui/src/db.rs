@@ -442,7 +442,6 @@ mod tests {
                 web_url: None,
                 description: None,
                 draft: false,
-                merge_status: None,
                 source_branch: "feature".to_string(),
                 target_branch: "main".to_string(),
                 head_pipeline: None,
@@ -540,8 +539,6 @@ mod tests {
         let statuses = vec![WorkItemStatus {
             id: "1".to_string(),
             name: "Done".to_string(),
-            icon_name: None,
-            color: None,
             position: Some(1),
             category: Some("done".to_string()),
         }];

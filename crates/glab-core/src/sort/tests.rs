@@ -11,7 +11,6 @@ fn make_user(username: &str) -> User {
     User {
         id: "gid://gitlab/User/1".to_string(),
         username: username.to_string(),
-        name: username.to_string(),
     }
 }
 

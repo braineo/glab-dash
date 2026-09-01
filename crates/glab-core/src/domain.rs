@@ -5,15 +5,11 @@ use serde::{Deserialize, Serialize};
 pub struct User {
     pub id: String,
     pub username: String,
-    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Milestone {
-    pub id: String,
     pub title: String,
-    /// Nullable in the GraphQL schema.
-    pub state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,8 +124,6 @@ pub struct MergeRequest {
     pub user_notes_count: Option<u64>,
     pub source_branch: String,
     pub target_branch: String,
-    #[serde(rename = "mergeStatusEnum")]
-    pub merge_status: Option<String>,
     /// `reference(full: true)` — `group/project!123`, used to recover the
     /// project an externally-fetched merge request belongs to.
     pub reference: Option<String>,
@@ -171,7 +165,6 @@ impl MergeRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
-    pub id: u64,
     pub body: String,
     pub author: User,
     pub created_at: DateTime<Utc>,
@@ -182,8 +175,6 @@ pub struct Note {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Discussion {
     pub id: String,
-    #[serde(default)]
-    pub individual_note: bool,
     pub notes: Vec<Note>,
 }
 
@@ -200,10 +191,6 @@ pub struct ProjectLabel {
 pub struct WorkItemStatus {
     pub id: String,
     pub name: String,
-    #[serde(default)]
-    pub icon_name: Option<String>,
-    #[serde(default)]
-    pub color: Option<String>,
     #[serde(default)]
     pub position: Option<i32>,
     /// Status category from GitLab (e.g. "active", "done", "canceled").
