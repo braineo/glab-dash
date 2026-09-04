@@ -12,9 +12,35 @@ use strum::IntoStaticStr;
 use glab_core::domain::MergeRequest;
 use urlencoding::encode;
 
-use crate::client::{GitLabClient, get_mutation_payload};
-use crate::query::{MR_FIELDS, MR_PAGE_SIZE, document};
+use crate::client::{GitLabClient, document, get_mutation_payload};
 use crate::wire::{GqlProjectMrs, GqlUserMrs};
+
+/// Page size for merge-request list queries. Kept small to stay within GitLab's
+/// default query complexity limit of 250 (each MR node with nested discussions
+/// contributes ~5 points).
+const MR_PAGE_SIZE: u32 = 25;
+
+/// The selection every merge-request query and mutation shares.
+const MR_FIELDS: &str = r"
+    fragment MrFields on MergeRequest {
+        id iid title state draft
+        author { ...UserFields }
+        assignees { nodes { ...UserFields } }
+        reviewers { nodes { ...UserFields } }
+        labels { nodes { title } }
+        milestone { title }
+        createdAt updatedAt webUrl description
+        userNotesCount
+        sourceBranch targetBranch
+        reference(full: true)
+        diffStatsSummary { additions deletions fileCount }
+        approved
+        approvedBy { nodes { ...UserFields } }
+        headPipeline { status }
+        resolvableDiscussionsCount
+        resolvedDiscussionsCount
+    }
+";
 
 /// The states a merge-request list query can filter on. `None` asks for every
 /// state.

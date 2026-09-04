@@ -175,3 +175,16 @@ fn join_messages(errors: &[Value], field: Option<&str>) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
+
+/// The user selection every other fragment spreads in turn.
+const USER_FIELDS: &str = r"
+    fragment UserFields on User {
+        id username name webUrl
+    }
+";
+
+/// `doc` followed by the fragments it spreads: `fields` itself, and the
+/// `UserFields` every one of them spreads in turn.
+pub(crate) fn document(doc: &str, fields: &str) -> String {
+    format!("{doc}{fields}{USER_FIELDS}")
+}
