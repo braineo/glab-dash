@@ -16,9 +16,6 @@ use serde_json::Value;
 use crate::wire::{GqlPage, GqlResponse, Paged};
 
 /// An authenticated connection to one GitLab instance.
-///
-/// Cloning is cheap — `reqwest` shares one connection pool across clones — so a
-/// caller spawning a task per request clones freely.
 #[derive(Clone)]
 pub struct GitLabClient {
     http: reqwest::Client,
@@ -47,8 +44,6 @@ impl GitLabClient {
         })
     }
 
-    /// Start a REST v4 request against `path`, which is appended to the API
-    /// root as written (`/projects/{id}/labels`).
     pub(crate) fn rest(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         self.http
             .request(method, format!("{}/api/v4{path}", self.base_url))
@@ -68,15 +63,11 @@ impl GitLabClient {
         let started = std::time::Instant::now();
         tracing::debug!(op, vars = %variables, "graphql →");
 
-        let result = async {
-            let resp = self
-                .http
+        let result = Self::send::<Value>(
+            self.http
                 .post(format!("{}/api/graphql", self.base_url))
-                .json(&body)
-                .send()
-                .await?;
-            Self::read::<Value>(resp).await
-        }
+                .json(&body),
+        )
         .await;
 
         let elapsed_ms = started.elapsed().as_millis();
@@ -138,30 +129,14 @@ impl GitLabClient {
         Ok(all)
     }
 
-    /// Send `request` and deserialize a successful response as `T`. A non-2xx
-    /// status fails with the status, the URL and the body GitLab returned.
     pub(crate) async fn send<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> Result<T> {
-        Self::read(request.send().await?).await
-    }
-
-    /// Send `request` for its status alone, discarding the body. `action` names
-    /// the operation in the error a non-2xx status raises.
-    pub(crate) async fn send_ok(request: reqwest::RequestBuilder, action: &str) -> Result<()> {
         let resp = request.send().await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("{action} failed ({status}): {body}");
-        }
-        Ok(())
-    }
-
-    async fn read<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
         let status = resp.status();
         if !status.is_success() {
             let url = resp.url().to_string();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("{status} from {url}: {body}");
+            tracing::warn!(%status, %url, %body, "http ✗");
+            anyhow::bail!("{status}: {body}");
         }
         resp.json::<T>()
             .await

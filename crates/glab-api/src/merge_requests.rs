@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use reqwest::Method;
+use serde::de::IgnoredAny;
 use serde_json::Value;
 use strum::IntoStaticStr;
 
@@ -273,7 +274,9 @@ impl GitLabClient {
     /// Approve the merge request `iid` in `project`.
     pub async fn approve_mr(&self, project: &str, iid: &str) -> Result<()> {
         let path = format!("/projects/{}/merge_requests/{iid}/approve", encode(project));
-        Self::send_ok(self.rest(Method::POST, &path), "Approve").await
+        Self::send::<IgnoredAny>(self.rest(Method::POST, &path))
+            .await
+            .map(drop)
     }
 
     /// Merge the merge request `iid` in `project`, removing its source branch.
@@ -282,7 +285,7 @@ impl GitLabClient {
         let request = self
             .rest(Method::PUT, &path)
             .json(&serde_json::json!({ "should_remove_source_branch": true }));
-        Self::send_ok(request, "Merge").await
+        Self::send::<IgnoredAny>(request).await.map(drop)
     }
 }
 
