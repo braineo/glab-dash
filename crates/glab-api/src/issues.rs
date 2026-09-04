@@ -12,9 +12,62 @@ use strum::IntoStaticStr;
 
 use glab_core::domain::Issue;
 
-use crate::client::{GitLabClient, get_mutation_payload};
-use crate::query::{ISSUE_FIELDS, WORK_ITEM_FIELDS, document};
+use crate::client::{GitLabClient, document, get_mutation_payload};
 use crate::wire::{GqlNamespaceWorkItems, GqlRootIssues, GqlWorkItem};
+
+/// The selection the root `issues` query uses, deserialized straight into
+/// [`glab_core::domain::Issue`].
+const ISSUE_FIELDS: &str = r"
+    fragment IssueFields on Issue {
+        id iid title state
+        author { ...UserFields }
+        assignees { nodes { ...UserFields } }
+        labels { nodes { title } }
+        milestone { title }
+        createdAt updatedAt closedAt webUrl description
+        userNotesCount
+        reference(full: true)
+        status { name category }
+        iteration { id title startDate dueDate state }
+        weight
+    }
+";
+
+/// The selection both work-item documents share — the `namespace.workItems`
+/// list query and the `workItemUpdate` mutation. Widgets arrive as a
+/// heterogeneous array, so this path still needs `GqlWorkItem` and
+/// `From<GqlWorkItem> for Issue` to fold into the flat `Issue` shape.
+const WORK_ITEM_FIELDS: &str = r"
+    fragment WorkItemFields on WorkItem {
+        id iid title state
+        author { ...UserFields }
+        createdAt updatedAt closedAt webUrl
+        reference(full: true)
+        widgets(onlyTypes: [STATUS, ASSIGNEES, LABELS, MILESTONE, DESCRIPTION, ITERATION, WEIGHT]) {
+            ... on WorkItemWidgetAssignees {
+                assignees { nodes { ...UserFields } }
+            }
+            ... on WorkItemWidgetLabels {
+                labels { nodes { title } }
+            }
+            ... on WorkItemWidgetMilestone {
+                milestone { title }
+            }
+            ... on WorkItemWidgetStatus {
+                status { name category }
+            }
+            ... on WorkItemWidgetDescription {
+                description
+            }
+            ... on WorkItemWidgetIteration {
+                iteration { id title startDate dueDate state }
+            }
+            ... on WorkItemWidgetWeight {
+                weight
+            }
+        }
+    }
+";
 
 /// The states an issue list query can filter on. `None` asks for every state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]

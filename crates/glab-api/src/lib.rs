@@ -19,7 +19,6 @@ pub mod issues;
 pub mod merge_requests;
 pub mod meta;
 pub mod planning;
-pub mod query;
 pub mod wire;
 
 pub use client::GitLabClient;
