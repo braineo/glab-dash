@@ -11,7 +11,7 @@ use strum::IntoStaticStr;
 use glab_core::domain::MergeRequest;
 use urlencoding::encode;
 
-use crate::client::{GitLabClient, elapsed_ms, mutation_payload};
+use crate::client::{GitLabClient, mutation_payload};
 use crate::query::{MR_FIELDS, MR_PAGE_SIZE, document};
 use crate::wire::{GqlProjectMrs, GqlUserMrs};
 
@@ -116,7 +116,7 @@ impl GitLabClient {
             for role in [UserMrRole::Assigned, UserMrRole::Reviewer] {
                 let started = std::time::Instant::now();
                 let mrs = self.user_mrs(member, role, state, updated_after).await;
-                let elapsed_ms = elapsed_ms(started);
+                let elapsed_ms = started.elapsed().as_millis();
                 match mrs {
                     Ok(mrs) => {
                         tracing::debug!(
@@ -138,7 +138,7 @@ impl GitLabClient {
 
         tracing::info!(
             total = all.len(),
-            elapsed_ms = elapsed_ms(overall),
+            elapsed_ms = overall.elapsed().as_millis(),
             "list_user_mrs done"
         );
         Ok(all)

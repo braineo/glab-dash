@@ -79,7 +79,7 @@ impl GitLabClient {
         }
         .await;
 
-        let elapsed_ms = elapsed_ms(started);
+        let elapsed_ms = started.elapsed().as_millis();
         let json = match result {
             Ok(json) => json,
             Err(e) => {
@@ -199,10 +199,4 @@ fn join_messages(errors: &[Value], field: Option<&str>) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// Milliseconds since `started`, saturating rather than wrapping on a clock
-/// that somehow ran long enough to overflow.
-pub(crate) fn elapsed_ms(started: std::time::Instant) -> u64 {
-    started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
 }
