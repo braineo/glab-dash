@@ -1,0 +1,381 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Cell, Paragraph, Row, Table};
+
+use std::collections::HashMap;
+
+use crate::cmd::{Cmd, Dirty, EventResult};
+use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
+use crate::ui::{components, styles};
+use glab_core::domain::MergeRequest;
+use glab_core::filter::matches_mr;
+use glab_core::sort;
+
+#[derive(Default)]
+pub struct MrListState {
+    pub list: ItemList<MergeRequest>,
+    pub filter: UserFilter,
+}
+
+impl MrListState {
+    // ── Key handling ────────────────────────────────────────────────
+
+    pub fn handle_key(
+        &mut self,
+        key: &KeyEvent,
+        dirty: &mut Dirty,
+        cmds: &mut Vec<Cmd>,
+        needs_redraw: &mut bool,
+    ) -> EventResult {
+        if self.filter.bar_focused {
+            match self.filter.handle_bar_key(key) {
+                FilterBarAction::Deleted => {
+                    dirty.view_state = true;
+                    cmds.push(Cmd::PersistViewState);
+                }
+                FilterBarAction::Unfocused | FilterBarAction::Consumed => {}
+            }
+            return EventResult::Consumed;
+        }
+
+        if self.filter.is_searching() {
+            let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
+            if self.filter.handle_fuzzy_input(key) == Some(true) {
+                dirty.view_state = true;
+            }
+            if is_exit {
+                cmds.push(Cmd::PersistViewState);
+            }
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        if let Some(moved) = self.list.handle_nav_key(key) {
+            if moved {
+                dirty.selection = true;
+            } else {
+                *needs_redraw = false;
+            }
+            return EventResult::Consumed;
+        }
+
+        if key.code == KeyCode::Char('/') {
+            self.filter.start_search();
+            dirty.selection = true;
+            return EventResult::Consumed;
+        }
+
+        EventResult::Bubble
+    }
+
+    // ── Filtering ───────────────────────────────────────────────────
+
+    pub fn apply_filters(
+        &mut self,
+        mrs: &[MergeRequest],
+        me: &str,
+        team_members: &[String],
+        label_orders: &HashMap<String, Vec<String>>,
+    ) {
+        self.list.indices = mrs
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                // Implicit team filter: when a team is selected, only show items
+                // assigned to team members or unassigned items.
+                team_members.is_empty()
+                    || item.assignees.is_empty()
+                    || item
+                        .assignees
+                        .iter()
+                        .any(|a| team_members.contains(&a.username))
+            })
+            .filter(|(_, item)| matches_mr(item, &self.filter.conditions, me, team_members))
+            .filter(|(_, item)| {
+                let mut haystack = item.title.to_lowercase();
+                if let Some(a) = &item.author {
+                    haystack.push(' ');
+                    haystack.push_str(&a.username.to_lowercase());
+                }
+                for a in &item.assignees {
+                    haystack.push(' ');
+                    haystack.push_str(&a.username.to_lowercase());
+                }
+                self.filter.fuzzy_matches(&haystack)
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        sort::sort_mrs(
+            &mut self.list.indices,
+            mrs,
+            &self.filter.sort_specs,
+            label_orders,
+        );
+
+        self.list.clamp_selection();
+    }
+
+    pub fn selected_mr<'a>(&self, mrs: &'a [MergeRequest]) -> Option<&'a MergeRequest> {
+        self.list.selected_item(mrs)
+    }
+}
+
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    state: &mut MrListState,
+    mrs: &[MergeRequest],
+    ctx: &crate::ui::RenderCtx<'_>,
+) {
+    let label_colors = ctx.label_colors;
+    let has_selection = state.list.table_state.selected().is_some();
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(if has_selection { 2 } else { 0 }),
+    ])
+    .split(area);
+
+    components::filter_bar::render(
+        frame,
+        chunks[0],
+        &state.filter.conditions,
+        &state.filter.sort_specs,
+        state.filter.bar_focused,
+        state.filter.bar_selected,
+    );
+
+    // Build table rows
+    let now = chrono::Utc::now();
+    let selected_idx = state.list.table_state.selected();
+    let rows: Vec<Row> = state
+        .list
+        .indices
+        .iter()
+        .enumerate()
+        .map(|(row_idx, &idx)| {
+            let item = &mrs[idx];
+            let source_str = {
+                let p = item.project_path();
+                p.rsplit('/').next().unwrap_or(p).to_string()
+            };
+            let author = item.author.as_ref().map_or("-", |a| a.username.as_str());
+
+            let pipeline_status = item.pipeline_status().unwrap_or("-");
+            let pipeline_icon = match pipeline_status {
+                "success" | "passed" => styles::ICON_PIPELINE_OK,
+                "failed" => styles::ICON_PIPELINE_FAIL,
+                "running" => styles::ICON_PIPELINE_RUN,
+                "pending" => styles::ICON_PIPELINE_WAIT,
+                _ => " ",
+            };
+
+            let title = if item.draft {
+                format!("{} {}", styles::ICON_DRAFT, item.title)
+            } else {
+                item.title.clone()
+            };
+
+            let reviewers = item
+                .reviewers
+                .iter()
+                .map(|r| r.username.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+
+            // Diff: green additions, red deletions
+            let diff_cell = match item.diff_stats() {
+                Some(d) => Cell::from(Line::from(vec![
+                    Span::styled(
+                        format!("+{}", d.additions),
+                        Style::default().fg(styles::GREEN),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("-{}", d.deletions),
+                        Style::default().fg(styles::RED),
+                    ),
+                ])),
+                None => Cell::default(),
+            };
+
+            // Approval: green check, red uncheck
+            let approval_cell = match item.approved {
+                Some(true) => Cell::from(Span::styled(
+                    styles::ICON_CHECK,
+                    Style::default().fg(styles::GREEN),
+                )),
+                Some(false) => Cell::from(Span::styled(
+                    styles::ICON_UNCHECK,
+                    Style::default().fg(styles::RED),
+                )),
+                None if !item.approved_by.is_empty() => Cell::from(Span::styled(
+                    styles::ICON_CHECK,
+                    Style::default().fg(styles::GREEN),
+                )),
+                None => Cell::default(),
+            };
+
+            // Threads: unresolved in orange, total in dim
+            let threads_cell = match (item.unresolved_threads(), item.notes_count()) {
+                (u, n) if u > 0 && n > 0 => Cell::from(Line::from(vec![
+                    Span::styled(format!("{u}!"), Style::default().fg(styles::ORANGE)),
+                    Span::styled(format!(" {n}"), Style::default().fg(styles::TEXT_DIM)),
+                ])),
+                (u, 0) if u > 0 => Cell::from(Span::styled(
+                    format!("{u}!"),
+                    Style::default().fg(styles::ORANGE),
+                )),
+                (_, n) if n > 0 => Cell::from(Span::styled(
+                    format!("{n}"),
+                    Style::default().fg(styles::TEXT_DIM),
+                )),
+                _ => Cell::default(),
+            };
+
+            let age = list_model::format_age(&item.updated_at, now);
+
+            let row = Row::new([
+                Cell::from(Span::styled(
+                    format!("!{}", item.iid),
+                    Style::default().fg(styles::TEXT_DIM),
+                )),
+                Cell::from(Span::styled(source_str, styles::source_external_style())),
+                Cell::from(title),
+                Cell::from(Span::styled(
+                    author.to_string(),
+                    Style::default().fg(styles::CYAN),
+                )),
+                Cell::from(Span::styled(
+                    reviewers,
+                    Style::default().fg(styles::MAGENTA),
+                )),
+                diff_cell,
+                Cell::from(Span::styled(
+                    format!("{pipeline_icon} {pipeline_status}"),
+                    styles::pipeline_style(pipeline_status),
+                )),
+                approval_cell,
+                threads_cell,
+                Cell::from(Span::styled(age, Style::default().fg(styles::TEXT_DIM))),
+            ]);
+            let is_selected = selected_idx == Some(row_idx);
+            if is_selected {
+                row.style(styles::selected_style())
+            } else if item.draft {
+                row.style(styles::draft_style())
+            } else if row_idx % 2 == 1 {
+                row.style(styles::row_alt_style())
+            } else {
+                row
+            }
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(7),  // IID
+        Constraint::Length(10), // Source
+        Constraint::Min(20),    // Title
+        Constraint::Length(12), // Author
+        Constraint::Length(12), // Reviewer
+        Constraint::Length(12), // +/- diff
+        Constraint::Length(12), // Pipeline
+        Constraint::Length(3),  // Approved (icon only)
+        Constraint::Length(8),  // Threads
+        Constraint::Length(8),  // Age
+    ];
+
+    let header = Row::new(vec![
+        "ID", "Source", "Title", "Author", "Reviewer", "+/-", "Pipeline", " A", "Threads",
+        "Updated",
+    ])
+    .style(styles::header_style())
+    .bottom_margin(1);
+
+    let table_block = list_model::search_block("Merge Requests", &state.filter);
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .highlight_symbol(styles::ICON_SELECTOR)
+        .block(table_block);
+
+    frame.render_stateful_widget(table, chunks[1], &mut state.list.table_state);
+
+    // Preview pane: show full labels and details of selected MR
+    if let Some(item) = state.list.selected_item(mrs) {
+        let mut spans: Vec<Span> = vec![Span::styled(" Labels: ", styles::help_desc_style())];
+        if item.labels.is_empty() {
+            spans.push(Span::styled("none", styles::help_desc_style()));
+        } else {
+            for (i, label) in item.labels.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw(" "));
+                }
+                let color = label_colors.get(label.as_str()).map(String::as_str);
+                spans.extend(styles::label_spans(label, color));
+            }
+        }
+        let pipeline_status = item.pipeline_status().unwrap_or("none");
+
+        // Build detail line: branch info, pipeline, approvals, diff stats
+        let mut detail_spans = vec![
+            Span::styled(" Branch: ", styles::help_desc_style()),
+            Span::styled(
+                &item.source_branch,
+                ratatui::style::Style::default().fg(styles::TEAL),
+            ),
+            Span::styled(
+                format!(" {} ", styles::ICON_ARROW),
+                styles::help_desc_style(),
+            ),
+            Span::styled(
+                &item.target_branch,
+                ratatui::style::Style::default().fg(styles::TEAL),
+            ),
+            Span::styled("  Pipeline: ", styles::help_desc_style()),
+            Span::styled(pipeline_status, styles::pipeline_style(pipeline_status)),
+        ];
+
+        // Approvals
+        let approved_by: Vec<&str> = item
+            .approved_by
+            .iter()
+            .map(|a| a.username.as_str())
+            .collect();
+        if !approved_by.is_empty() {
+            detail_spans.push(Span::styled("  Approved: ", styles::help_desc_style()));
+            detail_spans.push(Span::styled(
+                format!("{} {}", styles::ICON_CHECK, approved_by.join(", ")),
+                styles::source_tracking_style(),
+            ));
+        }
+
+        // Diff stats
+        if let Some(stats) = item.diff_stats() {
+            detail_spans.push(Span::styled("  Diff: ", styles::help_desc_style()));
+            detail_spans.push(Span::styled(
+                format!("+{}", stats.additions),
+                ratatui::style::Style::default().fg(styles::GREEN),
+            ));
+            detail_spans.push(Span::styled(
+                format!(" -{}", stats.deletions),
+                ratatui::style::Style::default().fg(styles::RED),
+            ));
+            {
+                let f = stats.file_count;
+                detail_spans.push(Span::styled(
+                    format!(" ({f} files)"),
+                    styles::help_desc_style(),
+                ));
+            }
+        }
+
+        let preview = Paragraph::new(vec![Line::from(spans), Line::from(detail_spans)])
+            .style(ratatui::style::Style::default().bg(styles::SURFACE));
+        frame.render_widget(preview, chunks[2]);
+    }
+}

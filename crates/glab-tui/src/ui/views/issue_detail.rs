@@ -1,0 +1,368 @@
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+
+use crate::app::{Overlay, ThreadPickerInfo};
+use crate::cmd::EventResult;
+use crate::keybindings::{self, KeyAction};
+use crate::ui::components::input::CommentInput;
+use crate::ui::components::picker;
+use crate::ui::{markdown, styles};
+use glab_core::domain::{Discussion, Issue};
+
+#[derive(Default)]
+pub struct IssueDetailState {
+    pub project: String,
+    pub iid: String,
+    pub scroll: u16,
+    pub discussions: Vec<Discussion>,
+    pub loading_notes: bool,
+}
+
+impl IssueDetailState {
+    /// Handle keys for the detail view.  Scroll is the detail's domain;
+    /// everything else (item actions, global) bubbles.
+    pub fn handle_key(
+        &mut self,
+        key: &crossterm::event::KeyEvent,
+        overlay: &mut Overlay,
+    ) -> EventResult {
+        let Some(action) = keybindings::match_group(keybindings::DETAIL_NAV_BINDINGS, key) else {
+            return EventResult::Bubble;
+        };
+        match action {
+            KeyAction::MoveDown => self.scroll_down(),
+            KeyAction::MoveUp => self.scroll_up(),
+            KeyAction::ReplyThread => {
+                self.start_reply(overlay);
+            }
+            _ => return EventResult::Bubble,
+        }
+        EventResult::Consumed
+    }
+
+    fn start_reply(&self, overlay: &mut Overlay) {
+        let infos = self.thread_picker_items();
+        if infos.is_empty() {
+            // No threads yet — fall back to new comment.
+            *overlay = Overlay::CommentInput {
+                input: CommentInput::default(),
+                autocomplete: Box::default(),
+                reply_discussion_id: None,
+            };
+            return;
+        }
+        let (labels, subtitles) = build_thread_picker_display(&infos);
+        *overlay = Overlay::Picker {
+            state: picker::PickerState::new("Reply to thread", labels.clone(), false)
+                .with_subtitles(subtitles),
+            on_complete: Box::new(move |values, app| {
+                if let Some(picked_label) = values.first()
+                    && let Some(idx) = labels.iter().position(|item| item == picked_label)
+                    && let Some(info) = infos.get(idx)
+                {
+                    app.ui.overlay = Overlay::CommentInput {
+                        input: CommentInput::default(),
+                        autocomplete: Box::default(),
+                        reply_discussion_id: Some(info.discussion_id.clone()),
+                    };
+                }
+            }),
+        };
+    }
+
+    pub fn scroll_down(&mut self) {
+        self.scroll = self.scroll.saturating_add(3);
+    }
+
+    pub fn scroll_up(&mut self) {
+        self.scroll = self.scroll.saturating_sub(3);
+    }
+
+    pub fn reset(&mut self) {
+        self.project.clear();
+        self.iid.clear();
+        self.scroll = 0;
+        self.discussions.clear();
+        self.loading_notes = false;
+    }
+
+    pub fn open(&mut self, project: &str, iid: &str) {
+        self.reset();
+        self.project = project.to_string();
+        self.iid = iid.to_string();
+        self.loading_notes = true;
+    }
+
+    /// Build picker items for thread selection: (discussion_id, display label).
+    /// Build thread metadata for the reply picker.
+    pub fn thread_picker_items(&self) -> Vec<ThreadPickerInfo> {
+        self.discussions
+            .iter()
+            .filter_map(|d| {
+                let non_system: Vec<_> = d.notes.iter().filter(|n| !n.system).collect();
+                let first = non_system.first()?;
+                let reply_count = non_system.len() - 1;
+                let (last_author, last_preview) = if reply_count > 0 {
+                    let last = non_system.last().unwrap();
+                    (
+                        Some(last.author.username.clone()),
+                        Some(last.body.lines().next().unwrap_or("").to_string()),
+                    )
+                } else {
+                    (None, None)
+                };
+                Some(ThreadPickerInfo {
+                    discussion_id: d.id.clone(),
+                    author: first.author.username.clone(),
+                    preview: first.body.lines().next().unwrap_or("").to_string(),
+                    last_author,
+                    last_preview,
+                    reply_count,
+                })
+            })
+            .collect()
+    }
+
+    fn non_system_note_count(&self) -> usize {
+        self.discussions
+            .iter()
+            .flat_map(|d| &d.notes)
+            .filter(|n| !n.system)
+            .count()
+    }
+}
+
+/// Build display labels and subtitles for the thread reply picker.
+pub(crate) fn build_thread_picker_display(
+    infos: &[ThreadPickerInfo],
+) -> (Vec<String>, Vec<String>) {
+    let labels: Vec<String> = infos
+        .iter()
+        .map(|t| format!("@{}: {}", t.author, t.preview))
+        .collect();
+    let subtitles: Vec<String> = infos
+        .iter()
+        .map(|t| {
+            if t.reply_count > 0 {
+                let last_author = t.last_author.as_deref().unwrap_or("?");
+                let last_msg = t.last_preview.as_deref().unwrap_or("");
+                format!(
+                    "\u{21B3} @{}: {}  ({} {})",
+                    last_author,
+                    last_msg,
+                    t.reply_count,
+                    if t.reply_count == 1 {
+                        "reply"
+                    } else {
+                        "replies"
+                    }
+                )
+            } else {
+                String::new()
+            }
+        })
+        .collect();
+    (labels, subtitles)
+}
+
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    item: &Issue,
+    state: &IssueDetailState,
+    ctx: &crate::ui::RenderCtx<'_>,
+) {
+    let label_colors = ctx.label_colors;
+    let chunks = Layout::vertical([
+        Constraint::Length(5), // Header
+        Constraint::Min(1),    // Body + comments
+    ])
+    .split(area);
+
+    // Header
+    let assignees = item
+        .assignees
+        .iter()
+        .map(|a| a.username.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let (state_icon, state_text) = if let Some(status) = item.status_name() {
+        (styles::status_icon(status), status.to_string())
+    } else {
+        let icon = match item.state.as_str() {
+            "opened" => styles::ICON_OPEN,
+            "closed" => styles::ICON_CLOSED,
+            _ => " ",
+        };
+        (icon, item.state.clone())
+    };
+
+    let mut labels_line_spans = vec![Span::styled("Labels: ", styles::help_desc_style())];
+    if item.labels.is_empty() {
+        labels_line_spans.push(Span::styled("none", styles::help_desc_style()));
+    } else {
+        for (i, label) in item.labels.iter().enumerate() {
+            if i > 0 {
+                labels_line_spans.push(Span::raw(" "));
+            }
+            let color = label_colors.get(label.as_str()).map(String::as_str);
+            labels_line_spans.extend(styles::label_spans(label, color));
+        }
+    }
+    labels_line_spans.push(Span::raw("  "));
+    labels_line_spans.push(Span::styled("Source: ", styles::help_desc_style()));
+    labels_line_spans.push(Span::styled(
+        item.project_path().to_string(),
+        Style::default().fg(styles::TEXT),
+    ));
+
+    let header_lines = vec![
+        Line::from(vec![
+            Span::styled(format!("#{} ", item.iid), styles::title_style()),
+            Span::styled(&item.title, styles::title_style()),
+        ]),
+        Line::from(vec![
+            Span::styled("Status: ", styles::help_desc_style()),
+            Span::styled(
+                format!("{state_icon} {state_text}"),
+                if item.status_name().is_some() {
+                    styles::status_style(&state_text)
+                } else {
+                    styles::state_style(&item.state)
+                },
+            ),
+            Span::raw("  "),
+            Span::styled("Author: ", styles::help_desc_style()),
+            Span::styled(
+                item.author.as_ref().map_or("-", |a| a.username.as_str()),
+                Style::default().fg(styles::TEXT_BRIGHT),
+            ),
+            Span::raw("  "),
+            Span::styled("Assignees: ", styles::help_desc_style()),
+            Span::styled(
+                if assignees.is_empty() {
+                    "none".to_string()
+                } else {
+                    assignees
+                },
+                Style::default().fg(styles::TEXT_BRIGHT),
+            ),
+        ]),
+        Line::from(labels_line_spans),
+        Line::from(vec![Span::styled(
+            "  [s]tatus [x]close/reopen [c]omment [r]eply [l]abels [a]ssign [o]pen [Esc]back",
+            styles::help_desc_style(),
+        )]),
+    ];
+
+    let header = Paragraph::new(header_lines)
+        .style(Style::default().bg(styles::SURFACE))
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(styles::BORDER)),
+        );
+    frame.render_widget(header, chunks[0]);
+
+    // Body + comments
+    let mut body_lines: Vec<Line> = Vec::new();
+
+    // Description
+    if let Some(desc) = &item.description {
+        body_lines.push(Line::from(Span::styled(
+            format!(" {} Description", styles::ICON_SECTION),
+            styles::section_header_style(),
+        )));
+        body_lines.push(Line::from(""));
+        body_lines.extend(markdown::render(desc, "  "));
+    }
+
+    // Comments (threaded)
+    if state.loading_notes {
+        body_lines.push(Line::from(Span::styled(
+            "\u{27F3} Loading comments...",
+            styles::draft_style(),
+        )));
+    } else if state.non_system_note_count() > 0 {
+        body_lines.push(Line::from(Span::styled(
+            format!(
+                " {} Comments ({})",
+                styles::ICON_SECTION,
+                state.non_system_note_count()
+            ),
+            styles::section_header_style(),
+        )));
+        body_lines.push(Line::from(""));
+        render_discussions(&mut body_lines, state);
+    }
+
+    let body = Paragraph::new(body_lines)
+        .block(Block::default().borders(Borders::NONE))
+        .wrap(Wrap { trim: false })
+        .scroll((state.scroll, 0));
+    frame.render_widget(body, chunks[1]);
+}
+
+fn render_discussions(lines: &mut Vec<Line<'_>>, state: &IssueDetailState) {
+    for disc in &state.discussions {
+        let non_system_notes: Vec<_> = disc.notes.iter().filter(|n| !n.system).collect();
+        if non_system_notes.is_empty() {
+            continue;
+        }
+        for (i, note) in non_system_notes.iter().enumerate() {
+            let is_reply = i > 0;
+
+            let prefix = if is_reply {
+                "  \u{2502}   \u{21B3} "
+            } else {
+                "  \u{2502} "
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, styles::help_desc_style()),
+                Span::styled(
+                    format!("@{}", note.author.username),
+                    styles::help_key_style(),
+                ),
+                Span::styled(
+                    format!(
+                        "  {}",
+                        note.created_at
+                            .with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d %H:%M")
+                    ),
+                    styles::help_desc_style(),
+                ),
+            ]));
+
+            let rendered = markdown::render_comment(&note.body);
+            if is_reply {
+                let reply_gutter =
+                    Span::styled("  \u{2502}     \u{2502} ", styles::help_desc_style());
+                for line in rendered {
+                    // Replace the default "  │ " gutter with the reply gutter
+                    let mut spans = vec![reply_gutter.clone()];
+                    spans.extend(line.spans.into_iter().skip(1));
+                    lines.push(Line::from(spans));
+                }
+            } else {
+                lines.extend(rendered);
+            }
+
+            // Blank line with gutter continuation between notes
+            let is_last = i == non_system_notes.len() - 1;
+            if is_last {
+                lines.push(Line::from(""));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "  \u{2502}",
+                    styles::help_desc_style(),
+                )));
+            }
+        }
+    }
+}

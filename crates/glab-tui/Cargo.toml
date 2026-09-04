@@ -1,0 +1,28 @@
+[package]
+name = "glab-tui"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+comrak.workspace = true
+crossterm.workspace = true
+dirs.workspace = true
+futures.workspace = true
+glab-api.workspace = true
+glab-core.workspace = true
+fuzzy-matcher.workspace = true
+open.workspace = true
+ratatui.workspace = true
+reqwest.workspace = true
+glab-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tui-textarea.workspace = true
