@@ -12,7 +12,7 @@ use strum::IntoStaticStr;
 
 use glab_core::domain::Issue;
 
-use crate::client::{GitLabClient, mutation_payload};
+use crate::client::{GitLabClient, get_mutation_payload};
 use crate::query::{ISSUE_FIELDS, WORK_ITEM_FIELDS, document};
 use crate::wire::{GqlNamespaceWorkItems, GqlRootIssues, GqlWorkItem};
 
@@ -134,9 +134,9 @@ impl GitLabClient {
     /// `labelsWidget`, `stateEvent`); the id is filled in here.
     pub async fn update_issue(&self, gid: &str, input: Value) -> Result<Issue> {
         let json = self
-            .work_item_update(input_with_id(input, gid), true)
+            .update_work_item(input_with_id(input, gid), true)
             .await?;
-        let work_item = mutation_payload(&json, "workItemUpdate")?
+        let work_item = get_mutation_payload(&json, "workItemUpdate")?
             .get("workItem")
             .context("missing workItem in mutation response")?;
         let work_item: GqlWorkItem = serde_json::from_value(work_item.clone())
@@ -149,9 +149,9 @@ impl GitLabClient {
     pub async fn update_issue_status(&self, gid: &str, status_id: &str) -> Result<()> {
         let input = serde_json::json!({ "statusWidget": { "status": status_id } });
         let json = self
-            .work_item_update(input_with_id(input, gid), false)
+            .update_work_item(input_with_id(input, gid), false)
             .await?;
-        mutation_payload(&json, "workItemUpdate")?;
+        get_mutation_payload(&json, "workItemUpdate")?;
         Ok(())
     }
 
@@ -164,16 +164,16 @@ impl GitLabClient {
     ) -> Result<()> {
         let input = serde_json::json!({ "iterationWidget": { "iterationId": iteration_gid } });
         let json = self
-            .work_item_update(input_with_id(input, gid), false)
+            .update_work_item(input_with_id(input, gid), false)
             .await?;
-        mutation_payload(&json, "workItemUpdate")?;
+        get_mutation_payload(&json, "workItemUpdate")?;
         Ok(())
     }
 
     /// Run `workItemUpdate` with `input`. `read_back` selects the updated work
     /// item in the response; a mutation whose result the caller discards skips
     /// it, keeping the document — and GitLab's complexity budget for it — small.
-    async fn work_item_update(&self, input: Value, read_back: bool) -> Result<Value> {
+    async fn update_work_item(&self, input: Value, read_back: bool) -> Result<Value> {
         let selection = if read_back {
             "workItem { ...WorkItemFields }"
         } else {
