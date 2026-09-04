@@ -149,7 +149,7 @@ impl GitLabClient {
 /// A GitLab mutation answers 200 with its failures in the payload's `errors`
 /// array, so a caller that only checks the HTTP status silently accepts a
 /// rejected write.
-pub(crate) fn mutation_payload<'a>(json: &'a Value, mutation: &str) -> Result<&'a Value> {
+pub(crate) fn get_mutation_payload<'a>(json: &'a Value, mutation: &str) -> Result<&'a Value> {
     let payload = json
         .pointer(&format!("/data/{mutation}"))
         .with_context(|| format!("missing {mutation} in mutation response"))?;

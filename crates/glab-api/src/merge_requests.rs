@@ -12,7 +12,7 @@ use strum::IntoStaticStr;
 use glab_core::domain::MergeRequest;
 use urlencoding::encode;
 
-use crate::client::{GitLabClient, mutation_payload};
+use crate::client::{GitLabClient, get_mutation_payload};
 use crate::query::{MR_FIELDS, MR_PAGE_SIZE, document};
 use crate::wire::{GqlProjectMrs, GqlUserMrs};
 
@@ -263,7 +263,7 @@ impl GitLabClient {
         let json = self
             .graphql(mutation, &query, serde_json::json!({ "input": input }))
             .await?;
-        let mr = mutation_payload(&json, mutation)?
+        let mr = get_mutation_payload(&json, mutation)?
             .get("mergeRequest")
             .cloned()
             .unwrap_or(Value::Null);
