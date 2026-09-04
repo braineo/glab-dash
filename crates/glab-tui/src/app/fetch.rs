@@ -149,12 +149,12 @@ impl App {
             match &tracking {
                 Ok(t) => tracing::info!(
                     count = t.len(),
-                    elapsed_ms = t0.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    elapsed_ms = t0.elapsed().as_millis(),
                     "list_project_mrs ✓"
                 ),
                 Err(e) => tracing::warn!(
                     error = ?e,
-                    elapsed_ms = t0.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    elapsed_ms = t0.elapsed().as_millis(),
                     "list_project_mrs ✗"
                 ),
             }
@@ -177,12 +177,12 @@ impl App {
             match &external {
                 Ok(e) => tracing::info!(
                     count = e.len(),
-                    elapsed_ms = t1.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    elapsed_ms = t1.elapsed().as_millis(),
                     "list_user_mrs ✓"
                 ),
                 Err(e) => tracing::warn!(
                     error = ?e,
-                    elapsed_ms = t1.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    elapsed_ms = t1.elapsed().as_millis(),
                     "list_user_mrs ✗"
                 ),
             }
