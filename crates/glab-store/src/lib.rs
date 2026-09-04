@@ -1,10 +1,6 @@
 //! The local SQLite store: every issue, merge request, label, iteration and
 //! work-item status glab-dash has fetched, plus the generic key-value slots
 //! callers persist their own state in.
-//!
-//! The cache is a read-through mirror of GitLab, not a source of truth — the
-//! domain rows are `glab-core` types serialized whole, so a schema change in
-//! `glab-core` costs nothing here beyond a refetch.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -211,55 +207,31 @@ impl Db {
 
     // ── Reads ───────────────────────────────────────────────────────
 
+    /// Load issues, optionally filtered to a single state.
     pub fn load_issues(&self, state: Option<&str>) -> Result<Vec<Issue>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT data FROM issues WHERE ?1 IS NULL OR state = ?1")?;
+        let rows = stmt.query_map(params![state], |row| row.get::<_, String>(0))?;
         let mut items = Vec::new();
-        if let Some(state) = state {
-            let mut stmt = self
-                .conn
-                .prepare_cached("SELECT data FROM issues WHERE state = ?1")?;
-            let rows = stmt.query_map(params![state], |row| row.get::<_, String>(0))?;
-            for row in rows {
-                let json = row?;
-                if let Ok(item) = serde_json::from_str(&json) {
-                    items.push(item);
-                }
-            }
-        } else {
-            let mut stmt = self.conn.prepare_cached("SELECT data FROM issues")?;
-            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-            for row in rows {
-                let json = row?;
-                if let Ok(item) = serde_json::from_str(&json) {
-                    items.push(item);
-                }
+        for row in rows {
+            if let Ok(item) = serde_json::from_str(&row?) {
+                items.push(item);
             }
         }
         Ok(items)
     }
 
+    /// Load merge requests, optionally filtered to a single state.
     pub fn load_mrs(&self, state: Option<&str>) -> Result<Vec<MergeRequest>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT data FROM merge_requests WHERE ?1 IS NULL OR state = ?1")?;
+        let rows = stmt.query_map(params![state], |row| row.get::<_, String>(0))?;
         let mut items = Vec::new();
-        if let Some(state) = state {
-            let mut stmt = self
-                .conn
-                .prepare_cached("SELECT data FROM merge_requests WHERE state = ?1")?;
-            let rows = stmt.query_map(params![state], |row| row.get::<_, String>(0))?;
-            for row in rows {
-                let json = row?;
-                if let Ok(item) = serde_json::from_str(&json) {
-                    items.push(item);
-                }
-            }
-        } else {
-            let mut stmt = self
-                .conn
-                .prepare_cached("SELECT data FROM merge_requests")?;
-            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-            for row in rows {
-                let json = row?;
-                if let Ok(item) = serde_json::from_str(&json) {
-                    items.push(item);
-                }
+        for row in rows {
+            if let Ok(item) = serde_json::from_str(&row?) {
+                items.push(item);
             }
         }
         Ok(items)
@@ -306,20 +278,6 @@ impl Db {
             }
         }
         Ok(map)
-    }
-
-    /// Load a single issue by project path + iid (for detail views).
-    pub fn load_issue_by_key(&self, project: &str, iid: &str) -> Result<Option<Issue>> {
-        let mut stmt = self
-            .conn
-            .prepare_cached("SELECT data FROM issues WHERE project_path = ?1 AND iid = ?2")?;
-        let mut rows = stmt.query_map(params![project, iid], |row| row.get::<_, String>(0))?;
-        if let Some(row) = rows.next() {
-            let json = row?;
-            Ok(serde_json::from_str(&json).ok())
-        } else {
-            Ok(None)
-        }
     }
 
     /// Query issues closed within a date range, excluding those in a
@@ -482,18 +440,6 @@ mod tests {
         let all = db.load_issues(None).unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].state, "closed");
-    }
-
-    #[test]
-    fn test_load_issue_by_key() {
-        let db = Db::open_in_memory().unwrap();
-        db.upsert_issues(&[make_issue(1, "opened")]).unwrap();
-
-        let found = db.load_issue_by_key("test/project", "1").unwrap();
-        assert!(found.is_some());
-
-        let missing = db.load_issue_by_key("test/project", "999").unwrap();
-        assert!(missing.is_none());
     }
 
     #[test]
