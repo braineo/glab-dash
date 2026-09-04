@@ -1,26 +1,21 @@
+//! The local SQLite store: every issue, merge request, label, iteration and
+//! work-item status glab-dash has fetched, plus the generic key-value slots
+//! callers persist their own state in.
+//!
+//! The cache is a read-through mirror of GitLab, not a source of truth — the
+//! domain rows are `glab-core` types serialized whole, so a schema change in
+//! `glab-core` costs nothing here beyond a refetch.
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Serialize, de::DeserializeOwned};
 
 use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
-use glab_core::filter::FilterCondition;
-use glab_core::sort::SortSpec;
 
 const SCHEMA_VERSION: u32 = 2;
-
-/// Persisted filter/sort state for a single list view.
-#[derive(Default, Serialize, Deserialize)]
-pub struct ViewState {
-    #[serde(default)]
-    pub conditions: Vec<FilterCondition>,
-    #[serde(default)]
-    pub sort_specs: Vec<SortSpec>,
-    #[serde(default)]
-    pub fuzzy_query: String,
-}
 
 /// SQLite-backed persistence layer.
 ///
@@ -314,7 +309,6 @@ impl Db {
     }
 
     /// Load a single issue by project path + iid (for detail views).
-    #[allow(dead_code)] // Will be used when sync_issue_list_for_detail is removed
     pub fn load_issue_by_key(&self, project: &str, iid: &str) -> Result<Option<Issue>> {
         let mut stmt = self
             .conn

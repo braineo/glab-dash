@@ -3,6 +3,7 @@ members = [
     "crates/glab-api",
     "crates/glab-core",
     "crates/glab-dash",
+    "crates/glab-store",
     "crates/glab-tui",
 ]
 resolver = "3"
@@ -36,6 +37,7 @@ futures = "0.3"
 fuzzy-matcher = "0.3"
 glab-api = { path = "crates/glab-api" }
 glab-core = { path = "crates/glab-core" }
+glab-store = { path = "crates/glab-store" }
 glab-tui = { path = "crates/glab-tui" }
 open = "5"
 ratatui = "0.29"

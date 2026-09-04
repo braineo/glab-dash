@@ -9,9 +9,9 @@ mod onboarding_tests;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use glab_api::GitLabClient;
+use glab_store::Db;
 use glab_tui::app::App;
 use glab_tui::config::Config;
-use glab_tui::db::Db;
 use tokio::sync::mpsc;
 
 /// Ultra-fast TUI for managing GitLab issues and merge requests across teams.

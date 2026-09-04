@@ -2,9 +2,9 @@
 
 use anyhow::{Context, Result};
 use glab_api::{GitLabClient, IssueState, MrState};
+use glab_store::Db;
 use glab_tui::app::App;
 use glab_tui::config::Config;
-use glab_tui::db::Db;
 use tokio::sync::mpsc;
 
 /// Exercise the fetch paths and log results. Output goes to the tracing log
