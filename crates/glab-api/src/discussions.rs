@@ -8,6 +8,7 @@ use anyhow::Result;
 use reqwest::Method;
 
 use glab_core::domain::{Discussion, Note};
+use urlencoding::encode;
 
 use crate::client::GitLabClient;
 
@@ -88,7 +89,7 @@ impl GitLabClient {
     fn issuable_path(kind: Issuable, project: &str, iid: &str, tail: &str) -> String {
         format!(
             "/projects/{}/{}/{iid}/{tail}",
-            Self::project_id(project),
+            encode(project),
             kind.segment(),
         )
     }

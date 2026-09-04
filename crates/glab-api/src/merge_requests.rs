@@ -9,6 +9,7 @@ use serde_json::Value;
 use strum::IntoStaticStr;
 
 use glab_core::domain::MergeRequest;
+use urlencoding::encode;
 
 use crate::client::{GitLabClient, elapsed_ms, mutation_payload};
 use crate::query::{MR_FIELDS, MR_PAGE_SIZE, document};
@@ -271,19 +272,13 @@ impl GitLabClient {
 
     /// Approve the merge request `iid` in `project`.
     pub async fn approve_mr(&self, project: &str, iid: &str) -> Result<()> {
-        let path = format!(
-            "/projects/{}/merge_requests/{iid}/approve",
-            Self::project_id(project)
-        );
+        let path = format!("/projects/{}/merge_requests/{iid}/approve", encode(project));
         Self::send_ok(self.rest(Method::POST, &path), "Approve").await
     }
 
     /// Merge the merge request `iid` in `project`, removing its source branch.
     pub async fn merge_mr(&self, project: &str, iid: &str) -> Result<()> {
-        let path = format!(
-            "/projects/{}/merge_requests/{iid}/merge",
-            Self::project_id(project)
-        );
+        let path = format!("/projects/{}/merge_requests/{iid}/merge", encode(project));
         let request = self
             .rest(Method::PUT, &path)
             .json(&serde_json::json!({ "should_remove_source_branch": true }));

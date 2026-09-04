@@ -54,12 +54,6 @@ impl GitLabClient {
             .request(method, format!("{}/api/v4{path}", self.base_url))
     }
 
-    /// A project path in the form a REST route accepts, with the namespace
-    /// separators escaped so the whole path is one route segment.
-    pub(crate) fn project_id(project: &str) -> String {
-        project.replace('/', "%2F")
-    }
-
     /// Post one GraphQL document and return its response body. `op` names the
     /// operation for the trace log only; a top-level `errors` array fails the
     /// call, since GitLab reports a malformed or unauthorized query there with
