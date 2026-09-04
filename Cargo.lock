@@ -786,6 +786,7 @@ dependencies = [
  "clap",
  "dirs",
  "glab-api",
+ "glab-store",
  "glab-tui",
  "rpassword",
  "serde_json",
@@ -794,6 +795,19 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "glab-store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs",
+ "glab-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -809,10 +823,10 @@ dependencies = [
  "fuzzy-matcher",
  "glab-api",
  "glab-core",
+ "glab-store",
  "open",
  "ratatui",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
  "tokio",

@@ -11,15 +11,29 @@ mod render;
 
 use anyhow::Result;
 use crossterm::event::KeyEvent;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::cmd::{Cmd, Dirty};
 use crate::config::Config;
-use crate::db::{Db, ViewState};
 use crate::ui::views::Views;
 use crate::ui::views::{dashboard, filter_editor};
 use glab_api::GitLabClient;
 use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
+use glab_core::filter::FilterCondition;
+use glab_core::sort::SortSpec;
+use glab_store::Db;
+
+/// Persisted filter/sort state for a single list view.
+#[derive(Default, Serialize, Deserialize)]
+pub struct ViewState {
+    #[serde(default)]
+    pub conditions: Vec<FilterCondition>,
+    #[serde(default)]
+    pub sort_specs: Vec<SortSpec>,
+    #[serde(default)]
+    pub fuzzy_query: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {

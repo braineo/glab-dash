@@ -1,9 +1,8 @@
 //! TEA execute phase: drain pending Cmds and perform I/O side-effects.
 
 use crate::cmd::Cmd;
-use crate::db::ViewState;
 
-use super::{App, AsyncMsg, FetchState};
+use super::{App, AsyncMsg, FetchState, ViewState};
 
 impl App {
     /// Drain `pending_cmds` and execute each side-effect.

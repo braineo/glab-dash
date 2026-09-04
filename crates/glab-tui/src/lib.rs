@@ -5,16 +5,14 @@
 //! whole cycle in the terminal.
 //!
 //! The domain model, filters and sorts live in `glab-core`; every HTTP
-//! round-trip to GitLab lives in `glab-api`. This crate is still fat:
-//! [`config`] and [`db`] remain here and are carved out into their own crates
-//! in later steps.
+//! round-trip to GitLab lives in `glab-api`; the SQLite cache lives in
+//! `glab-store`. [`config`] is the last piece still to be carved out.
 
 pub mod app;
 pub mod cmd;
 pub mod config;
 #[cfg(test)]
 mod config_tests;
-pub mod db;
 pub mod keybindings;
 pub mod run;
 pub mod ui;
