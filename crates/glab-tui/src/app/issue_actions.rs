@@ -8,11 +8,10 @@
 //! with disjoint borrows: `&self` + `&AppData` (both immutable, from the
 //! same struct), `&AppCtx` (immutable infra), `&mut UiState` (mutable UI).
 
-use crossterm::event::KeyEvent;
 use glab_api::Issuable;
 
 use crate::cmd::{Cmd, EventResult};
-use crate::keybindings::{self, KeyAction};
+use crate::keybindings::KeyAction;
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
 use glab_core::domain::{Issue, Iteration, ProjectLabel, User};
 
@@ -20,11 +19,26 @@ use super::{AppCtx, AppData, Overlay, UiState, View};
 
 /// Issue actions that need the app's context, ui and data. Implemented for
 /// `Issue`, which this crate does not own.
+use crate::binding_group;
+
+binding_group! {
+    /// What a focused issue answers to, wherever the cursor is on one.
+    pub ISSUE_ACTION_GROUP: "Issue Actions" {
+        ('s') => SetStatus | "s" "Set status",
+        ('x') => ToggleState | "x" "Close / Reopen",
+        ('l') => EditLabels | "l" "Set labels",
+        ('a') => EditAssignee | "a" "Set assignee",
+        ('c') => Comment | "c" "Add comment",
+        ('i') => MoveIteration | "i" "Move to iteration",
+        ('o') => OpenBrowser | "o" "Open in browser",
+    }
+}
+
 pub trait IssueActions {
     /// Handle a key press against the issue-action bindings.
     fn handle_action_key(
         &self,
-        key: &KeyEvent,
+        action: KeyAction,
         ctx: &AppCtx,
         data: &AppData,
         ui: &mut UiState,
@@ -52,22 +66,15 @@ pub trait IssueActions {
 impl IssueActions for Issue {
     fn handle_action_key(
         &self,
-        key: &KeyEvent,
+        action: KeyAction,
         ctx: &AppCtx,
         data: &AppData,
         ui: &mut UiState,
     ) -> EventResult {
-        let Some(action) = keybindings::match_group(keybindings::ISSUE_ACTION_BINDINGS, key) else {
-            if keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
-                == Some(KeyAction::OpenBrowser)
-            {
-                let _ = open::that_detached(&self.web_url);
-                return EventResult::Consumed;
-            }
-            return EventResult::Bubble;
-        };
-
         match action {
+            KeyAction::OpenBrowser => {
+                let _ = open::that_detached(&self.web_url);
+            }
             KeyAction::SetStatus => {
                 fetch_or_show_status_chord(
                     self.project_path(),

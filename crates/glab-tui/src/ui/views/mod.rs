@@ -1,3 +1,21 @@
+use crate::app::View;
+use crate::binding_group;
+use crate::keybindings::BindingGroup;
+
+binding_group! {
+    /// Scrolling a detail view and replying to a thread.  Both detail views
+    /// answer to this identically, so they share one group.
+    pub DETAIL_NAV_GROUP: "Detail" {
+        ('j') => MoveDown | "j/k" "Scroll down/up",
+        (key Down) => MoveDown,
+        (ctrl 'n') => MoveDown,
+        ('k') => MoveUp,
+        (key Up) => MoveUp,
+        (ctrl 'p') => MoveUp,
+        ('r') => ReplyThread | "r" "Reply to thread",
+    }
+}
+
 pub mod dashboard;
 pub mod filter_editor;
 pub mod issue_detail;
@@ -20,4 +38,39 @@ pub struct Views {
     pub planning: planning::PlanningViewState,
     pub board: dashboard::IterationBoardState,
     pub health: Option<dashboard::IterationHealth>,
+}
+
+/// A list view: the list itself, then the filtering wrapped around it.
+static LIST_CHAIN: &[&BindingGroup] = &[&list_model::LIST_NAV_GROUP, &list_model::FILTER_GROUP];
+
+/// The board puts its own focus and column keys ahead of the list's, so its
+/// `Tab` wins over the filter bar's.
+static BOARD_CHAIN: &[&BindingGroup] = &[
+    &dashboard::BOARD_NAV_GROUP,
+    &list_model::LIST_NAV_GROUP,
+    &list_model::FILTER_GROUP,
+];
+
+/// Planning puts its column keys ahead of the focused column's list.
+static PLANNING_CHAIN: &[&BindingGroup] = &[
+    &planning::PLANNING_NAV_GROUP,
+    &list_model::LIST_NAV_GROUP,
+    &list_model::FILTER_GROUP,
+];
+
+/// A detail view scrolls and replies; it has no list and nothing to filter.
+static DETAIL_CHAIN: &[&BindingGroup] = &[&DETAIL_NAV_GROUP];
+
+impl Views {
+    /// The groups `view` composes, innermost first.  The view→groups map lives
+    /// here, with the container that already knows every view state, so the
+    /// dispatcher never learns the list a second time.
+    pub fn binding_groups(view: View) -> &'static [&'static BindingGroup] {
+        match view {
+            View::Dashboard => BOARD_CHAIN,
+            View::IssueList | View::MrList => LIST_CHAIN,
+            View::IssueDetail | View::MrDetail => DETAIL_CHAIN,
+            View::Planning => PLANNING_CHAIN,
+        }
+    }
 }

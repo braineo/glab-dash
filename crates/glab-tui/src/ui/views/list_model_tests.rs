@@ -215,3 +215,66 @@ fn test_format_age_minutes() {
     let dt = now - chrono::Duration::minutes(42);
     assert_eq!(format_age(&dt, now), "42m");
 }
+
+fn cond() -> FilterCondition {
+    FilterCondition {
+        field: glab_core::filter::Field::Label,
+        op: glab_core::filter::Op::Eq,
+        value: "x".to_string(),
+    }
+}
+
+// ── Filter bar focus lifecycle ──
+//
+// The bar is reachable only through `KeyAction::FocusFilterBar`; these cover
+// what it does once focused, so the wiring is not the only thing under test.
+
+#[test]
+fn the_filter_bar_walks_and_deletes_conditions() {
+    let mut f = UserFilter {
+        conditions: vec![cond(), cond(), cond()],
+        bar_focused: true,
+        ..UserFilter::default()
+    };
+
+    // Right walks up to the last chip and stops there; left saturates at 0.
+    for expected in [1, 2, 2] {
+        f.handle_bar_key(&key(KeyCode::Right));
+        assert_eq!(f.bar_selected, expected);
+    }
+    for expected in [1, 0, 0] {
+        f.handle_bar_key(&key(KeyCode::Left));
+        assert_eq!(f.bar_selected, expected);
+    }
+
+    // `x` removes the selected chip and reports it so the view repersists.
+    assert!(matches!(
+        f.handle_bar_key(&key(KeyCode::Char('x'))),
+        FilterBarAction::Deleted
+    ));
+    assert_eq!(f.conditions.len(), 2);
+    assert!(f.bar_focused);
+}
+
+#[test]
+fn the_filter_bar_releases_focus_on_esc_tab_and_the_last_delete() {
+    for k in [key(KeyCode::Esc), key(KeyCode::Tab)] {
+        let mut f = UserFilter {
+            conditions: vec![cond()],
+            bar_focused: true,
+            ..UserFilter::default()
+        };
+        assert!(matches!(f.handle_bar_key(&k), FilterBarAction::Unfocused));
+        assert!(!f.bar_focused);
+    }
+
+    // Deleting the last condition leaves nothing to walk, so focus drops.
+    let mut f = UserFilter {
+        conditions: vec![cond()],
+        bar_focused: true,
+        ..UserFilter::default()
+    };
+    f.handle_bar_key(&key(KeyCode::Char('d')));
+    assert!(f.conditions.is_empty());
+    assert!(!f.bar_focused);
+}

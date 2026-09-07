@@ -48,7 +48,7 @@ pub fn render(
 
     if focused {
         spans.push(Span::styled(
-            " [x:remove Enter:edit Esc:back] ",
+            " [x:remove ←/→:select Esc:back] ",
             styles::help_desc_style(),
         ));
     } else if !conditions.is_empty() || !sort_specs.is_empty() {

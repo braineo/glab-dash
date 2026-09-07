@@ -4,11 +4,11 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 
-use crate::cmd::{Cmd, Dirty, EventResult};
+use crate::cmd::{Cmd, Effects, EventResult};
 use crate::config::Config;
-use crate::keybindings::{self, KeyAction};
+use crate::keybindings::KeyAction;
 use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
 use crate::ui::{RenderCtx, components, styles};
 use glab_core::domain::{Issue, Iteration};
@@ -20,6 +20,19 @@ use std::collections::HashMap;
 pub enum PlanningLayout {
     ThreeColumn,
     TwoColumn,
+}
+
+use crate::binding_group;
+
+binding_group! {
+    /// Column motion, per-column visibility and the 3-col / 2-col layout.
+    pub PLANNING_NAV_GROUP: "Planning Navigation" {
+        ('[') => ColumnLeft | "[/]" "Switch column",
+        (']') => ColumnRight,
+        ('<') => ToggleColumnPrev | "</>" "Toggle prev/next column",
+        ('>') => ToggleColumnNext,
+        ('v') => ToggleLayout | "v" "Toggle 3-col / 2-col",
+    }
 }
 
 #[derive(Default)]
@@ -62,17 +75,16 @@ impl PlanningViewState {
     pub fn handle_key(
         &mut self,
         key: &KeyEvent,
-        dirty: &mut Dirty,
-        cmds: &mut Vec<Cmd>,
-        needs_redraw: &mut bool,
+        action: Option<KeyAction>,
+        fx: &mut Effects,
     ) -> EventResult {
         // Active column's filter bar
         let col = &mut self.columns[self.focused_column];
         if col.filter.bar_focused {
             match col.filter.handle_bar_key(key) {
                 FilterBarAction::Deleted => {
-                    dirty.view_state = true;
-                    cmds.push(Cmd::PersistViewState);
+                    fx.dirty.view_state = true;
+                    fx.cmds.push(Cmd::PersistViewState);
                 }
                 FilterBarAction::Unfocused | FilterBarAction::Consumed => {}
             }
@@ -82,53 +94,47 @@ impl PlanningViewState {
         // Active column's fuzzy search
         if col.filter.is_searching() {
             if col.filter.handle_fuzzy_input(key) == Some(true) {
-                dirty.view_state = true;
+                fx.dirty.view_state = true;
             }
-            dirty.selection = true;
+            fx.dirty.selection = true;
             return EventResult::Consumed;
         }
 
-        // Focused column's list handles nav
-        if let Some(moved) = col.list.handle_nav_key(key) {
+        let Some(action) = action else {
+            return EventResult::Bubble;
+        };
+
+        // The focused column's list handles motion.
+        if let Some(moved) = col.list.nav(action) {
             if moved {
-                dirty.selection = true;
+                fx.dirty.selection = true;
             } else {
-                *needs_redraw = false;
+                *fx.needs_redraw = false;
             }
             return EventResult::Consumed;
         }
 
-        // Planning-level: column nav, toggle, layout
-        if let Some(action) = keybindings::match_group(keybindings::PLANNING_NAV_BINDINGS, key) {
-            match action {
-                KeyAction::ColumnLeft => self.move_focus_left(),
-                KeyAction::ColumnRight => self.move_focus_right(),
-                KeyAction::ToggleColumnPrev => {
-                    self.column_visible[0] = !self.column_visible[0];
-                    self.clamp_focus();
-                }
-                KeyAction::ToggleColumnNext => {
-                    self.column_visible[2] = !self.column_visible[2];
-                    self.clamp_focus();
-                }
-                KeyAction::ToggleLayout => {
-                    self.toggle_layout();
-                    dirty.issues = true;
-                }
-                _ => return EventResult::Bubble,
+        // The view's own: column motion, visibility, layout, start search.
+        match action {
+            KeyAction::ColumnLeft => self.move_focus_left(),
+            KeyAction::ColumnRight => self.move_focus_right(),
+            KeyAction::ToggleColumnPrev => {
+                self.column_visible[0] = !self.column_visible[0];
+                self.clamp_focus();
             }
-            dirty.selection = true;
-            return EventResult::Consumed;
+            KeyAction::ToggleColumnNext => {
+                self.column_visible[2] = !self.column_visible[2];
+                self.clamp_focus();
+            }
+            KeyAction::ToggleLayout => {
+                self.toggle_layout();
+                fx.dirty.issues = true;
+            }
+            KeyAction::StartSearch => self.columns[self.focused_column].filter.start_search(),
+            _ => return EventResult::Bubble,
         }
-
-        // Start search
-        if key.code == KeyCode::Char('/') {
-            self.columns[self.focused_column].filter.start_search();
-            dirty.selection = true;
-            return EventResult::Consumed;
-        }
-
-        EventResult::Bubble
+        fx.dirty.selection = true;
+        EventResult::Consumed
     }
 
     // ── Query ───────────────────────────────────────────────────────

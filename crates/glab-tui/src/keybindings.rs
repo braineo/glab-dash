@@ -1,6 +1,6 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::collections::HashSet;
 
-use crate::app::View;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 // ---------------------------------------------------------------------------
 // KeyAction — unified action enum replacing per-view actions
@@ -13,7 +13,7 @@ pub enum KeyAction {
     ToggleHelp,
     ShowLastError,
     SwitchTeam,
-    NavigateTo(View),
+    NavigateTo(crate::app::View),
 
     // --- List / column navigation ---
     MoveUp,
@@ -65,7 +65,7 @@ pub enum KeyAction {
 // KeyMatcher — how a binding matches key events
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyMatcher {
     /// Character key with no modifiers: KeyCode::Char(c), mods == NONE.
     Char(char),
@@ -118,509 +118,102 @@ impl Binding {
 #[derive(Debug, Clone, Copy)]
 pub struct BindingGroup {
     pub title: &'static str,
-    pub icon: &'static str,
     pub bindings: &'static [Binding],
 }
 
 // ---------------------------------------------------------------------------
-// Binding constants
+// Declaring groups
 // ---------------------------------------------------------------------------
 
-use KeyAction as A;
-use KeyMatcher::{Char, Ctrl, Key};
+/// Declare a [`BindingGroup`], one line per binding.
+///
+/// A row is `(<key>) => <Action>`, optionally followed by `| "<label>"
+/// "<description>"`.  A row without that tail is a hidden alias: it still
+/// claims the key (so nothing later can bind it) but stays out of the help
+/// overlay and the status bar.  Keys are written `'c'`, `ctrl 'c'`, or
+/// `key Enter` for a named [`KeyCode`]; an action carrying a payload is
+/// written with it, `NavigateTo(View::Planning)`.
+///
+/// Order matters inside a group and between groups: the first row whose key
+/// matches wins, so put the more specific binding first.
+#[macro_export]
+macro_rules! binding_group {
+    (
+        $(#[$attr:meta])*
+        $vis:vis $name:ident: $title:literal {
+            $( ( $($key:tt)+ ) => $action:ident $(($($arg:expr),*))?
+                 $(| $label:literal $desc:literal)? ),* $(,)?
+        }
+    ) => {
+        $(#[$attr])*
+        $vis static $name: $crate::keybindings::BindingGroup =
+            $crate::keybindings::BindingGroup {
+                title: $title,
+                bindings: &[
+                    $($crate::keybindings::Binding {
+                        matcher: $crate::binding_key!($($key)+),
+                        action: $crate::keybindings::KeyAction::$action $(($($arg),*))?,
+                        label: $crate::binding_group!(@or_blank $($label)?),
+                        description: $crate::binding_group!(@or_blank $($desc)?),
+                    }),*
+                ],
+            };
+    };
+    (@or_blank) => { "" };
+    (@or_blank $text:literal) => { $text };
+}
 
-pub static GLOBAL_BINDINGS: &[Binding] = &[
-    Binding {
-        matcher: Char('q'),
-        action: A::Back,
-        label: "q",
-        description: "Back / Quit",
-    },
-    Binding {
-        matcher: Ctrl('c'),
-        action: A::Back,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('?'),
-        action: A::ToggleHelp,
-        label: "?",
-        description: "Toggle help",
-    },
-    Binding {
-        matcher: Key(KeyCode::Esc),
-        action: A::Back,
-        label: "Esc",
-        description: "Go back / close",
-    },
-    Binding {
-        matcher: Char('E'),
-        action: A::ShowLastError,
-        label: "E",
-        description: "Show last error",
-    },
-    Binding {
-        matcher: Char('t'),
-        action: A::SwitchTeam,
-        label: "t",
-        description: "Switch team",
-    },
-];
-
-pub static GLOBAL_NAV_BINDINGS: &[Binding] = &[
-    Binding {
-        matcher: Char('1'),
-        action: A::NavigateTo(View::Dashboard),
-        label: "1",
-        description: "Dashboard (home)",
-    },
-    Binding {
-        matcher: Char('2'),
-        action: A::NavigateTo(View::IssueList),
-        label: "2",
-        description: "Go to issues",
-    },
-    Binding {
-        matcher: Char('3'),
-        action: A::NavigateTo(View::MrList),
-        label: "3",
-        description: "Go to merge requests",
-    },
-    Binding {
-        matcher: Char('4'),
-        action: A::NavigateTo(View::Planning),
-        label: "4",
-        description: "Go to planning",
-    },
-];
-
-pub static LIST_NAV_BINDINGS: &[Binding] = &[
-    Binding {
-        matcher: Char('j'),
-        action: A::MoveDown,
-        label: "j/k",
-        description: "Move down/up",
-    },
-    Binding {
-        matcher: Key(KeyCode::Down),
-        action: A::MoveDown,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Ctrl('n'),
-        action: A::MoveDown,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('k'),
-        action: A::MoveUp,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Key(KeyCode::Up),
-        action: A::MoveUp,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Ctrl('p'),
-        action: A::MoveUp,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('g'),
-        action: A::Top,
-        label: "g/G",
-        description: "Jump to top/bottom",
-    },
-    Binding {
-        matcher: Char('G'),
-        action: A::Bottom,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Ctrl('d'),
-        action: A::PageDown,
-        label: "Ctrl+d/u",
-        description: "Page down/up",
-    },
-    Binding {
-        matcher: Ctrl('u'),
-        action: A::PageUp,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Key(KeyCode::Enter),
-        action: A::OpenDetail,
-        label: "Enter",
-        description: "Open detail",
-    },
-    Binding {
-        matcher: Char('/'),
-        action: A::StartSearch,
-        label: "/",
-        description: "Fuzzy search",
-    },
-    Binding {
-        matcher: Char('r'),
-        action: A::Refresh,
-        label: "r",
-        description: "Refresh data",
-    },
-    Binding {
-        matcher: Char('R'),
-        action: A::FullRefresh,
-        label: "R",
-        description: "Full refresh (re-fetch all)",
-    },
-    Binding {
-        matcher: Char('o'),
-        action: A::OpenBrowser,
-        label: "o",
-        description: "Open in browser",
-    },
-];
-
-pub static DETAIL_NAV_BINDINGS: &[Binding] = &[
-    Binding {
-        matcher: Char('j'),
-        action: A::MoveDown,
-        label: "j/k",
-        description: "Scroll down/up",
-    },
-    Binding {
-        matcher: Key(KeyCode::Down),
-        action: A::MoveDown,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Ctrl('n'),
-        action: A::MoveDown,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('k'),
-        action: A::MoveUp,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Key(KeyCode::Up),
-        action: A::MoveUp,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Ctrl('p'),
-        action: A::MoveUp,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('o'),
-        action: A::OpenBrowser,
-        label: "o",
-        description: "Open in browser",
-    },
-    Binding {
-        matcher: Char('r'),
-        action: A::ReplyThread,
-        label: "r",
-        description: "Reply to thread",
-    },
-];
-
-pub static FILTER_BINDINGS: &[Binding] = &[
-    Binding {
-        matcher: Char('f'),
-        action: A::FilterMenu,
-        label: "f",
-        description: "Filter menu",
-    },
-    Binding {
-        matcher: Char('F'),
-        action: A::ClearFilters,
-        label: "F",
-        description: "Clear all filters",
-    },
-    Binding {
-        matcher: Char('S'),
-        action: A::SortByField,
-        label: "S",
-        description: "Sort by field",
-    },
-    Binding {
-        matcher: Key(KeyCode::Tab),
-        action: A::FocusFilterBar,
-        label: "Tab",
-        description: "Focus filter bar",
-    },
-];
-
-pub static ISSUE_ACTION_BINDINGS: &[Binding] = &[
-    Binding {
-        matcher: Char('s'),
-        action: A::SetStatus,
-        label: "s",
-        description: "Set status",
-    },
-    Binding {
-        matcher: Char('x'),
-        action: A::ToggleState,
-        label: "x",
-        description: "Close / Reopen",
-    },
-    Binding {
-        matcher: Char('l'),
-        action: A::EditLabels,
-        label: "l",
-        description: "Set labels",
-    },
-    Binding {
-        matcher: Char('a'),
-        action: A::EditAssignee,
-        label: "a",
-        description: "Set assignee",
-    },
-    Binding {
-        matcher: Char('c'),
-        action: A::Comment,
-        label: "c",
-        description: "Add comment",
-    },
-    Binding {
-        matcher: Char('i'),
-        action: A::MoveIteration,
-        label: "i",
-        description: "Move to iteration",
-    },
-];
-
-pub static MR_ACTION_BINDINGS: &[Binding] = &[
-    Binding {
-        matcher: Char('A'),
-        action: A::Approve,
-        label: "A",
-        description: "Approve MR",
-    },
-    Binding {
-        matcher: Char('M'),
-        action: A::Merge,
-        label: "M",
-        description: "Merge MR",
-    },
-    Binding {
-        matcher: Char('x'),
-        action: A::ToggleState,
-        label: "x",
-        description: "Close MR",
-    },
-    Binding {
-        matcher: Char('l'),
-        action: A::EditLabels,
-        label: "l",
-        description: "Set labels",
-    },
-    Binding {
-        matcher: Char('a'),
-        action: A::EditAssignee,
-        label: "a",
-        description: "Set assignee",
-    },
-    Binding {
-        matcher: Char('c'),
-        action: A::Comment,
-        label: "c",
-        description: "Add comment",
-    },
-];
-
-pub static BOARD_NAV_BINDINGS: &[Binding] = &[
-    Binding {
-        matcher: Key(KeyCode::Tab),
-        action: A::ToggleDashboardFocus,
-        label: "Tab",
-        description: "Toggle health/board focus",
-    },
-    Binding {
-        matcher: Char('['),
-        action: A::ColumnLeft,
-        label: "[/]",
-        description: "Switch column/tab",
-    },
-    Binding {
-        matcher: Key(KeyCode::Left),
-        action: A::ColumnLeft,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char(']'),
-        action: A::ColumnRight,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Key(KeyCode::Right),
-        action: A::ColumnRight,
-        label: "",
-        description: "",
-    },
-];
-
-pub static PLANNING_NAV_BINDINGS: &[Binding] = &[
-    Binding {
-        matcher: Char('['),
-        action: A::ColumnLeft,
-        label: "[/]",
-        description: "Switch column",
-    },
-    Binding {
-        matcher: Char(']'),
-        action: A::ColumnRight,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('<'),
-        action: A::ToggleColumnPrev,
-        label: "</>",
-        description: "Toggle prev/next column",
-    },
-    Binding {
-        matcher: Char('>'),
-        action: A::ToggleColumnNext,
-        label: "",
-        description: "",
-    },
-    Binding {
-        matcher: Char('v'),
-        action: A::ToggleLayout,
-        label: "v",
-        description: "Toggle 3-col / 2-col",
-    },
-];
+/// The [`KeyMatcher`] for one `binding_group!` key spec.
+#[macro_export]
+macro_rules! binding_key {
+    ($c:literal) => {
+        $crate::keybindings::KeyMatcher::Char($c)
+    };
+    (ctrl $c:literal) => {
+        $crate::keybindings::KeyMatcher::Ctrl($c)
+    };
+    (key $code:ident) => {
+        $crate::keybindings::KeyMatcher::Key(::crossterm::event::KeyCode::$code)
+    };
+}
 
 // ---------------------------------------------------------------------------
-// Binding groups — each view composes from these
+// Resolving
 // ---------------------------------------------------------------------------
 
-use crate::ui::styles;
+/// Resolve a key to the one action it fires, scanning `chain` in order.
+///
+/// The chain runs innermost first, so a group nearer the focus shadows an
+/// outer one binding the same key — a detail view's `r` (reply) wins over the
+/// global `r` (refresh) with no special case anywhere.
+pub fn resolve(chain: &[&'static BindingGroup], key: &KeyEvent) -> Option<KeyAction> {
+    chain
+        .iter()
+        .find_map(|group| match_group(group.bindings, key))
+}
 
-static GLOBAL_GROUP: BindingGroup = BindingGroup {
-    title: "Global",
-    icon: styles::ICON_SECTION,
-    bindings: GLOBAL_BINDINGS,
-};
-
-static GLOBAL_NAV_GROUP: BindingGroup = BindingGroup {
-    title: "Navigation",
-    icon: styles::ICON_SECTION,
-    bindings: GLOBAL_NAV_BINDINGS,
-};
-
-static LIST_NAV_GROUP: BindingGroup = BindingGroup {
-    title: "List Navigation",
-    icon: styles::ICON_SECTION,
-    bindings: LIST_NAV_BINDINGS,
-};
-
-static DETAIL_NAV_GROUP: BindingGroup = BindingGroup {
-    title: "Detail",
-    icon: styles::ICON_SECTION,
-    bindings: DETAIL_NAV_BINDINGS,
-};
-
-static FILTER_GROUP: BindingGroup = BindingGroup {
-    title: "Filtering",
-    icon: styles::ICON_SECTION,
-    bindings: FILTER_BINDINGS,
-};
-
-static ISSUE_ACTION_GROUP: BindingGroup = BindingGroup {
-    title: "Issue Actions",
-    icon: styles::ICON_SECTION,
-    bindings: ISSUE_ACTION_BINDINGS,
-};
-
-static MR_ACTION_GROUP: BindingGroup = BindingGroup {
-    title: "MR Actions",
-    icon: styles::ICON_SECTION,
-    bindings: MR_ACTION_BINDINGS,
-};
-
-static BOARD_NAV_GROUP: BindingGroup = BindingGroup {
-    title: "Board Navigation",
-    icon: styles::ICON_SECTION,
-    bindings: BOARD_NAV_BINDINGS,
-};
-
-static PLANNING_NAV_GROUP: BindingGroup = BindingGroup {
-    title: "Planning Navigation",
-    icon: styles::ICON_SECTION,
-    bindings: PLANNING_NAV_BINDINGS,
-};
-
-// ---------------------------------------------------------------------------
-// Composer: binding groups per view
-// ---------------------------------------------------------------------------
-
-/// Returns the binding groups applicable to the given view.
-/// Order matters: first match wins for dispatch; groups render top-to-bottom in help.
-pub fn binding_groups_for_view(view: View) -> Vec<&'static BindingGroup> {
-    match view {
-        View::Dashboard => vec![
-            &GLOBAL_GROUP,
-            &GLOBAL_NAV_GROUP,
-            &BOARD_NAV_GROUP,
-            &LIST_NAV_GROUP,
-            &ISSUE_ACTION_GROUP,
-            &FILTER_GROUP,
-        ],
-        View::IssueList => vec![
-            &GLOBAL_GROUP,
-            &GLOBAL_NAV_GROUP,
-            &LIST_NAV_GROUP,
-            &ISSUE_ACTION_GROUP,
-            &FILTER_GROUP,
-        ],
-        View::IssueDetail => vec![
-            &GLOBAL_GROUP,
-            &GLOBAL_NAV_GROUP,
-            &DETAIL_NAV_GROUP,
-            &ISSUE_ACTION_GROUP,
-        ],
-        View::MrList => vec![
-            &GLOBAL_GROUP,
-            &GLOBAL_NAV_GROUP,
-            &LIST_NAV_GROUP,
-            &MR_ACTION_GROUP,
-            &FILTER_GROUP,
-        ],
-        View::MrDetail => vec![
-            &GLOBAL_GROUP,
-            &GLOBAL_NAV_GROUP,
-            &DETAIL_NAV_GROUP,
-            &MR_ACTION_GROUP,
-        ],
-        View::Planning => vec![
-            &GLOBAL_GROUP,
-            &GLOBAL_NAV_GROUP,
-            &PLANNING_NAV_GROUP,
-            &LIST_NAV_GROUP,
-            &ISSUE_ACTION_GROUP,
-            &FILTER_GROUP,
-        ],
-    }
+/// The bindings in `chain` that can actually fire, grouped, with any binding
+/// whose key an earlier group already claimed dropped.  Hidden aliases claim
+/// their key too, so a labelled binding shadowed by an unlabelled one goes as
+/// well.
+///
+/// Help and the status bar render from this rather than from the raw groups,
+/// so neither can advertise a key [`resolve`] sends somewhere else.
+pub fn active_bindings(
+    chain: &[&'static BindingGroup],
+) -> Vec<(&'static BindingGroup, Vec<&'static Binding>)> {
+    let mut claimed = HashSet::new();
+    chain
+        .iter()
+        .map(|group| {
+            let live = group
+                .bindings
+                .iter()
+                .filter(|b| claimed.insert(b.matcher))
+                .collect();
+            (*group, live)
+        })
+        .collect()
 }
 
 /// Find the first matching action in a single binding group.

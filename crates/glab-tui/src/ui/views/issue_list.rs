@@ -7,7 +7,8 @@ use ratatui::widgets::{Cell, Paragraph, Row, Table};
 
 use std::collections::HashMap;
 
-use crate::cmd::{Cmd, Dirty, EventResult};
+use crate::cmd::{Cmd, Effects, EventResult};
+use crate::keybindings::KeyAction;
 use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
 use crate::ui::{components, styles};
 use glab_core::domain::Issue;
@@ -31,16 +32,15 @@ impl IssueListState {
     pub fn handle_key(
         &mut self,
         key: &KeyEvent,
-        dirty: &mut Dirty,
-        cmds: &mut Vec<Cmd>,
-        needs_redraw: &mut bool,
+        action: Option<KeyAction>,
+        fx: &mut Effects,
     ) -> EventResult {
         // 1. Filter bar owns its keys when focused
         if self.filter.bar_focused {
             match self.filter.handle_bar_key(key) {
                 FilterBarAction::Deleted => {
-                    dirty.view_state = true;
-                    cmds.push(Cmd::PersistViewState);
+                    fx.dirty.view_state = true;
+                    fx.cmds.push(Cmd::PersistViewState);
                 }
                 FilterBarAction::Unfocused | FilterBarAction::Consumed => {}
             }
@@ -51,33 +51,33 @@ impl IssueListState {
         if self.filter.is_searching() {
             let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
             if self.filter.handle_fuzzy_input(key) == Some(true) {
-                dirty.view_state = true;
+                fx.dirty.view_state = true;
             }
             if is_exit {
-                cmds.push(Cmd::PersistViewState);
+                fx.cmds.push(Cmd::PersistViewState);
             }
-            dirty.selection = true;
+            fx.dirty.selection = true;
             return EventResult::Consumed;
         }
 
-        // 3. List owns navigation (j/k/g/G/pgup/pgdn)
-        if let Some(moved) = self.list.handle_nav_key(key) {
+        // 3. Motion and starting a search are the list's own; everything else
+        // (item actions, filtering, global) bubbles.
+        let Some(action) = action else {
+            return EventResult::Bubble;
+        };
+        if let Some(moved) = self.list.nav(action) {
             if moved {
-                dirty.selection = true;
+                fx.dirty.selection = true;
             } else {
-                *needs_redraw = false;
+                *fx.needs_redraw = false;
             }
             return EventResult::Consumed;
         }
-
-        // 4. View-level: start search (only the view knows which filter to activate)
-        if key.code == KeyCode::Char('/') {
+        if action == KeyAction::StartSearch {
             self.filter.start_search();
-            dirty.selection = true;
+            fx.dirty.selection = true;
             return EventResult::Consumed;
         }
-
-        // Everything else (item actions, filter menu, global nav) bubbles
         EventResult::Bubble
     }
 

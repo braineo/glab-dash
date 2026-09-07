@@ -3,11 +3,10 @@
 //! `MergeRequest` lives in `glab-core`, so these are hung off it with the
 //! [`MrActions`] extension trait rather than an inherent impl.
 
-use crossterm::event::KeyEvent;
 use glab_api::Issuable;
 
 use crate::cmd::{Cmd, EventResult};
-use crate::keybindings::{self, KeyAction};
+use crate::keybindings::KeyAction;
 use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
 use glab_core::domain::{MergeRequest, ProjectLabel, User};
 
@@ -15,11 +14,26 @@ use super::{AppCtx, AppData, Overlay, UiState, View};
 
 /// Merge-request actions that need the app's context, ui and data. Implemented
 /// for `MergeRequest`, which this crate does not own.
+use crate::binding_group;
+
+binding_group! {
+    /// What a focused merge request answers to, wherever the cursor is on one.
+    pub MR_ACTION_GROUP: "MR Actions" {
+        ('A') => Approve | "A" "Approve MR",
+        ('M') => Merge | "M" "Merge MR",
+        ('x') => ToggleState | "x" "Close MR",
+        ('l') => EditLabels | "l" "Set labels",
+        ('a') => EditAssignee | "a" "Set assignee",
+        ('c') => Comment | "c" "Add comment",
+        ('o') => OpenBrowser | "o" "Open in browser",
+    }
+}
+
 pub trait MrActions {
     /// Handle a key press against the MR-action bindings.
     fn handle_action_key(
         &self,
-        key: &KeyEvent,
+        action: KeyAction,
         ctx: &AppCtx,
         data: &AppData,
         ui: &mut UiState,
@@ -47,24 +61,17 @@ pub trait MrActions {
 impl MrActions for MergeRequest {
     fn handle_action_key(
         &self,
-        key: &KeyEvent,
+        action: KeyAction,
         ctx: &AppCtx,
         data: &AppData,
         ui: &mut UiState,
     ) -> EventResult {
-        let Some(action) = keybindings::match_group(keybindings::MR_ACTION_BINDINGS, key) else {
-            if keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)
-                == Some(KeyAction::OpenBrowser)
-            {
+        match action {
+            KeyAction::OpenBrowser => {
                 if let Some(url) = &self.web_url {
                     let _ = open::that_detached(url);
                 }
-                return EventResult::Consumed;
             }
-            return EventResult::Bubble;
-        };
-
-        match action {
             KeyAction::ToggleState => {
                 let project = self.project_path().to_string();
                 let iid = self.iid.clone();

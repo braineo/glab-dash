@@ -123,15 +123,17 @@ impl App {
                 .sum(),
             _ => self.data.issues.len() + self.data.mrs.len(),
         };
-        // Skip Global and Navigation groups — tabs handle those
-        let binding_hints: Vec<(&str, &str)> = keybindings::binding_groups_for_view(self.ui.view)
-            .iter()
-            .filter(|g| g.title != "Global" && g.title != "Navigation")
-            .flat_map(|g| g.bindings.iter())
-            .filter(|b| b.visible_in_help())
-            .take(8)
-            .map(|b| (b.label, b.description))
-            .collect();
+        // The same chain the help overlay reads, so a hint always names the
+        // action the key really fires.  Contextual only — the globals are on
+        // the tab bar already.
+        let binding_hints: Vec<(&str, &str)> =
+            keybindings::active_bindings(&self.contextual_groups())
+                .into_iter()
+                .flat_map(|(_, bindings)| bindings)
+                .filter(|b| b.visible_in_help())
+                .take(8)
+                .map(|b| (b.label, b.description))
+                .collect();
         let hints = binding_hints.as_slice();
         crate::ui::components::status_bar::render(
             frame,
@@ -149,11 +151,14 @@ impl App {
             },
         );
 
+        // Resolved before the overlay borrow: the chain owns nothing of `self`.
+        let chain = self.active_groups();
+
         // Render overlay on top
         match &mut self.ui.overlay {
             Overlay::None => {}
             Overlay::Help => {
-                help::render(frame, area, self.ui.view);
+                help::render(frame, area, &chain);
             }
             Overlay::FilterEditor(state) => {
                 filter_editor::render(frame, area, state, &ctx);

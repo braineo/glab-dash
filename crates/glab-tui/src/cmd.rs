@@ -107,6 +107,15 @@ impl Dirty {
     }
 }
 
+/// What a view handler writes back after handling a key: the data it dirtied,
+/// the [`Cmd`]s it queued, and whether the frame still needs repainting.  One
+/// borrow instead of three `&mut` threaded through every handler.
+pub struct Effects<'a> {
+    pub dirty: &'a mut Dirty,
+    pub cmds: &'a mut Vec<Cmd>,
+    pub needs_redraw: &'a mut bool,
+}
+
 /// Result of a focus node handling a key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventResult {

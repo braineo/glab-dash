@@ -3,11 +3,43 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, TableState};
 
-use crate::keybindings::{self, KeyAction};
+use crate::keybindings::KeyAction;
 use crate::ui::keys;
 use crate::ui::styles;
 use glab_core::filter::FilterCondition;
 use glab_core::sort::SortSpec;
+
+use crate::binding_group;
+
+binding_group! {
+    /// Moving the cursor over a list and opening the row under it.  Every
+    /// view showing an [`ItemList`] composes this.
+    pub LIST_NAV_GROUP: "List Navigation" {
+        ('j') => MoveDown | "j/k" "Move down/up",
+        (key Down) => MoveDown,
+        (ctrl 'n') => MoveDown,
+        ('k') => MoveUp,
+        (key Up) => MoveUp,
+        (ctrl 'p') => MoveUp,
+        ('g') => Top | "g/G" "Jump to top/bottom",
+        ('G') => Bottom,
+        (ctrl 'd') => PageDown | "Ctrl+d/u" "Page down/up",
+        (ctrl 'u') => PageUp,
+        (key Enter) => OpenDetail | "Enter" "Open detail",
+    }
+}
+
+binding_group! {
+    /// Narrowing a list: the fuzzy search, the filter menu, sort, and the
+    /// filter bar.  Composed by every view that owns a [`UserFilter`].
+    pub FILTER_GROUP: "Filtering" {
+        ('/') => StartSearch | "/" "Fuzzy search",
+        ('f') => FilterMenu | "f" "Filter menu",
+        ('F') => ClearFilters | "F" "Clear all filters",
+        ('S') => SortByField | "S" "Sort by field",
+        (key Tab) => FocusFilterBar | "Tab" "Focus filter bar",
+    }
+}
 
 // ── ListCursor — non-generic borrowed handle for navigation ──
 
@@ -98,11 +130,7 @@ impl<T> ItemList<T> {
         self.selected_index().and_then(|idx| items.get(idx))
     }
 
-    /// Handle list navigation keys (j/k/g/G/pgup/pgdn/arrows).
-    /// Returns `Some(true)` if selection moved, `Some(false)` if at boundary,
-    /// `None` if the key is not a nav key.
-    pub fn handle_nav_key(&mut self, key: &KeyEvent) -> Option<bool> {
-        let action = keybindings::match_group(keybindings::LIST_NAV_BINDINGS, key)?;
+    pub fn nav(&mut self, action: KeyAction) -> Option<bool> {
         let op = match action {
             KeyAction::MoveDown => NavOp::Next,
             KeyAction::MoveUp => NavOp::Prev,
