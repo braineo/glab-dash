@@ -3,29 +3,31 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
-use crate::app::View;
-use crate::keybindings;
+use crate::keybindings::{self, BindingGroup};
 use crate::ui::styles;
 
-pub fn render(frame: &mut Frame, area: Rect, view: View) {
+pub fn render(frame: &mut Frame, area: Rect, chain: &[&'static BindingGroup]) {
     let popup = centered_rect(70, 80, area);
     frame.render_widget(Clear, popup);
-
-    let groups = keybindings::binding_groups_for_view(view);
 
     let section_style = styles::section_header_style().bg(styles::OVERLAY);
     let mut lines = vec![Line::from("")];
 
-    for group in groups {
+    // Only what can actually fire: `active_bindings` drops any key an earlier
+    // group already claimed, so a shadowed row is never advertised.
+    for (group, bindings) in keybindings::active_bindings(chain) {
+        let shown: Vec<_> = bindings
+            .into_iter()
+            .filter(|b| b.visible_in_help())
+            .collect();
+        if shown.is_empty() {
+            continue;
+        }
         lines.push(Line::from(Span::styled(
-            format!(" {} {}", group.icon, group.title),
+            format!(" {} {}", styles::ICON_SECTION, group.title),
             section_style,
         )));
-        for binding in group.bindings {
-            if binding.visible_in_help() {
-                lines.push(help_line(binding.label, binding.description));
-            }
-        }
+        lines.extend(shown.iter().map(|b| help_line(b.label, b.description)));
         lines.push(Line::from(""));
     }
 

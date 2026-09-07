@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 use crate::app::{Overlay, ThreadPickerInfo};
 use crate::cmd::EventResult;
-use crate::keybindings::{self, KeyAction};
+use crate::keybindings::KeyAction;
 use crate::ui::components::input::CommentInput;
 use crate::ui::components::picker;
 use crate::ui::{markdown, styles};
@@ -24,12 +24,8 @@ pub struct IssueDetailState {
 impl IssueDetailState {
     /// Handle keys for the detail view.  Scroll is the detail's domain;
     /// everything else (item actions, global) bubbles.
-    pub fn handle_key(
-        &mut self,
-        key: &crossterm::event::KeyEvent,
-        overlay: &mut Overlay,
-    ) -> EventResult {
-        let Some(action) = keybindings::match_group(keybindings::DETAIL_NAV_BINDINGS, key) else {
+    pub fn handle_key(&mut self, action: Option<KeyAction>, overlay: &mut Overlay) -> EventResult {
+        let Some(action) = action else {
             return EventResult::Bubble;
         };
         match action {

@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 use crate::app::{Overlay, ThreadPickerInfo};
 use crate::cmd::EventResult;
-use crate::keybindings::{self, KeyAction};
+use crate::keybindings::KeyAction;
 use crate::ui::components::input::CommentInput;
 use crate::ui::components::picker;
 use crate::ui::views::issue_detail::build_thread_picker_display;
@@ -23,12 +23,8 @@ pub struct MrDetailState {
 }
 
 impl MrDetailState {
-    pub fn handle_key(
-        &mut self,
-        key: &crossterm::event::KeyEvent,
-        overlay: &mut Overlay,
-    ) -> EventResult {
-        let Some(action) = keybindings::match_group(keybindings::DETAIL_NAV_BINDINGS, key) else {
+    pub fn handle_key(&mut self, action: Option<KeyAction>, overlay: &mut Overlay) -> EventResult {
+        let Some(action) = action else {
             return EventResult::Bubble;
         };
         match action {
