@@ -442,25 +442,79 @@ fn djb2(text: &str) -> u32 {
     })
 }
 
-/// A chip's (fg, bg) pair for hue `h` at saturation `s`.
+/// How many colors label chips are drawn from.
 ///
-/// The background is the theme's own backdrop tinted toward the hue and the
-/// text is the theme's own foreground tinted the same way, lifted to body-text
-/// contrast over it — so a chip belongs to whatever theme is in effect instead
-/// of carrying one theme's hand-picked colors onto every other, and a gray
-/// label (no saturation) stays a neutral chip.
-fn chip(h: f64, s: f64) -> (Color, Color) {
+/// Twelve, not the sixteen a curated palette carried: at chip size the eye can
+/// only tell so many hues apart, and sixteen at one lightness meant several
+/// pairs no one could name apart.  Twelve is the classic wheel — thirty degrees
+/// a step — and collisions past it cost little, since the label's own text is
+/// what identifies it and the color only groups.
+const CHIP_COUNT: usize = 12;
+
+/// The theme's own eight accents.
+fn accents() -> [Rgb; 8] {
     let t = theme();
-    let hue = color::hsl_to_rgb(h, s, 0.5);
-    let bg = mix(color::channels(t.base), hue, 0.28);
-    let fg = readable(mix(color::channels(t.text), hue, 0.45), bg, TEXT_CONTRAST);
-    (color(fg), color(bg))
+    [
+        t.red, t.orange, t.yellow, t.green, t.teal, t.cyan, t.blue, t.magenta,
+    ]
+    .map(color::channels)
 }
 
-/// Pick a chip hue for `text` deterministically: sixteen evenly spaced hues,
-/// nudged off the primaries so no label lands on a pure red or green.
+/// The perceptual register the theme paints its accents in: the median
+/// lightness and chroma of the eight.
+///
+/// The median rather than any one accent, because a theme's own accents are
+/// all over the place — its yellow is far lighter than its blue — and a chip
+/// set built on that unevenness is what stops looking like a set.  Taking the
+/// middle of the theme's spread puts every chip in the same register the theme
+/// already works in, and does it without asking whether the theme is dark: a
+/// light theme's accents are simply darker, so its median is too.
+fn register() -> (f64, f64) {
+    let mut ls = [0.0; 8];
+    let mut cs = [0.0; 8];
+    for (i, accent) in accents().into_iter().enumerate() {
+        let (l, c, _) = color::rgb_to_oklch(accent);
+        ls[i] = l;
+        cs[i] = c;
+    }
+    let median = |mut v: [f64; 8]| {
+        v.sort_unstable_by(f64::total_cmp);
+        f64::midpoint(v[3], v[4])
+    };
+    (median(ls), median(cs))
+}
+
+/// The chip colors: `CHIP_COUNT` hues spaced evenly around the wheel, all at
+/// the theme's own lightness and chroma.
+///
+/// Evenly in Oklch, so the steps are evenly spaced to the eye rather than to
+/// the arithmetic — sRGB and HSL crowd several distinct-looking colors into the
+/// blues and stretch one green across a third of the wheel.  The ring starts at
+/// the theme's own blue, so two themes with the same register still get
+/// different chips.
+fn chip_palette() -> [Rgb; CHIP_COUNT] {
+    let (l, c) = register();
+    let start = color::rgb_to_oklch(color::channels(theme().blue)).2;
+    #[allow(clippy::cast_precision_loss)]
+    std::array::from_fn(|i| {
+        color::oklch_to_rgb((l, c, start + 360.0 * i as f64 / CHIP_COUNT as f64))
+    })
+}
+
+/// The (fg, bg) pair for a chip colored `accent`.
+///
+/// The chip is the theme's backdrop tinted toward the color, with the color
+/// itself as the text, lifted only as far as the tint costs it — the same
+/// recipe the filter and sort chips already use, so labels sit in the same
+/// visual register as the rest of the interface.
+fn chip(accent: Rgb) -> (Color, Color) {
+    let bg = mix(color::channels(theme().base), accent, 0.22);
+    (color(readable(accent, bg, TEXT_CONTRAST)), color(bg))
+}
+
+/// Pick one of the theme's chip colors for `text`, deterministically.
 fn palette_color(text: &str) -> (Color, Color) {
-    chip(f64::from(djb2(text) % 16) * 22.5 + 10.0, 0.6)
+    chip(chip_palette()[djb2(text) as usize % CHIP_COUNT])
 }
 
 /// Parse "#FF0000" → (255, 0, 0).
@@ -475,17 +529,25 @@ fn parse_hex_color(hex: &str) -> Option<Rgb> {
     Some((r, g, b))
 }
 
-/// Derive a chip pair from a server-provided hex label color, keeping the hue
-/// GitLab chose and letting the theme decide the lightness.
+/// Derive a chip from a server-provided hex label color.
+///
+/// GitLab's hue is kept — a red label stays red — but the lightness and chroma
+/// come from the theme's register, so the color arrives as one of the family
+/// instead of dropping a raw web color into it.  A label colored gray has no
+/// hue worth keeping and becomes a neutral chip.
 fn color_pair_from_hex(hex: &str) -> Option<(Color, Color)> {
-    let (h, s, _) = color::rgb_to_hsl(parse_hex_color(hex)?);
-    Some(chip(h, s))
+    let (_, chroma, hue) = color::rgb_to_oklch(parse_hex_color(hex)?);
+    if chroma < 0.03 {
+        return Some(chip(color::channels(theme().text_dim)));
+    }
+    let (l, c) = register();
+    Some(chip(color::oklch_to_rgb((l, c, hue))))
 }
 
 // ── Label Rendering ──
 
 /// Resolve the (fg, bg) for each segment of a label.
-/// First segment uses server color when available; rest use the curated palette.
+/// First segment uses server color when available; rest come from the theme.
 fn segment_colors(segments: &[&str], server_color: Option<&str>) -> Vec<(Color, Color)> {
     segments
         .iter()
@@ -504,7 +566,7 @@ fn segment_colors(segments: &[&str], server_color: Option<&str>) -> Vec<(Color, 
 
 /// Render a label as powerline-style chip spans.
 /// Scoped labels (`a::b::c`) become colored segments joined by powerline arrows.
-/// Non-scoped labels use server color when available, else curated palette.
+/// Non-scoped labels use server color when available, else the theme's palette.
 pub fn label_spans(label: &str, server_color: Option<&str>) -> Vec<Span<'static>> {
     let segments: Vec<&str> = glab_core::label::segments(label).collect();
     let colors = segment_colors(&segments, server_color);
@@ -847,6 +909,44 @@ mod tests {
 
         assert!(set_theme(DEFAULT_THEME));
         assert_eq!(text(), dark_text);
+    }
+
+    #[test]
+    fn the_chip_ring_is_one_register_and_even_hue_steps() {
+        use crate::ui::color::rgb_to_oklch;
+
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for name in theme_names() {
+            assert!(set_theme(&name));
+            let ring = super::chip_palette().map(rgb_to_oklch);
+
+            // The whole point of building the ring in Oklch: every chip is a
+            // sibling of the others, at one perceptual lightness.  Chroma may
+            // fall short of the register where sRGB cannot show it, but never
+            // to gray, or the hue stops reading.
+            for &(l, c, _) in &ring {
+                assert!(
+                    (l - ring[0].0).abs() < 0.02,
+                    "{name}: chip lightness {l:.3} drifts from {:.3}",
+                    ring[0].0
+                );
+                assert!(c > 0.02, "{name}: a chip came out gray at {c:.3}");
+            }
+
+            // Evenly spaced to the eye, which is what sRGB and HSL cannot do:
+            // every step around the ring is the same size.
+            let step = (ring[1].2 - ring[0].2).rem_euclid(360.0);
+            for pair in ring.windows(2) {
+                let gap = (pair[1].2 - pair[0].2).rem_euclid(360.0);
+                assert!(
+                    (gap - step).abs() < 8.0,
+                    "{name}: hue step {gap:.1}° is not the ring's {step:.1}°"
+                );
+            }
+        }
+        assert!(set_theme(DEFAULT_THEME));
     }
 
     #[test]
