@@ -1,12 +1,14 @@
 //! Syntax coloring for the fenced code blocks in a markdown body.
 //!
-//! The chrome around a code block comes from the active [`Palette`], so the
-//! syntax theme is not free to pick its own background: each palette names the
-//! bat theme whose token colors sit closest to it, and only the foregrounds
-//! are taken from that theme.  A fence naming no language, or one syntect has
-//! no grammar for, is left to the caller to paint flat.
+//! The theme the whole interface is painted in *is* a syntax theme — `styles`
+//! derives its palette from one — so a code block is colored by that same
+//! theme and the two agree by construction rather than by a pairing someone
+//! has to keep in step.
 //!
-//! [`Palette`]: crate::ui::styles::Palette
+//! Only the foregrounds come from the theme; the block keeps the panel
+//! background `styles` derived, and each token is nudged back to the contrast
+//! the theme gave it against its own background.  A fence naming no language,
+//! or one syntect has no grammar for, is left to the caller to paint flat.
 
 use std::sync::LazyLock;
 
@@ -16,6 +18,8 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, Theme};
 use syntect::parsing::SyntaxSet;
 use two_face::theme::LazyThemeSet;
+
+use crate::ui::color::{self, Rgb, legible_over};
 
 /// bat's expanded grammar collection by way of two-face, built once and
 /// shared.  It reaches languages syntect's own defaults omit — TOML, TypeScript
@@ -56,6 +60,11 @@ fn is_truecolor(theme: &Theme) -> bool {
 /// over `bg`, one span list per source line.  `None` when the fence names
 /// nothing syntect can parse.
 ///
+/// A syntax theme picks its colors to read against its own background, and the
+/// code block's panel is a lift off that, so every token is nudged back to the
+/// contrast the theme intended.  Without it a theme's comment gray — dim by
+/// design, and dimmer still over the panel — slips under 2:1.
+///
 /// Tabs are expanded here rather than by the caller, since a tab inside a
 /// string literal has to be widened before the grammar sees the row to keep the
 /// spans lined up with the text.
@@ -69,6 +78,9 @@ pub fn code_lines(
     let syntax = SYNTAXES.find_syntax_by_token(token)?;
     let theme = theme(theme_name)?;
     let mut highlighter = HighlightLines::new(syntax, theme);
+    let bg = color::channels(bg);
+    // What the theme's own colors were chosen against.
+    let reference = theme.settings.background.map_or(bg, |c| (c.r, c.g, c.b));
 
     let mut rows = Vec::new();
     for line in code.lines() {
@@ -78,20 +90,25 @@ pub fn code_lines(
         let row = match highlighter.highlight_line(&expanded, &SYNTAXES) {
             Ok(ranges) => ranges
                 .into_iter()
-                .map(|(style, text)| span(style, text, bg))
+                .map(|(style, text)| span(style, text, bg, reference))
                 .collect(),
-            Err(_) => vec![Span::styled(expanded, Style::default().bg(bg))],
+            Err(_) => vec![Span::styled(
+                expanded,
+                Style::default().bg(color::color(bg)),
+            )],
         };
         rows.push(row);
     }
     Some(rows)
 }
 
-/// One syntect-styled run as a ratatui span: the theme's foreground and its
-/// emphasis over the palette's own code background.
-fn span(style: syntect::highlighting::Style, text: &str, bg: Color) -> Span<'static> {
+/// One syntect-styled run as a ratatui span: the theme's foreground, lifted to
+/// stay as legible over `bg` as it was over the theme's own `reference`
+/// background, with its emphasis kept.
+fn span(style: syntect::highlighting::Style, text: &str, bg: Rgb, reference: Rgb) -> Span<'static> {
     let fg = style.foreground;
-    let mut out = Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b)).bg(bg);
+    let fg = legible_over((fg.r, fg.g, fg.b), bg, reference);
+    let mut out = Style::default().fg(color::color(fg)).bg(color::color(bg));
     if style.font_style.contains(FontStyle::BOLD) {
         out = out.add_modifier(Modifier::BOLD);
     }
@@ -107,6 +124,7 @@ fn span(style: syntect::highlighting::Style, text: &str, bg: Color) -> Span<'sta
 #[cfg(test)]
 mod tests {
     use super::{code_lines, theme, theme_names};
+    use crate::ui::color::{channels, color, contrast};
     use ratatui::style::Color;
 
     const BG: Color = Color::Rgb(0, 0, 0);
@@ -141,6 +159,57 @@ mod tests {
         assert!(code_lines("", "let x = 1;", "TwoDark", BG).is_none());
         assert!(code_lines("no-such-language", "let x = 1;", "TwoDark", BG).is_none());
         assert!(code_lines("rust", "let x = 1;", "no such theme", BG).is_none());
+    }
+
+    /// The panel a code block is drawn on: a slight lift off the theme's own
+    /// background, as `styles` derives it.
+    fn panel(syntax: &syntect::highlighting::Theme) -> (u8, u8, u8) {
+        let base = background(syntax);
+        let fg = syntax
+            .settings
+            .foreground
+            .map_or((255, 255, 255), |c| (c.r, c.g, c.b));
+        crate::ui::color::mix(base, fg, 0.08)
+    }
+
+    fn background(syntax: &syntect::highlighting::Theme) -> (u8, u8, u8) {
+        syntax
+            .settings
+            .background
+            .map_or((0, 0, 0), |c| (c.r, c.g, c.b))
+    }
+
+    /// Every token stays at least as readable on the code panel as the theme
+    /// made it on its own background.
+    ///
+    /// The panel is a lift off that background, which can only cut a glyph's
+    /// contrast — a theme's comment gray, dim on purpose, slipped under 2:1
+    /// before the colors were nudged back.  The theme's own choice is the
+    /// floor, not a fixed ratio: a comment is meant to recede, and forcing it
+    /// to body-text contrast would be as wrong as letting it vanish.
+    #[test]
+    fn no_token_reads_worse_on_the_panel_than_the_theme_intended() {
+        const SAMPLE: &str = "// a comment\nlet s = \"text\";\nfn f(x: u32) -> u32 { x + 1 }";
+        for name in theme_names() {
+            let syntax = theme(&name).expect("listed themes resolve");
+            let (base, panel) = (background(syntax), panel(syntax));
+            let on_base = code_lines("rust", SAMPLE, &name, color(base)).expect("rust is known");
+            let on_panel = code_lines("rust", SAMPLE, &name, color(panel)).expect("rust is known");
+
+            for (want, got) in on_base.iter().flatten().zip(on_panel.iter().flatten()) {
+                if want.content.trim().is_empty() {
+                    continue;
+                }
+                let intended = contrast(channels(want.style.fg.unwrap()), base).min(4.5);
+                let actual = contrast(channels(got.style.fg.unwrap()), panel);
+                assert!(
+                    actual >= intended - 0.05,
+                    "{name}: {:?} reads at {actual:.2}:1 on the panel, \
+                     against {intended:.2}:1 the theme gave it",
+                    want.content,
+                );
+            }
+        }
     }
 
     /// The point of naming the syntax theme: the code has to recolor with it.

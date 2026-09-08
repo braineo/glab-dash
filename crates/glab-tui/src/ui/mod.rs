@@ -1,3 +1,4 @@
+pub mod color;
 pub mod components;
 pub mod highlight;
 pub mod keys;
