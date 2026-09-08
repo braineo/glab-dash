@@ -23,7 +23,6 @@ pub enum Field {
     ApprovedBy,
     Title,
     Project,
-    Team,
     Iteration,
     Weight,
 }
@@ -91,12 +90,7 @@ impl std::fmt::Display for FilterCondition {
     }
 }
 
-pub fn matches_issue(
-    item: &Issue,
-    conditions: &[FilterCondition],
-    me: &str,
-    team_members: &[String],
-) -> bool {
+pub fn matches_issue(item: &Issue, conditions: &[FilterCondition], me: &str) -> bool {
     conditions.iter().all(|c| {
         let value = resolve_value(&c.value, me);
         match c.field {
@@ -127,16 +121,6 @@ pub fn matches_issue(
             Field::State => match_string(&item.state, &c.op, &value),
             Field::Title => match_string_contains(&item.title, &c.op, &value),
             Field::Project => match_string(item.project_path(), &c.op, &value),
-            Field::Team => match_team_membership(
-                &item
-                    .assignees
-                    .iter()
-                    .map(|u| u.username.clone())
-                    .collect::<Vec<_>>(),
-                &c.op,
-                &value,
-                team_members,
-            ),
             Field::Iteration => match_optional_string(
                 item.iteration.as_ref().and_then(|i| i.title.as_deref()),
                 &c.op,
@@ -152,12 +136,7 @@ pub fn matches_issue(
     })
 }
 
-pub fn matches_mr(
-    item: &MergeRequest,
-    conditions: &[FilterCondition],
-    me: &str,
-    team_members: &[String],
-) -> bool {
+pub fn matches_mr(item: &MergeRequest, conditions: &[FilterCondition], me: &str) -> bool {
     conditions.iter().all(|c| {
         let value = resolve_value(&c.value, me);
         match c.field {
@@ -212,16 +191,6 @@ pub fn matches_mr(
             Field::Project => match_string(item.project_path(), &c.op, &value),
             // MRs don't have iteration/weight
             Field::Iteration | Field::Weight => true,
-            Field::Team => match_team_membership(
-                &item
-                    .assignees
-                    .iter()
-                    .map(|u| u.username.clone())
-                    .collect::<Vec<_>>(),
-                &c.op,
-                &value,
-                team_members,
-            ),
         }
     })
 }
@@ -286,20 +255,5 @@ fn match_bool(field_val: bool, op: &Op, value: &str) -> bool {
     match op {
         Op::Eq | Op::Contains => field_val == expected,
         Op::Neq | Op::NotContains => field_val != expected,
-    }
-}
-
-fn match_team_membership(
-    assignees: &[String],
-    op: &Op,
-    _value: &str,
-    team_members: &[String],
-) -> bool {
-    let has_team_member = assignees
-        .iter()
-        .any(|a| team_members.iter().any(|m| m.eq_ignore_ascii_case(a)));
-    match op {
-        Op::Eq | Op::Contains => has_team_member,
-        Op::Neq | Op::NotContains => !has_team_member,
     }
 }

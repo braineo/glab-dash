@@ -17,13 +17,12 @@ impl App {
 
     /// Fetch work item statuses for each tracking project (for the iteration board).
     fn fetch_statuses_for_board(&self) {
-        for project in &self.ctx.config.tracking_projects {
-            if self.data.work_item_statuses.contains_key(project) {
+        for project in self.ctx.config.all_tracking_projects() {
+            if self.data.work_item_statuses.contains_key(&project) {
                 continue; // already cached
             }
             let client = self.ctx.client.clone();
             let tx = self.ctx.async_tx.clone();
-            let project = project.clone();
             tokio::spawn(async move {
                 let result = client.fetch_work_item_statuses(&project).await;
                 // Reuse StatusesLoaded with sentinel values (issue_id=0, empty
@@ -80,7 +79,7 @@ impl App {
         let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
         let members = self.ctx.config.all_members();
-        let tracking_projects = self.ctx.config.tracking_projects.clone();
+        let tracking_projects = self.ctx.config.all_tracking_projects();
         let config = self.ctx.config.clone();
 
         // Collect external projects that have open issues we track, so we can
@@ -131,7 +130,7 @@ impl App {
     fn fetch_mrs(&self) {
         let client = self.ctx.client.clone();
         let members = self.ctx.config.all_members();
-        let tracking_projects = self.ctx.config.tracking_projects.clone();
+        let tracking_projects = self.ctx.config.all_tracking_projects();
         let config = self.ctx.config.clone();
         let tx = self.ctx.async_tx.clone();
         let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
@@ -198,7 +197,7 @@ impl App {
 
     fn fetch_labels(&self) {
         let client = self.ctx.client.clone();
-        let projects = self.ctx.config.tracking_projects.clone();
+        let projects = self.ctx.config.all_tracking_projects();
         let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
             let mut all_labels = Vec::new();
@@ -242,10 +241,15 @@ impl App {
         });
     }
 
-    fn fetch_iterations(&self) {
+    pub(super) fn fetch_iterations(&self) {
         let client = self.ctx.client.clone();
         let tx = self.ctx.async_tx.clone();
-        let group = self.ctx.config.primary_tracking_group().to_string();
+        // Each team's board reads its own group cadence.
+        let group = self
+            .ctx
+            .config
+            .team_tracking_group(self.ui.active_team)
+            .to_string();
         tokio::spawn(async move {
             let result = client.list_group_iterations(&group).await;
             let _ = tx.send(AsyncMsg::IterationsLoaded(result));
@@ -273,7 +277,7 @@ impl App {
                 let namespace = self
                     .ctx
                     .config
-                    .tracking_projects
+                    .team_tracking_projects(self.ui.active_team)
                     .first()
                     .cloned()
                     .unwrap_or_else(|| i.project_path().to_string());

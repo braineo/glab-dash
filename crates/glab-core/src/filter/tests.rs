@@ -86,14 +86,14 @@ fn test_filter_assignee_eq() {
         op: Op::Eq,
         value: "alice".to_string(),
     }];
-    assert!(matches_issue(&issue, &conditions, "me", &[]));
+    assert!(matches_issue(&issue, &conditions, "me"));
 
     let conditions_miss = vec![FilterCondition {
         field: Field::Assignee,
         op: Op::Eq,
         value: "bob".to_string(),
     }];
-    assert!(!matches_issue(&issue, &conditions_miss, "me", &[]));
+    assert!(!matches_issue(&issue, &conditions_miss, "me"));
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn test_filter_assignee_none() {
         op: Op::Eq,
         value: "none".to_string(),
     }];
-    assert!(matches_issue(&issue, &conditions, "me", &[]));
+    assert!(matches_issue(&issue, &conditions, "me"));
 }
 
 #[test]
@@ -115,14 +115,14 @@ fn test_filter_state() {
         op: Op::Eq,
         value: "opened".to_string(),
     }];
-    assert!(!matches_issue(&issue, &conditions, "me", &[]));
+    assert!(!matches_issue(&issue, &conditions, "me"));
 
     let conditions_neq = vec![FilterCondition {
         field: Field::State,
         op: Op::Neq,
         value: "opened".to_string(),
     }];
-    assert!(matches_issue(&issue, &conditions_neq, "me", &[]));
+    assert!(matches_issue(&issue, &conditions_neq, "me"));
 }
 
 #[test]
@@ -133,14 +133,14 @@ fn test_filter_label_contains() {
         op: Op::Contains,
         value: "bug".to_string(),
     }];
-    assert!(matches_issue(&issue, &conditions, "me", &[]));
+    assert!(matches_issue(&issue, &conditions, "me"));
 
     let not_conditions = vec![FilterCondition {
         field: Field::Label,
         op: Op::NotContains,
         value: "feature".to_string(),
     }];
-    assert!(matches_issue(&issue, &not_conditions, "me", &[]));
+    assert!(matches_issue(&issue, &not_conditions, "me"));
 }
 
 #[test]
@@ -151,8 +151,8 @@ fn test_filter_me_variable() {
         op: Op::Eq,
         value: "$me".to_string(),
     }];
-    assert!(matches_issue(&issue, &conditions, "binbin", &[]));
-    assert!(!matches_issue(&issue, &conditions, "alice", &[]));
+    assert!(matches_issue(&issue, &conditions, "binbin"));
+    assert!(!matches_issue(&issue, &conditions, "alice"));
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn test_filter_multiple_conditions() {
             value: "opened".to_string(),
         },
     ];
-    assert!(matches_issue(&issue, &conditions, "me", &[]));
+    assert!(matches_issue(&issue, &conditions, "me"));
 
     // One condition fails → doesn't match
     let conditions_fail = vec![
@@ -192,7 +192,7 @@ fn test_filter_multiple_conditions() {
             value: "closed".to_string(),
         },
     ];
-    assert!(!matches_issue(&issue, &conditions_fail, "me", &[]));
+    assert!(!matches_issue(&issue, &conditions_fail, "me"));
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn test_filter_title() {
         op: Op::Contains,
         value: "auth".to_string(),
     }];
-    assert!(matches_issue(&issue, &conditions, "me", &[]));
+    assert!(matches_issue(&issue, &conditions, "me"));
 }
 
 #[test]
@@ -232,8 +232,8 @@ fn test_mr_filter_draft() {
         op: Op::Eq,
         value: "false".to_string(),
     }];
-    assert!(!matches_mr(&draft_mr, &not_draft, "me", &[]));
-    assert!(matches_mr(&ready_mr, &not_draft, "me", &[]));
+    assert!(!matches_mr(&draft_mr, &not_draft, "me"));
+    assert!(matches_mr(&ready_mr, &not_draft, "me"));
 }
 
 #[test]
@@ -254,9 +254,9 @@ fn test_mr_filter_approved_by() {
         value: "$me".to_string(),
     }];
     // "me" hasn't approved, so NotContains should be true
-    assert!(matches_mr(&mr, &approved_by_me, "me", &[]));
+    assert!(matches_mr(&mr, &approved_by_me, "me"));
     // charlie has approved
-    assert!(!matches_mr(&mr, &approved_by_me, "charlie", &[]));
+    assert!(!matches_mr(&mr, &approved_by_me, "charlie"));
 }
 
 #[test]
@@ -276,20 +276,20 @@ fn test_mr_filter_reviewer() {
         op: Op::Contains,
         value: "bob".to_string(),
     }];
-    assert!(matches_mr(&mr, &reviewer_filter, "me", &[]));
+    assert!(matches_mr(&mr, &reviewer_filter, "me"));
 
     let not_reviewer = vec![FilterCondition {
         field: Field::Reviewer,
         op: Op::Contains,
         value: "alice".to_string(),
     }];
-    assert!(!matches_mr(&mr, &not_reviewer, "me", &[]));
+    assert!(!matches_mr(&mr, &not_reviewer, "me"));
 }
 
 #[test]
 fn test_empty_conditions_matches_all() {
     let issue = make_issue("Anything", "opened", &[], &[], "org/repo");
-    assert!(matches_issue(&issue, &[], "me", &[]));
+    assert!(matches_issue(&issue, &[], "me"));
 }
 
 #[test]
@@ -325,12 +325,39 @@ fn test_filter_project() {
         op: Op::Eq,
         value: "other/project".to_string(),
     }];
-    assert!(matches_issue(&issue, &conditions, "me", &[]));
+    assert!(matches_issue(&issue, &conditions, "me"));
 
     let wrong_project = vec![FilterCondition {
         field: Field::Project,
         op: Op::Eq,
         value: "org/repo".to_string(),
     }];
-    assert!(!matches_issue(&issue, &wrong_project, "me", &[]));
+    assert!(!matches_issue(&issue, &wrong_project, "me"));
+}
+
+/// Two teams share one tracker; a third has its own.
+#[test]
+fn a_team_owns_its_namespace_and_its_people_but_not_a_co_tenants_work() {
+    use crate::team::Team;
+    let at = |project, assignee: &[&str]| make_issue("t", "opened", assignee, &[], project);
+    let team = |member: &str, ns: &str| Team {
+        name: member.to_string(),
+        members: vec![member.to_string()],
+        tracking_projects: vec![ns.to_string()],
+    };
+    let shared = team("alice", "org/shared");
+    let own = team("carol", "org/own");
+
+    // Its own namespace: members' work and unassigned work.
+    assert!(shared.owns_issue(&at("org/shared", &["alice"]), "me"));
+    assert!(shared.owns_issue(&at("org/shared/widget", &[]), "me")); // descendant project
+    // Sharing a tracker: the co-tenant team's people are filtered out.
+    assert!(!shared.owns_issue(&at("org/shared", &["bob"]), "me"));
+    // Another team's board, unassigned — not this team's problem.
+    assert!(!own.owns_issue(&at("org/shared", &[]), "me"));
+    // Outside the board, their own work still shows.
+    assert!(own.owns_issue(&at("elsewhere/lib", &["carol"]), "me"));
+    assert!(!own.owns_issue(&at("elsewhere/lib", &["alice"]), "me"));
+    // Your own work follows you into any team's view.
+    assert!(own.owns_issue(&at("elsewhere/lib", &["me"]), "me"));
 }

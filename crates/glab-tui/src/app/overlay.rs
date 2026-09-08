@@ -185,8 +185,8 @@ impl App {
                             &text,
                             cursor,
                             &members,
-                            &self.data.issues,
-                            &self.data.mrs,
+                            &self.data.team_issues,
+                            &self.data.team_mrs,
                         );
                         self.ui.overlay = Overlay::CommentInput {
                             input,

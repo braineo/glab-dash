@@ -144,8 +144,14 @@ pub struct AppCtx {
 
 /// Domain data — mutated by handlers.
 pub struct AppData {
+    /// All issues from all teams
     pub issues: Vec<Issue>,
+    /// All MRs from all teams
     pub mrs: Vec<MergeRequest>,
+    /// All issues from one team
+    pub team_issues: Vec<Issue>,
+    /// All MRs from one team
+    pub team_mrs: Vec<MergeRequest>,
     pub labels: Vec<ProjectLabel>,
     pub label_color_map: crate::ui::styles::LabelColors,
     pub iterations: Vec<Iteration>,
@@ -206,6 +212,8 @@ impl App {
             data: AppData {
                 issues: Vec::new(),
                 mrs: Vec::new(),
+                team_issues: Vec::new(),
+                team_mrs: Vec::new(),
                 labels: Vec::new(),
                 label_color_map: std::collections::HashMap::new(),
                 iterations: Vec::new(),
@@ -254,6 +262,11 @@ impl App {
             self.ui.last_fetched_at = Some(ts);
         }
 
+        // Restore the active team before any refilter below reads it
+        if let Ok(Some(Some(name))) = self.ctx.db.get_kv::<Option<String>>("active_team") {
+            self.ui.active_team = self.ctx.config.teams.iter().position(|t| t.name == name);
+        }
+
         // Restore persisted view state (filters, sorts, fuzzy queries)
         if let Ok(Some(vs)) = self.ctx.db.get_kv::<ViewState>("issue_view_state") {
             self.ui.views.issue_list.filter.conditions = vs.conditions;
@@ -278,6 +291,7 @@ impl App {
             self.data.unplanned_work_state = FetchState::Done;
         }
 
+        self.rescope();
         self.refresh_shadow_work();
         self.rebuild_board_issues();
         self.rebuild_label_color_map();
@@ -306,7 +320,7 @@ impl App {
                 .ui
                 .views
                 .issue_list
-                .selected_issue(&self.data.issues)
+                .selected_issue(&self.data.team_issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path().to_string(),
                     id: item.id.clone(),
@@ -316,7 +330,7 @@ impl App {
                 .ui
                 .views
                 .mr_list
-                .selected_mr(&self.data.mrs)
+                .selected_mr(&self.data.team_mrs)
                 .map(|item| FocusedItem::Mr {
                     project: item.project_path().to_string(),
                     iid: item.iid.clone(),
@@ -325,7 +339,7 @@ impl App {
                 .ui
                 .views
                 .planning
-                .selected_issue(&self.data.issues)
+                .selected_issue(&self.data.team_issues)
                 .map(|item| FocusedItem::Issue {
                     project: item.project_path().to_string(),
                     id: item.id.clone(),
@@ -357,13 +371,40 @@ impl App {
         };
     }
 
-    /// Get members for the active team, or empty vec for "All" view.
-    /// Used for implicit team filtering — empty means no filter.
-    fn active_team_members(&self) -> Vec<String> {
-        match self.ui.active_team {
-            Some(idx) => self.ctx.config.team_members(idx),
-            None => Vec::new(),
-        }
+    /// Slice the cache down to the active team.  The single place the team
+    /// filter is applied — a team switch marks issues and mrs dirty, which
+    /// runs this, and every view downstream just sees a smaller list.
+    fn rescope(&mut self) {
+        let Some(team) = self.active_team() else {
+            // "All": no team, nothing filtered.
+            self.data.team_issues = self.data.issues.clone();
+            self.data.team_mrs = self.data.mrs.clone();
+            return;
+        };
+        let me = &self.ctx.config.me;
+        let issues: Vec<Issue> = self
+            .data
+            .issues
+            .iter()
+            .filter(|i| team.owns_issue(i, me))
+            .cloned()
+            .collect();
+        let mrs: Vec<MergeRequest> = self
+            .data
+            .mrs
+            .iter()
+            .filter(|m| team.owns_mr(m, me))
+            .cloned()
+            .collect();
+        self.data.team_issues = issues;
+        self.data.team_mrs = mrs;
+    }
+
+    /// The team whose work the views are showing, or `None` for "All".
+    fn active_team(&self) -> Option<&glab_core::team::Team> {
+        self.ui
+            .active_team
+            .and_then(|i| self.ctx.config.teams.get(i))
     }
 
     /// Get member list for pickers (assignee, filter suggestions).
@@ -398,6 +439,10 @@ impl App {
 
         if d.labels {
             self.rebuild_label_color_map();
+        }
+        // Before every refilter below: they all read the sliced cache.
+        if d.issues || d.mrs {
+            self.rescope();
         }
         if d.issues || d.view_state {
             self.refilter_issues();
@@ -451,11 +496,9 @@ impl App {
 
     pub fn refilter_issues(&mut self) {
         let me = self.ctx.config.me.clone();
-        let members = self.active_team_members();
         self.ui.views.issue_list.apply_filters(
-            &self.data.issues,
+            &self.data.team_issues,
             &me,
-            &members,
             &self.ctx.config.label_sort_orders,
         );
     }
@@ -464,19 +507,17 @@ impl App {
         self.ui
             .views
             .planning
-            .partition_issues(&self.data.issues, &self.ctx.config.label_sort_orders);
+            .partition_issues(&self.data.team_issues, &self.ctx.config.label_sort_orders);
     }
 
     pub fn refilter_iteration_board(&mut self) {
         let current_iter = self.ui.views.planning.current_iteration.as_ref();
         let me = self.ctx.config.me.clone();
-        let members = self.active_team_members();
         self.ui.views.board.partition_issues(
             &self.data.board_issues,
             current_iter,
             &self.ctx.config.label_sort_orders,
             &me,
-            &members,
         );
     }
 
@@ -522,8 +563,8 @@ impl App {
     fn rebuild_iteration_board_columns(&mut self) {
         // Collect all statuses from all tracked projects
         let mut all_statuses: Vec<WorkItemStatus> = Vec::new();
-        for project in &self.ctx.config.tracking_projects {
-            if let Some(statuses) = self.data.work_item_statuses.get(project) {
+        for project in self.ctx.config.team_tracking_projects(self.ui.active_team) {
+            if let Some(statuses) = self.data.work_item_statuses.get(&project) {
                 for s in statuses {
                     if !all_statuses.iter().any(|existing| existing.name == s.name) {
                         all_statuses.push(s.clone());
@@ -551,7 +592,7 @@ impl App {
             .map(|i| i.id.clone());
 
         // Start with all in-memory issues (open, plus any optimistically closed)
-        self.data.board_issues = self.data.issues.clone();
+        self.data.board_issues = self.data.team_issues.clone();
 
         // Append closed issues from DB that belong to the current iteration,
         // skipping any already present in memory (e.g. optimistic updates).
@@ -589,7 +630,14 @@ impl App {
                 .db
                 .query_shadow_work(&closed_after, &closed_before, Some(&iter.id))
         {
-            self.data.shadow_work_cache = shadow;
+            let scoped = match self.active_team() {
+                Some(team) => shadow
+                    .into_iter()
+                    .filter(|i| team.owns_issue(i, &self.ctx.config.me))
+                    .collect(),
+                None => shadow,
+            };
+            self.data.shadow_work_cache = scoped;
         }
     }
 
@@ -612,11 +660,9 @@ impl App {
 
     fn refilter_mrs(&mut self) {
         let me = self.ctx.config.me.clone();
-        let members = self.active_team_members();
         self.ui.views.mr_list.apply_filters(
-            &self.data.mrs,
+            &self.data.team_mrs,
             &me,
-            &members,
             &self.ctx.config.label_sort_orders,
         );
     }

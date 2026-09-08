@@ -16,6 +16,7 @@ use glab_core::filter::FilterCondition;
 use glab_core::kanban::KanbanColumn;
 use glab_core::sort::SortSpec;
 use glab_core::sort::label_order::LabelOrders;
+use glab_core::team::Team;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -25,11 +26,10 @@ pub struct Config {
     pub gitlab_url: String,
     pub token: String,
     pub me: String,
-    pub tracking_projects: Vec<String>,
     #[serde(default = "default_refresh")]
     pub refresh_interval_secs: u64,
     #[serde(default)]
-    pub teams: Vec<TeamConfig>,
+    pub teams: Vec<Team>,
     #[serde(default)]
     pub filters: Vec<FilterPreset>,
     #[serde(default)]
@@ -42,13 +42,6 @@ pub struct Config {
 
 fn default_refresh() -> u64 {
     60
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TeamConfig {
-    pub name: String,
-    pub members: Vec<String>,
 }
 
 /// A named set of filter conditions the user can apply in one keystroke.
@@ -93,30 +86,61 @@ impl Config {
         if let Ok(token) = std::env::var("GITLAB_TOKEN") {
             config.token = token;
         }
-        if let Ok(project) = std::env::var("GITLAB_PROJECT") {
-            config.tracking_projects = vec![project];
+        if config.teams.is_empty() {
+            anyhow::bail!("at least one team must be configured");
         }
-
-        if config.tracking_projects.is_empty() {
-            anyhow::bail!("tracking_projects must not be empty");
+        if let Some(team) = config.teams.iter().find(|t| t.tracking_projects.is_empty()) {
+            anyhow::bail!("team '{}' has no tracking_projects", team.name);
         }
 
         Ok(config)
     }
 
     pub fn is_tracking_project(&self, path: &str) -> bool {
-        self.tracking_projects.iter().any(|p| p == path)
+        self.teams
+            .iter()
+            .any(|t| t.tracking_projects.iter().any(|p| p == path))
     }
 
-    /// The first tracking project (used as primary for iterations, statuses, etc.)
+    /// Every namespace worth fetching — every team's, deduplicated.  One fetch
+    /// covers all teams, so switching teams filters rather than reloads.
+    pub fn all_tracking_projects(&self) -> Vec<String> {
+        let mut all: Vec<String> = Vec::new();
+        for team in &self.teams {
+            for p in &team.tracking_projects {
+                if !all.contains(p) {
+                    all.push(p.clone());
+                }
+            }
+        }
+        all
+    }
+
+    /// The namespaces the given team tracks.  The "All" view spans every team's.
+    pub fn team_tracking_projects(&self, team: Option<usize>) -> Vec<String> {
+        match team.and_then(|i| self.teams.get(i)) {
+            Some(t) => t.tracking_projects.clone(),
+            None => self.all_tracking_projects(),
+        }
+    }
+
+    /// The first team's first namespace — the stand-in when no team is active
+    /// and something needs a single project (statuses, the debug dump).
     pub fn primary_tracking_project(&self) -> &str {
-        self.tracking_projects.first().map_or("", |s| s.as_str())
+        self.teams
+            .first()
+            .and_then(|t| t.tracking_projects.first())
+            .map_or("", String::as_str)
     }
 
-    /// The group the primary tracking project sits in — everything before the
-    /// last `/`. Iterations are defined on the group, not the project.
-    pub fn primary_tracking_group(&self) -> &str {
-        let primary = self.primary_tracking_project();
+    /// The group the given team's primary namespace sits in — everything
+    /// before the last `/`.  Iterations are defined on the group, not the
+    /// project, so each team's board reads its own cadence.
+    pub fn team_tracking_group(&self, team: Option<usize>) -> &str {
+        let primary = team
+            .and_then(|i| self.teams.get(i))
+            .and_then(|t| t.tracking_projects.first())
+            .map_or_else(|| self.primary_tracking_project(), String::as_str);
         primary.rsplit_once('/').map_or(primary, |(group, _)| group)
     }
 

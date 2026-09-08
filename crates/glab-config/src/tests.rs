@@ -7,15 +7,16 @@ fn test_parse_config() {
 gitlab_url = "https://gitlab.example.com"
 token = "glpat-test"
 me = "binbin"
-tracking_projects = ["org/tracker"]
 
 [[teams]]
 name = "frontend"
 members = ["alice", "bob"]
+tracking_projects = ["org/tracker"]
 
 [[teams]]
 name = "platform"
 members = ["charlie", "dave"]
+tracking_projects = ["org/tracker"]
 
 [[filters]]
 name = "My issues"
@@ -31,7 +32,7 @@ value = "$me"
     assert_eq!(config.gitlab_url, "https://gitlab.example.com");
     assert_eq!(config.token, "glpat-test");
     assert_eq!(config.me, "binbin");
-    assert_eq!(config.tracking_projects, vec!["org/tracker"]);
+    assert_eq!(config.all_tracking_projects(), vec!["org/tracker"]);
     assert!(config.is_tracking_project("org/tracker"));
     assert!(!config.is_tracking_project("other/repo"));
     assert_eq!(config.teams.len(), 2);
@@ -52,10 +53,14 @@ fn test_parse_config_multi_project() {
 gitlab_url = "https://gitlab.com"
 token = "test"
 me = "binbin"
+
+[[teams]]
+name = "team"
+members = ["alice"]
 tracking_projects = ["org/tracker", "org/other-tracker"]
 "#;
     let config: Config = toml::from_str(toml_str).unwrap();
-    assert_eq!(config.tracking_projects.len(), 2);
+    assert_eq!(config.all_tracking_projects().len(), 2);
     assert!(config.is_tracking_project("org/tracker"));
     assert!(config.is_tracking_project("org/other-tracker"));
     assert!(!config.is_tracking_project("org/unrelated"));
@@ -68,11 +73,11 @@ fn test_team_members_includes_me() {
 gitlab_url = "https://gitlab.com"
 token = "test"
 me = "binbin"
-tracking_projects = ["org/repo"]
 
 [[teams]]
 name = "team"
 members = ["alice", "bob"]
+tracking_projects = ["org/repo"]
 "#;
     let config: Config = toml::from_str(toml_str).unwrap();
     let members = config.team_members(0);
@@ -87,11 +92,11 @@ fn test_team_members_no_duplicate_me() {
 gitlab_url = "https://gitlab.com"
 token = "test"
 me = "alice"
-tracking_projects = ["org/repo"]
 
 [[teams]]
 name = "team"
 members = ["alice", "bob"]
+tracking_projects = ["org/repo"]
 "#;
     let config: Config = toml::from_str(toml_str).unwrap();
     let members = config.team_members(0);
@@ -104,7 +109,6 @@ fn test_team_members_invalid_index() {
 gitlab_url = "https://gitlab.com"
 token = "test"
 me = "binbin"
-tracking_projects = ["org/repo"]
 teams = []
 "#;
     let config: Config = toml::from_str(toml_str).unwrap();
@@ -119,6 +123,10 @@ fn with(section: &str) -> String {
 gitlab_url = "https://gitlab.com"
 token = "test"
 me = "binbin"
+
+[[teams]]
+name = "team"
+members = ["alice"]
 tracking_projects = ["org/repo"]
 {section}
 "#
@@ -223,4 +231,44 @@ fn a_generated_config_reads_back() {
     let config = toml::from_str::<Config>(&with("")).unwrap();
     let round_tripped: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
     assert_eq!(round_tripped.me, config.me);
+}
+
+/// Two teams share one namespace, a third has its own.
+fn scoped_config() -> Config {
+    toml::from_str(
+        r#"
+gitlab_url = "https://gitlab.example.com"
+token = "t"
+me = "binbin"
+
+[[teams]]
+name = "alpha"
+members = ["alice"]
+tracking_projects = ["org/shared"]
+
+[[teams]]
+name = "beta"
+members = ["bob"]
+tracking_projects = ["org/shared"]
+
+[[teams]]
+name = "gamma"
+members = ["carol"]
+tracking_projects = ["org/gamma"]
+"#,
+    )
+    .unwrap()
+}
+
+#[test]
+fn each_team_names_its_own_projects_and_all_spans_them() {
+    let config = scoped_config();
+    assert_eq!(config.team_tracking_projects(Some(0)), ["org/shared"]);
+    assert_eq!(config.team_tracking_projects(Some(2)), ["org/gamma"]);
+    assert_eq!(
+        config.team_tracking_projects(None),
+        ["org/shared", "org/gamma"]
+    );
+    assert_eq!(config.all_tracking_projects(), ["org/shared", "org/gamma"]);
+    assert_eq!(config.team_tracking_group(Some(2)), "org");
 }

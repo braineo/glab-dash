@@ -16,11 +16,15 @@ pub async fn run() -> Result<()> {
     let members = config.team_members(0);
 
     tracing::info!(
-        projects = %config.tracking_projects.join(", "),
+        projects = %config.all_tracking_projects().join(", "),
         "debug: fetching tracking issues"
     );
     match client
-        .list_namespace_issues(&config.tracking_projects, Some(IssueState::Opened), None)
+        .list_namespace_issues(
+            &config.all_tracking_projects(),
+            Some(IssueState::Opened),
+            None,
+        )
         .await
     {
         Ok(issues) => tracing::info!(count = issues.len(), "debug: tracking issues ✓"),
@@ -38,7 +42,7 @@ pub async fn run() -> Result<()> {
 
     tracing::info!("debug: fetching tracking MRs");
     match client
-        .list_project_mrs(&config.tracking_projects, Some(MrState::Opened), None)
+        .list_project_mrs(&config.all_tracking_projects(), Some(MrState::Opened), None)
         .await
     {
         Ok(mrs) => tracing::info!(count = mrs.len(), "debug: tracking MRs ✓"),
@@ -67,7 +71,7 @@ pub async fn run() -> Result<()> {
     tracing::info!("debug: simulating app flow");
     let (async_tx, _async_rx) = mpsc::unbounded_channel();
     let db = Db::open().context("Failed to open database")?;
-    let projects = config.tracking_projects.clone();
+    let projects = config.all_tracking_projects();
     let mut app = App::new(config, client, async_tx, db);
     let tracking = app
         .ctx
