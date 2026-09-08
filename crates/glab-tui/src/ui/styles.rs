@@ -467,6 +467,12 @@ pub fn row_alt_style() -> Style {
     Style::default().bg(Color::Rgb(30, 32, 45))
 }
 
+/// The separator between two metadata chips in a compact header: dim enough to
+/// group the chips without competing with them.
+pub fn chip_sep() -> Span<'static> {
+    Span::styled("  \u{00B7}  ", Style::default().fg(BORDER))
+}
+
 pub fn section_header_style() -> Style {
     Style::default().fg(MAGENTA).add_modifier(Modifier::BOLD)
 }

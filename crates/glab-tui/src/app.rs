@@ -89,17 +89,6 @@ pub enum FocusedItem {
     },
 }
 
-/// Metadata for a single thread shown in the reply picker.
-#[derive(Debug)]
-pub struct ThreadPickerInfo {
-    pub discussion_id: String,
-    pub author: String,
-    pub preview: String,
-    pub last_author: Option<String>,
-    pub last_preview: Option<String>,
-    pub reply_count: usize,
-}
-
 /// Messages from async operations
 pub enum AsyncMsg {
     IssuesLoaded(Result<Vec<Issue>>, bool),

@@ -46,7 +46,14 @@ pub enum KeyAction {
     Merge,
 
     // --- Detail-specific ---
+    /// Reply into the thread the cursor is on.
     ReplyThread,
+    /// Open a new top-level thread.
+    NewThread,
+    /// Resolve or reopen the thread the cursor is on.
+    ResolveThread,
+    /// Fold the thread the cursor is on away, or open it back up.
+    ToggleThread,
 
     // --- Board / column navigation (Dashboard & Planning) ---
     ColumnLeft,

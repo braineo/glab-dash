@@ -48,6 +48,8 @@ pub trait MrActions {
     );
     /// Assign the MR to `username`, optimistically updating in place.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState);
+    /// Resolve or reopen the thread the detail view's cursor is on.
+    fn resolve_thread(&self, ctx: &AppCtx, ui: &mut UiState);
     /// Post `body` as a new comment or as a reply to an existing thread.
     fn submit_comment(
         &self,
@@ -93,6 +95,9 @@ impl MrActions for MergeRequest {
                         app.ui.pending_cmds.push(Cmd::SpawnCloseMr { project, iid });
                     })),
                 };
+            }
+            KeyAction::ResolveThread => {
+                self.resolve_thread(ctx, ui);
             }
             KeyAction::Approve => {
                 let project = self.project_path().to_string();
@@ -226,6 +231,44 @@ impl MrActions for MergeRequest {
         ui.dirty.mrs = true;
     }
 
+    /// Resolve or reopen the thread the detail view's cursor is on, then
+    /// re-list the threads so the view shows what the server settled on.
+    fn resolve_thread(&self, ctx: &AppCtx, ui: &mut UiState) {
+        let Some(thread) = ui.views.mr_detail.conversation.thread_at_cursor() else {
+            return;
+        };
+        if !thread.resolvable() {
+            ui.error = Some("That thread cannot be resolved".to_string());
+            return;
+        }
+        let discussion = thread.id.clone();
+        let resolved = !thread.resolved();
+
+        let client = ctx.client.clone();
+        let tx = ctx.async_tx.clone();
+        let project = self.project_path().to_string();
+        let iid = self.iid.clone();
+        ui.loading = true;
+        tokio::spawn(async move {
+            if let Err(e) = client
+                .resolve_discussion(
+                    Issuable::MergeRequest,
+                    &project,
+                    &iid,
+                    &discussion,
+                    resolved,
+                )
+                .await
+            {
+                let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
+                return;
+            }
+            let discussions = client
+                .list_discussions(Issuable::MergeRequest, &project, &iid)
+                .await;
+            let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
+        });
+    }
     fn submit_comment(
         &self,
         body: &str,
@@ -242,16 +285,14 @@ impl MrActions for MergeRequest {
         ui.loading = true;
         tokio::spawn(async move {
             let create_result = match &reply_discussion_id {
-                Some(disc_id) => {
-                    client
-                        .reply_to_discussion(Issuable::MergeRequest, &project, &iid, disc_id, &body)
-                        .await
-                }
-                None => {
-                    client
-                        .create_note(Issuable::MergeRequest, &project, &iid, &body)
-                        .await
-                }
+                Some(disc_id) => client
+                    .reply_to_discussion(Issuable::MergeRequest, &project, &iid, disc_id, &body)
+                    .await
+                    .map(|_| ()),
+                None => client
+                    .create_thread(Issuable::MergeRequest, &project, &iid, &body)
+                    .await
+                    .map(|_| ()),
             };
             if let Err(e) = create_result {
                 let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));

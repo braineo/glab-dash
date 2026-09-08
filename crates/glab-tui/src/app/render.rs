@@ -64,7 +64,7 @@ impl App {
                         frame,
                         chunks[1],
                         &item,
-                        &self.ui.views.issue_detail,
+                        &mut self.ui.views.issue_detail,
                         &ctx,
                     );
                 }
@@ -80,7 +80,7 @@ impl App {
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(frame, chunks[1], &item, &self.ui.views.mr_detail, &ctx);
+                    mr_detail::render(frame, chunks[1], &item, &mut self.ui.views.mr_detail, &ctx);
                 }
             }
             View::Planning => {
