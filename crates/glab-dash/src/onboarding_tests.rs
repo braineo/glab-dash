@@ -1,5 +1,7 @@
 use crate::onboarding::generate_toml;
-use glab_tui::config::Config;
+use glab_config::Config;
+use glab_core::filter::{Field, FilterCondition, Op};
+use glab_core::sort::label_order::LabelOrders;
 
 #[test]
 fn test_generate_toml_roundtrip() {
@@ -10,26 +12,26 @@ fn test_generate_toml_roundtrip() {
         tracking_projects: vec!["org/tracker".to_string()],
         refresh_interval_secs: 60,
         teams: vec![
-            glab_tui::config::TeamConfig {
+            glab_config::TeamConfig {
                 name: "frontend".to_string(),
                 members: vec!["alice".to_string(), "bob".to_string()],
             },
-            glab_tui::config::TeamConfig {
+            glab_config::TeamConfig {
                 name: "platform".to_string(),
                 members: vec!["charlie".to_string()],
             },
         ],
-        filters: vec![glab_tui::config::FilterPreset {
+        filters: vec![glab_config::FilterPreset {
             name: "My issues".to_string(),
             kind: "issue".to_string(),
-            conditions: vec![glab_tui::config::PresetCondition {
-                field: "assignee".to_string(),
-                op: "eq".to_string(),
+            conditions: vec![FilterCondition {
+                field: Field::Assignee,
+                op: Op::Eq,
                 value: "$me".to_string(),
             }],
         }],
         sort_presets: Vec::new(),
-        label_sort_orders: Vec::new(),
+        label_sort_orders: LabelOrders::default(),
         kanban_columns: Vec::new(),
     };
 
@@ -62,7 +64,7 @@ fn test_generate_toml_contains_all_fields() {
         teams: vec![],
         filters: vec![],
         sort_presets: Vec::new(),
-        label_sort_orders: Vec::new(),
+        label_sort_orders: LabelOrders::default(),
         kanban_columns: Vec::new(),
     };
 
@@ -96,6 +98,6 @@ fn test_default_filter_presets() {
         needs_review
             .conditions
             .iter()
-            .any(|c| c.field == "approved_by" && c.op == "not_contains" && c.value == "$me")
+            .any(|c| c.field == Field::ApprovedBy && c.op == Op::NotContains && c.value == "$me")
     );
 }

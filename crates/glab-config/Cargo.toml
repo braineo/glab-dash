@@ -1,0 +1,14 @@
+[package]
+name = "glab-config"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dirs.workspace = true
+glab-core.workspace = true
+serde.workspace = true
+toml.workspace = true

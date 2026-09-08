@@ -769,6 +769,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "glab-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "glab-core",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "glab-core"
 version = "0.1.0"
 dependencies = [
@@ -786,6 +797,8 @@ dependencies = [
  "clap",
  "dirs",
  "glab-api",
+ "glab-config",
+ "glab-core",
  "glab-store",
  "glab-tui",
  "rpassword",
@@ -818,10 +831,10 @@ dependencies = [
  "chrono",
  "comrak",
  "crossterm",
- "dirs",
  "futures",
  "fuzzy-matcher",
  "glab-api",
+ "glab-config",
  "glab-core",
  "glab-store",
  "open",
@@ -830,7 +843,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "toml",
  "tracing",
  "tui-textarea",
 ]

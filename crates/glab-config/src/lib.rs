@@ -1,8 +1,26 @@
+//! The user's `config.toml`, deserialized into the domain's own types.
+//!
+//! This crate sits above `glab-core` so serde parses the file straight into the
+//! shapes the rest of the program already speaks: a filter preset holds
+//! [`FilterCondition`]s, a sort preset holds [`SortSpec`]s, and the board
+//! columns and label orders are the same [`KanbanColumn`] and [`LabelOrders`]
+//! the views and sorts consume. Reading the config is the deserialize; there is
+//! no second, stringly-typed shape to convert from, and a misspelled field or
+//! key is rejected here rather than silently dropped later.
+
+#[cfg(test)]
+mod tests;
+
 use anyhow::{Context, Result};
+use glab_core::filter::FilterCondition;
+use glab_core::kanban::KanbanColumn;
+use glab_core::sort::SortSpec;
+use glab_core::sort::label_order::LabelOrders;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub gitlab_url: String,
     pub token: String,
@@ -17,9 +35,9 @@ pub struct Config {
     #[serde(default)]
     pub sort_presets: Vec<SortPreset>,
     #[serde(default)]
-    pub label_sort_orders: Vec<LabelSortOrderConfig>,
+    pub label_sort_orders: LabelOrders,
     #[serde(default)]
-    pub kanban_columns: Vec<KanbanColumnConfig>,
+    pub kanban_columns: Vec<KanbanColumn>,
 }
 
 fn default_refresh() -> u64 {
@@ -27,56 +45,31 @@ fn default_refresh() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TeamConfig {
     pub name: String,
     pub members: Vec<String>,
 }
 
+/// A named set of filter conditions the user can apply in one keystroke.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilterPreset {
     pub name: String,
+    /// Which list the preset applies to: `issue` or `merge_request`.
     pub kind: String,
     #[serde(default)]
-    pub conditions: Vec<PresetCondition>,
+    pub conditions: Vec<FilterCondition>,
 }
 
+/// A named sort order the user can apply in one keystroke.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PresetCondition {
-    pub field: String,
-    pub op: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SortPreset {
     pub name: String,
+    /// Which list the preset applies to: `issue` or `merge_request`.
     pub kind: String,
-    pub specs: Vec<SortSpecConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SortSpecConfig {
-    pub field: String,
-    #[serde(default = "default_desc")]
-    pub direction: String,
-    #[serde(default)]
-    pub label_scope: Option<String>,
-}
-
-fn default_desc() -> String {
-    "desc".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LabelSortOrderConfig {
-    pub scope: String,
-    pub values: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KanbanColumnConfig {
-    pub name: String,
-    pub statuses: Vec<String>,
+    pub specs: Vec<SortSpec>,
 }
 
 impl Config {

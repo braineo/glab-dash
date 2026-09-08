@@ -5,8 +5,6 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Paragraph, Row, Table};
 
-use std::collections::HashMap;
-
 use crate::cmd::{Cmd, Effects, EventResult};
 use crate::keybindings::KeyAction;
 use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
@@ -14,6 +12,7 @@ use crate::ui::{components, styles};
 use glab_core::domain::MergeRequest;
 use glab_core::filter::matches_mr;
 use glab_core::sort;
+use glab_core::sort::label_order::LabelOrders;
 
 #[derive(Default)]
 pub struct MrListState {
@@ -81,7 +80,7 @@ impl MrListState {
         mrs: &[MergeRequest],
         me: &str,
         team_members: &[String],
-        label_orders: &HashMap<String, Vec<String>>,
+        label_orders: &LabelOrders,
     ) {
         self.list.indices = mrs
             .iter()
