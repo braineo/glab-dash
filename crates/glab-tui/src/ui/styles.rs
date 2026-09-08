@@ -9,6 +9,10 @@ use ratatui::widgets::{Block, BorderType, Borders};
 use syntect::highlighting::Highlighter;
 use syntect::parsing::ScopeStack;
 
+use crate::ui::color::{
+    self, DIM_CONTRAST, Rgb, TEXT_CONTRAST, color, contrast, hue_distance, luminance, mix,
+    readable, shift,
+};
 use crate::ui::highlight;
 
 // ── Themes ──
@@ -62,15 +66,6 @@ pub struct Theme {
 
 /// The theme every palette falls back to, and the one the picker opens on.
 pub const DEFAULT_THEME: &str = "TwoDark";
-
-/// The contrast ratio body text should clear against its background.
-const TEXT_CONTRAST: f64 = 4.5;
-
-/// The contrast ratio dimmed, secondary text should clear.
-const DIM_CONTRAST: f64 = 3.0;
-
-/// An opaque color, as the derivation works in whole channels.
-type Rgb = (u8, u8, u8);
 
 /// Every bundled theme, derived once and held for the life of the process.
 ///
@@ -272,7 +267,7 @@ impl Accents {
                 let stack = ScopeStack::from_str(name).ok()?;
                 let fg = highlighter.style_for_stack(stack.as_slice()).foreground;
                 let rgb = composite(fg, base);
-                let (h, s, l) = rgb_to_hsl(rgb.0, rgb.1, rgb.2);
+                let (h, s, l) = color::rgb_to_hsl(rgb);
                 (s >= MIN_SATURATION && LIGHTNESS.contains(&l)).then_some((h, rgb))
             })
             .collect();
@@ -330,17 +325,6 @@ impl Accents {
     }
 }
 
-/// The shorter way round the color wheel between two hues, in degrees.
-fn hue_distance(a: f64, b: f64) -> f64 {
-    let d = (a - b).abs() % 360.0;
-    d.min(360.0 - d)
-}
-
-/// A derived channel triple as the ratatui color the widgets take.
-const fn color((r, g, b): Rgb) -> Color {
-    Color::Rgb(r, g, b)
-}
-
 /// Drop a syntect color's alpha by blending it over `bg`, which is what the
 /// alpha means in a tmTheme: a wash laid over the background rather than a
 /// color in its own right.
@@ -352,65 +336,6 @@ fn composite(c: syntect::highlighting::Color, bg: Rgb) -> Rgb {
 /// A syntect color with its alpha ignored.
 const fn opaque(c: syntect::highlighting::Color) -> Rgb {
     (c.r, c.g, c.b)
-}
-
-/// Linearly blend `a` toward `b` by `t` in `[0, 1]`, per channel.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn mix(a: Rgb, b: Rgb, t: f64) -> Rgb {
-    let lerp = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t).round() as u8;
-    (lerp(a.0, b.0), lerp(a.1, b.1), lerp(a.2, b.2))
-}
-
-/// Push `c` further from the middle — brighter on a dark theme, darker on a
-/// light one — for the text that should stand out from the body.
-fn shift(c: Rgb, dark: bool, t: f64) -> Rgb {
-    mix(c, if dark { (255, 255, 255) } else { (0, 0, 0) }, t)
-}
-
-/// One sRGB channel's contribution to relative luminance, per the WCAG formula.
-fn channel_luminance(c: u8) -> f64 {
-    let c = f64::from(c) / 255.0;
-    if c <= 0.03928 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-/// The WCAG relative luminance of a color, in `[0, 1]`.
-fn luminance((r, g, b): Rgb) -> f64 {
-    0.2126 * channel_luminance(r) + 0.7152 * channel_luminance(g) + 0.0722 * channel_luminance(b)
-}
-
-/// The WCAG contrast ratio between two colors, in `[1, 21]`.
-fn contrast(a: Rgb, b: Rgb) -> f64 {
-    let (la, lb) = (luminance(a), luminance(b));
-    let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
-    (hi + 0.05) / (lo + 0.05)
-}
-
-/// Return `fg` unchanged when it already clears `min` contrast against `bg`,
-/// otherwise blend it toward white or black — whichever the background is
-/// furthest from — just far enough to reach the threshold, so a color stays as
-/// close to its intended hue as legibility allows.
-fn readable(fg: Rgb, bg: Rgb, min: f64) -> Rgb {
-    if contrast(fg, bg) >= min {
-        return fg;
-    }
-    let target = if luminance(bg) < 0.5 {
-        (255, 255, 255)
-    } else {
-        (0, 0, 0)
-    };
-    let mut t = 0.0;
-    while t < 1.0 {
-        t += 0.05;
-        let candidate = mix(fg, target, t);
-        if contrast(candidate, bg) >= min {
-            return candidate;
-        }
-    }
-    target
 }
 
 /// One accessor per theme color, so a call site names the color it wants and
@@ -555,76 +480,6 @@ fn palette_color(text: &str) -> (Color, Color) {
     }
 }
 
-fn hue_to_rgb(p: f64, q: f64, t: f64) -> f64 {
-    let mut t = t;
-    if t < 0.0 {
-        t += 1.0;
-    }
-    if t > 1.0 {
-        t -= 1.0;
-    }
-    if t < 1.0 / 6.0 {
-        return p + (q - p) * 6.0 * t;
-    }
-    if t < 0.5 {
-        return q;
-    }
-    if t < 2.0 / 3.0 {
-        return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
-    }
-    p
-}
-
-#[allow(
-    clippy::many_single_char_names,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
-    if s == 0.0 {
-        let v = (l * 255.0) as u8;
-        return (v, v, v);
-    }
-    let q = if l < 0.5 {
-        l * (1.0 + s)
-    } else {
-        l + s - l * s
-    };
-    let p = 2.0 * l - q;
-    let h = h / 360.0;
-    let r = hue_to_rgb(p, q, h + 1.0 / 3.0);
-    let g = hue_to_rgb(p, q, h);
-    let b = hue_to_rgb(p, q, h - 1.0 / 3.0);
-    ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
-}
-
-#[allow(clippy::many_single_char_names)]
-fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
-    let r = f64::from(r) / 255.0;
-    let g = f64::from(g) / 255.0;
-    let b = f64::from(b) / 255.0;
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let l = f64::midpoint(max, min);
-    if (max - min).abs() < f64::EPSILON {
-        return (0.0, 0.0, l);
-    }
-    let d = max - min;
-    let s = if l > 0.5 {
-        d / (2.0 - max - min)
-    } else {
-        d / (max + min)
-    };
-    let h = if (max - r).abs() < f64::EPSILON {
-        (g - b) / d + if g < b { 6.0 } else { 0.0 }
-    } else if (max - g).abs() < f64::EPSILON {
-        (b - r) / d + 2.0
-    } else {
-        (r - g) / d + 4.0
-    };
-    (h * 60.0, s, l)
-}
-
 /// Parse "#FF0000" → (255, 0, 0).
 fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
     let hex = hex.trim_start_matches('#');
@@ -641,7 +496,7 @@ fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
 #[allow(clippy::many_single_char_names)]
 fn color_pair_from_hex(hex: &str) -> Option<(Color, Color)> {
     let (r, g, b) = parse_hex_color(hex)?;
-    let (h, s, _) = rgb_to_hsl(r, g, b);
+    let (h, s, _) = color::rgb_to_hsl((r, g, b));
     // The chip background stays near the theme's own backdrop and the text
     // rides at the far end of the same hue, whichever way round that is.
     let (bg_l, fg_l) = if theme().dark {
@@ -649,8 +504,8 @@ fn color_pair_from_hex(hex: &str) -> Option<(Color, Color)> {
     } else {
         (0.88, 0.28)
     };
-    let (br, bg, bb) = hsl_to_rgb(h, s.min(0.40), bg_l);
-    let (fr, fg, fb) = hsl_to_rgb(h, s.min(0.50), fg_l);
+    let (br, bg, bb) = color::hsl_to_rgb(h, s.min(0.40), bg_l);
+    let (fr, fg, fb) = color::hsl_to_rgb(h, s.min(0.50), fg_l);
     Some((Color::Rgb(fr, fg, fb), Color::Rgb(br, bg, bb)))
 }
 
@@ -1054,6 +909,44 @@ mod dump {
                 h(t.magenta),
                 h(t.cyan),
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod code_contrast {
+    use super::{THEMES, contrast};
+    use std::str::FromStr;
+    use syntect::highlighting::Highlighter;
+    use syntect::parsing::ScopeStack;
+
+    #[test]
+    #[ignore = "probe"]
+    fn comment_over_code_bg() {
+        let rgb = |c: ratatui::style::Color| match c {
+            ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+            _ => unreachable!(),
+        };
+        let mut worst: Vec<(f64, f64, String)> = Vec::new();
+        for t in THEMES.iter() {
+            let syntax = crate::ui::highlight::theme(&t.name).unwrap();
+            let h = Highlighter::new(syntax);
+            let base = syntax
+                .settings
+                .background
+                .map_or((0, 0, 0), |c| (c.r, c.g, c.b));
+            for scope in ["comment", "string", "keyword"] {
+                let st = ScopeStack::from_str(scope).unwrap();
+                let fg = h.style_for_stack(st.as_slice()).foreground;
+                let fg = (fg.r, fg.g, fg.b);
+                let on_theme = contrast(fg, base);
+                let on_code = contrast(fg, rgb(t.code_bg));
+                worst.push((on_code, on_theme, format!("{} {scope}", t.name)));
+            }
+        }
+        worst.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (on_code, on_theme, what) in worst.iter().take(12) {
+            println!("{on_code:5.2} on code_bg (was {on_theme:5.2} on theme bg)  {what}");
         }
     }
 }
