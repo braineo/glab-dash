@@ -138,22 +138,9 @@ impl App {
         }
     }
 
-    /// Look up the issue shown in the detail view by its stored (project, iid).
+    /// Look up the issue shown in the detail view by its stored gid.
     pub(super) fn current_detail_issue(&self) -> Option<&Issue> {
-        let d = &self.ui.views.issue_detail;
-        if d.project.is_empty() {
-            return None;
-        }
-        self.data
-            .issues
-            .iter()
-            .find(|i| i.iid == d.iid && i.project_path() == d.project)
-            .or_else(|| {
-                self.data
-                    .shadow_work_cache
-                    .iter()
-                    .find(|i| i.iid == d.iid && i.project_path() == d.project)
-            })
+        super::issue_by_id(&self.data, &self.ui.views.issue_detail.id)
     }
 
     /// Look up the MR shown in the detail view by its stored (project, iid).
@@ -170,8 +157,8 @@ impl App {
 
     pub(super) fn action_open_detail(&mut self) {
         match self.ui.focused.clone() {
-            Some(FocusedItem::Issue { project, iid, .. }) => {
-                self.ui.views.issue_detail.open(&project, &iid);
+            Some(FocusedItem::Issue { id, project, iid }) => {
+                self.ui.views.issue_detail.open(&id, &project, &iid);
                 self.fetch_notes_for_issue(&project, &iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::IssueDetail;
