@@ -27,6 +27,30 @@ pub fn width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
 
+/// Cut `s` down to at most `width` display columns, marking a cut with an
+/// ellipsis so a shortened cell reads as shortened rather than as the whole of
+/// it.  A `width` of zero leaves nothing to draw in.
+pub fn truncate(s: &str, width: usize) -> String {
+    if self::width(s) <= width {
+        return s.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for g in s.graphemes(true) {
+        let gw = UnicodeWidthStr::width(g);
+        if used + gw > width - 1 {
+            break;
+        }
+        out.push_str(g);
+        used += gw;
+    }
+    out.push('\u{2026}');
+    out
+}
+
 /// One grapheme cluster, the style it carries, and the columns it draws in.
 struct Cell {
     text: String,

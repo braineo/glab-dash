@@ -972,6 +972,9 @@ mod tests {
 
     #[test]
     fn the_picker_lists_every_theme_and_the_default_is_one_of_them() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let names = theme_names();
         assert!(names.contains(&DEFAULT_THEME.to_string()));
         assert!(names.iter().all(|n| set_theme(n)));
