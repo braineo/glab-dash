@@ -259,6 +259,15 @@ impl App {
             self.ui.last_fetched_at = Some(ts);
         }
 
+        // The last theme picked outlives the config's default.
+        let theme = match self.ctx.db.get_kv::<String>("theme") {
+            Ok(Some(name)) => Some(name),
+            _ => self.ctx.config.theme.clone(),
+        };
+        if let Some(name) = theme {
+            crate::ui::styles::set_theme(&name);
+        }
+
         // Restore the active team before any refilter below reads it
         if let Ok(Some(Some(name))) = self.ctx.db.get_kv::<Option<String>>("active_team") {
             self.ui.active_team = self.ctx.config.teams.iter().position(|t| t.name == name);

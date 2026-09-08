@@ -110,13 +110,13 @@ impl CommentInput {
 }
 
 fn apply_style(textarea: &mut TextArea<'_>) {
-    let text_style = styles::overlay_text_style().bg(styles::OVERLAY);
+    let text_style = styles::overlay_text_style().bg(styles::overlay());
     textarea.set_style(text_style);
     textarea.set_cursor_line_style(text_style);
     textarea.set_cursor_style(
         ratatui::style::Style::default()
-            .fg(styles::OVERLAY)
-            .bg(styles::OVERLAY_TEXT),
+            .fg(styles::overlay())
+            .bg(styles::overlay_text()),
     );
 }
 
@@ -125,14 +125,14 @@ pub fn render(frame: &mut Frame, area: Rect, input: &mut CommentInput, title: &s
     let block = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(ratatui::style::Style::default().fg(styles::BORDER_ACTIVE))
+        .border_style(ratatui::style::Style::default().fg(styles::border_active()))
         .title(format!(" {title} "))
         .title_style(
             ratatui::style::Style::default()
-                .fg(styles::CYAN)
+                .fg(styles::cyan())
                 .add_modifier(ratatui::style::Modifier::BOLD),
         )
-        .style(ratatui::style::Style::default().bg(styles::OVERLAY));
+        .style(ratatui::style::Style::default().bg(styles::overlay()));
     input.textarea.set_block(block);
     frame.render_widget(&input.textarea, area);
 }

@@ -46,7 +46,7 @@ pub fn render(frame: &mut Frame, area: Rect, props: &StatusBarProps) {
     let mut spans = vec![
         Span::styled(
             format!(" {view_icon} {} ", props.view_name),
-            styles::title_style().bg(styles::HIGHLIGHT),
+            styles::title_style().bg(styles::highlight()),
         ),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
         Span::styled(props.team_name.to_string(), styles::source_tracking_style()),
@@ -71,7 +71,7 @@ pub fn render(frame: &mut Frame, area: Rect, props: &StatusBarProps) {
     } else {
         spans.push(Span::styled(
             format!("{} items", props.item_count),
-            ratatui::style::Style::default().fg(styles::TEXT),
+            ratatui::style::Style::default().fg(styles::text()),
         ));
     }
 

@@ -24,6 +24,7 @@ binding_group! {
         (key Esc) => Back | "Esc" "Go back / close",
         ('E') => ShowLastError | "E" "Show last error",
         ('t') => SwitchTeam | "t" "Switch team",
+        ('T') => SwitchTheme | "T" "Switch theme",
         ('r') => Refresh | "r" "Refresh data",
         ('R') => FullRefresh | "R" "Full refresh (re-fetch all)",
     }
@@ -201,6 +202,26 @@ impl App {
                             app.ui.dirty.selection = true;
 
                             app.ui.pending_cmds.push(Cmd::FetchAll);
+                            app.ui.pending_cmds.push(Cmd::PersistViewState);
+                        }
+                    }),
+                };
+            }
+            KeyAction::SwitchTheme => {
+                self.ui.overlay = Overlay::Picker {
+                    state: picker::PickerState::new(
+                        "Switch Theme",
+                        crate::ui::styles::theme_names(),
+                        false,
+                    )
+                    .with_preview(
+                        crate::ui::styles::theme_name(),
+                        crate::ui::styles::set_theme,
+                    ),
+                    on_complete: Box::new(|values, app| {
+                        if let Some(name) = values.first()
+                            && crate::ui::styles::set_theme(name)
+                        {
                             app.ui.pending_cmds.push(Cmd::PersistViewState);
                         }
                     }),

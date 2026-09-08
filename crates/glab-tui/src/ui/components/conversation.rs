@@ -212,7 +212,7 @@ impl Conversation {
         if let Some(desc) = description.map(str::trim).filter(|d| !d.is_empty()) {
             self.push_section("DESCRIPTION", None, width);
             let body = markdown::render(desc, "", width.saturating_sub(ROOT_LEAD));
-            let rail = Span::styled(DESC_RAIL, Style::default().fg(styles::BORDER));
+            let rail = Span::styled(DESC_RAIL, Style::default().fg(styles::border()));
             for line in trim_blanks(body) {
                 self.push(
                     RowKind::Description,
@@ -261,21 +261,21 @@ impl Conversation {
             Span::styled(
                 format!(" {title} "),
                 Style::default()
-                    .fg(styles::CYAN)
-                    .bg(styles::OVERLAY)
+                    .fg(styles::cyan())
+                    .bg(styles::overlay())
                     .add_modifier(Modifier::BOLD),
             ),
         ];
         if let Some(tally) = tally {
             spans.push(Span::styled(
                 format!(" {tally} "),
-                Style::default().fg(styles::TEXT_DIM),
+                Style::default().fg(styles::text_dim()),
             ));
         }
         let used: usize = spans.iter().map(Span::width).sum();
         spans.push(Span::styled(
             "\u{2500}".repeat(width.saturating_sub(used + 1)),
-            Style::default().fg(styles::BORDER),
+            Style::default().fg(styles::border()),
         ));
         self.push(RowKind::Chrome, Line::from(spans));
     }
@@ -294,9 +294,9 @@ impl Conversation {
         let rail = Span::styled(
             RAIL,
             Style::default().fg(if resolved {
-                styles::GREEN
+                styles::green()
             } else {
-                styles::BORDER_ACTIVE
+                styles::border_active()
             }),
         );
 
@@ -304,7 +304,7 @@ impl Conversation {
         if folded && !replies.is_empty() {
             head.push(Span::styled(
                 format!("  {} {} more", styles::ICON_ARROW, replies.len()),
-                Style::default().fg(styles::TEXT_DIM),
+                Style::default().fg(styles::text_dim()),
             ));
         }
         let head_kind = RowKind::Thread {
@@ -339,7 +339,7 @@ impl Conversation {
             rows.push((body_kind, indented(std::slice::from_ref(&rail), line)));
         }
         for reply in replies {
-            let elbow = Span::styled(REPLY_ELBOW, Style::default().fg(styles::TEXT_DIM));
+            let elbow = Span::styled(REPLY_ELBOW, Style::default().fg(styles::text_dim()));
             rows.push((
                 body_kind,
                 indented(&[rail.clone(), elbow], Line::from(head_spans(reply, false))),
@@ -432,7 +432,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut Conversation, descripti
             let selected = row == state.cursor;
             let mut spans = vec![Span::styled(
                 if selected { CURSOR_BAR } else { " " },
-                Style::default().fg(styles::ORANGE),
+                Style::default().fg(styles::orange()),
             )];
             spans.extend(state.lines[row].spans.clone());
             let line = Line::from(spans);
@@ -469,15 +469,15 @@ fn floating_head(frame: &mut Frame, area: Rect, root: &Note, resolved: bool) {
     };
     let block = Block::default()
         .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(styles::BORDER_ACTIVE))
-        .style(Style::default().bg(styles::OVERLAY));
+        .border_style(Style::default().fg(styles::border_active()))
+        .style(Style::default().bg(styles::overlay()));
     let inner = block.inner(card);
     frame.render_widget(Clear, card);
     frame.render_widget(block, card);
 
     let mut spans = vec![Span::styled(
         " \u{25B2} ",
-        Style::default().fg(styles::BORDER_ACTIVE),
+        Style::default().fg(styles::border_active()),
     )];
     spans.extend(head_spans(root, resolved));
     // The opening line of the body, so the card says what the thread is about
@@ -485,13 +485,13 @@ fn floating_head(frame: &mut Frame, area: Rect, root: &Note, resolved: bool) {
     if let Some(opening) = root.body.lines().find(|l| !l.trim().is_empty()) {
         spans.push(Span::styled(
             format!("  \u{00B7}  {}", opening.trim()),
-            Style::default().fg(styles::OVERLAY_TEXT_DIM),
+            Style::default().fg(styles::overlay_text_dim()),
         ));
     }
     let line = fill(
         Line::from(spans),
         usize::from(inner.width),
-        Style::default().bg(styles::OVERLAY),
+        Style::default().bg(styles::overlay()),
     );
     frame.render_widget(Paragraph::new(line), inner);
 }
@@ -502,18 +502,18 @@ fn head_spans(note: &Note, resolved: bool) -> Vec<Span<'static>> {
         Span::styled(
             format!("@{}", note.author.username),
             Style::default()
-                .fg(styles::CYAN)
+                .fg(styles::cyan())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("  {}", ago(note.created_at)),
-            Style::default().fg(styles::TEXT_DIM),
+            Style::default().fg(styles::text_dim()),
         ),
     ];
     if resolved {
         spans.push(Span::styled(
             format!("  {} resolved", styles::ICON_CHECK),
-            Style::default().fg(styles::GREEN),
+            Style::default().fg(styles::green()),
         ));
     }
     spans
@@ -533,9 +533,9 @@ fn indented(chrome: &[Span<'static>], line: Line<'static>) -> Line<'static> {
 /// would cost — and it doubles as the thread's header.
 fn band(kind: RowKind, selected: bool) -> Option<Color> {
     if selected {
-        return Some(styles::HIGHLIGHT);
+        return Some(styles::highlight());
     }
-    matches!(kind, RowKind::Thread { head: true, .. }).then_some(styles::SURFACE)
+    matches!(kind, RowKind::Thread { head: true, .. }).then_some(styles::surface())
 }
 
 /// Pad `line` out to `width` columns and lay `style` under it, so its
@@ -945,7 +945,7 @@ mod tests {
         );
         assert_eq!(
             super::band(state.kinds[first_of_second], false),
-            Some(crate::ui::styles::SURFACE)
+            Some(crate::ui::styles::surface())
         );
         assert_eq!(
             super::band(

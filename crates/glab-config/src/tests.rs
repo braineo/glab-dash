@@ -272,3 +272,22 @@ fn each_team_names_its_own_projects_and_all_spans_them() {
     assert_eq!(config.all_tracking_projects(), ["org/shared", "org/gamma"]);
     assert_eq!(config.team_tracking_group(Some(2)), "org");
 }
+
+#[test]
+fn a_theme_name_round_trips_through_the_config() {
+    let toml = r#"
+gitlab_url = "https://gitlab.example.com"
+token = "t"
+me = "me"
+theme = "catppuccin-latte"
+
+[[teams]]
+name = "core"
+tracking_projects = ["group/proj"]
+members = ["me"]
+"#;
+    let config: Config = toml::from_str(toml).expect("parses");
+    assert_eq!(config.theme.as_deref(), Some("catppuccin-latte"));
+    let back = toml::to_string_pretty(&config).expect("serializes");
+    assert!(back.contains("theme = \"catppuccin-latte\""));
+}

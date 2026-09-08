@@ -59,6 +59,10 @@ impl App {
                     .and_then(|i| self.ctx.config.teams.get(i))
                     .map(|t| t.name.clone());
                 let _ = self.ctx.db.set_kv("active_team", &team);
+                let _ = self
+                    .ctx
+                    .db
+                    .set_kv("theme", &crate::ui::styles::theme_name().to_string());
             }
             Cmd::PersistUnplannedWork => {
                 let _ = self

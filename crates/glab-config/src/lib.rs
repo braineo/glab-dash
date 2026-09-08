@@ -28,6 +28,11 @@ pub struct Config {
     pub me: String,
     #[serde(default = "default_refresh")]
     pub refresh_interval_secs: u64,
+    /// The color theme to start in, named as bat names it — "Dracula", "Nord",
+    /// "Solarized (dark)".  Press `T` in the app to see the list.  Unset means
+    /// the default, and a name no bundled theme goes by is ignored.
+    #[serde(default)]
+    pub theme: Option<String>,
     #[serde(default)]
     pub teams: Vec<Team>,
     #[serde(default)]

@@ -321,10 +321,10 @@ fn render_column(
 
     let border_style = if is_focused {
         Style::default()
-            .fg(styles::BLUE)
+            .fg(styles::blue())
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(styles::TEXT_DIM)
+        Style::default().fg(styles::text_dim())
     };
 
     // Use search_block style when column has active search
@@ -332,17 +332,20 @@ fn render_column(
         let mut spans = vec![Span::styled(
             format!(" {header_text} /"),
             Style::default()
-                .fg(styles::CYAN)
+                .fg(styles::cyan())
                 .add_modifier(Modifier::BOLD),
         )];
         spans.push(Span::styled(
             col.filter.fuzzy_query.as_str(),
             Style::default()
-                .fg(styles::TEXT_BRIGHT)
+                .fg(styles::text_bright())
                 .add_modifier(Modifier::BOLD),
         ));
         if col.filter.is_searching() {
-            spans.push(Span::styled("\u{258e}", Style::default().fg(styles::CYAN)));
+            spans.push(Span::styled(
+                "\u{258e}",
+                Style::default().fg(styles::cyan()),
+            ));
         }
         Block::default()
             .borders(Borders::ALL)
@@ -352,7 +355,7 @@ fn render_column(
                 ratatui::widgets::BorderType::Rounded
             })
             .border_style(if col.filter.is_searching() {
-                Style::default().fg(styles::CYAN)
+                Style::default().fg(styles::cyan())
             } else {
                 border_style
             })
@@ -370,10 +373,10 @@ fn render_column(
                 header_text,
                 if is_focused {
                     Style::default()
-                        .fg(styles::TEXT_BRIGHT)
+                        .fg(styles::text_bright())
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(styles::TEXT)
+                    Style::default().fg(styles::text())
                 },
             ))
     };
@@ -438,13 +441,13 @@ fn render_column(
                     status_icon,
                     styles::status_style(item.status_name().unwrap_or(&item.state)),
                 )),
-                Cell::from(Span::styled(iid, Style::default().fg(styles::TEXT_DIM))),
+                Cell::from(Span::styled(iid, Style::default().fg(styles::text_dim()))),
                 Cell::from(Span::styled(
                     title.as_str(),
-                    Style::default().fg(styles::TEXT),
+                    Style::default().fg(styles::text()),
                 )),
-                Cell::from(Span::styled(assignee, Style::default().fg(styles::CYAN))),
-                Cell::from(Span::styled(weight, Style::default().fg(styles::YELLOW))),
+                Cell::from(Span::styled(assignee, Style::default().fg(styles::cyan()))),
+                Cell::from(Span::styled(weight, Style::default().fg(styles::yellow()))),
             ])
         })
         .collect();
@@ -471,11 +474,11 @@ fn render_column(
             .iter()
             .map(|(name, count, weight)| {
                 Line::from(vec![
-                    Span::styled(format!(" {name}"), Style::default().fg(styles::CYAN)),
-                    Span::styled(format!(": {count}"), Style::default().fg(styles::TEXT)),
+                    Span::styled(format!(" {name}"), Style::default().fg(styles::cyan())),
+                    Span::styled(format!(": {count}"), Style::default().fg(styles::text())),
                     Span::styled(
                         format!(" ({weight}w)"),
-                        Style::default().fg(styles::TEXT_DIM),
+                        Style::default().fg(styles::text_dim()),
                     ),
                 ])
             })

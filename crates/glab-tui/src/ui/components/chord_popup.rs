@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
@@ -15,9 +15,6 @@ pub const DIVIDER: &str = "───";
 
 /// Section header sentinel — labels starting with this are rendered as bold titles.
 pub const HEADER: &str = "§ ";
-
-/// Dim color for inactive/non-matching chord items (against overlay bg #343b58).
-pub const CHORD_DIM: Color = Color::Rgb(80, 87, 120);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum ChordKind {
@@ -377,7 +374,7 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
                     let label_style = if is_active {
                         styles::overlay_text_style()
                     } else {
-                        Style::default().fg(CHORD_DIM)
+                        Style::default().fg(styles::chord_dim())
                     };
                     let prefix = if state.kind == ChordKind::Status {
                         "  "
@@ -435,7 +432,7 @@ fn render_sectioned(frame: &mut Frame, area: Rect, state: &ChordState) {
                 Span::styled(
                     title.to_string(),
                     Style::default()
-                        .fg(styles::TEXT_DIM)
+                        .fg(styles::text_dim())
                         .add_modifier(Modifier::BOLD),
                 ),
             ]));
@@ -447,7 +444,7 @@ fn render_sectioned(frame: &mut Frame, area: Rect, state: &ChordState) {
             let line = "─".repeat(item_width);
             lines.push(Line::from(Span::styled(
                 line,
-                Style::default().fg(CHORD_DIM),
+                Style::default().fg(styles::chord_dim()),
             )));
             continue;
         }
@@ -461,7 +458,7 @@ fn render_sectioned(frame: &mut Frame, area: Rect, state: &ChordState) {
         let label_style = if is_active {
             styles::overlay_text_style()
         } else {
-            Style::default().fg(CHORD_DIM)
+            Style::default().fg(styles::chord_dim())
         };
         spans.push(Span::styled(label.clone(), label_style));
         lines.push(Line::from(spans));
@@ -496,21 +493,21 @@ pub fn render_code(
         // Typed prefix → muted; remaining → bright hint target
         spans.push(Span::styled(
             code[..typed].to_string(),
-            Style::default().fg(styles::OVERLAY_TEXT_DIM),
+            Style::default().fg(styles::overlay_text_dim()),
         ));
         spans.push(Span::styled(
             code[typed..].to_string(),
             Style::default()
-                .fg(styles::YELLOW)
+                .fg(styles::yellow())
                 .add_modifier(Modifier::BOLD),
         ));
     } else {
         let sty = if active {
             Style::default()
-                .fg(styles::MAGENTA)
+                .fg(styles::magenta())
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(CHORD_DIM)
+            Style::default().fg(styles::chord_dim())
         };
         spans.push(Span::styled(code.to_string(), sty));
     }
@@ -529,13 +526,13 @@ fn render_hint(state: &ChordState, typed: usize) -> Line<'static> {
         Span::styled(
             state.input.clone(),
             Style::default()
-                .fg(styles::MAGENTA)
+                .fg(styles::magenta())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "\u{00B7}".repeat(remaining_dots),
             Style::default()
-                .fg(styles::YELLOW)
+                .fg(styles::yellow())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),

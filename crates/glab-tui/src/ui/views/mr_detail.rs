@@ -101,7 +101,7 @@ fn render_header(
     let mut title = vec![Span::styled(
         format!(" !{}  ", item.iid),
         Style::default()
-            .fg(styles::TEXT_DIM)
+            .fg(styles::text_dim())
             .add_modifier(Modifier::BOLD),
     )];
     if item.draft {
@@ -116,7 +116,7 @@ fn render_header(
             styles::draft_style()
         } else {
             Style::default()
-                .fg(styles::TEXT_BRIGHT)
+                .fg(styles::text_bright())
                 .add_modifier(Modifier::BOLD)
         },
     ));
@@ -135,7 +135,7 @@ fn render_header(
         styles::chip_sep(),
         Span::styled(
             item.source_branch.clone(),
-            Style::default().fg(styles::TEAL),
+            Style::default().fg(styles::teal()),
         ),
         Span::styled(
             format!(" {} ", styles::ICON_ARROW),
@@ -143,7 +143,7 @@ fn render_header(
         ),
         Span::styled(
             item.target_branch.clone(),
-            Style::default().fg(styles::TEAL),
+            Style::default().fg(styles::teal()),
         ),
     ];
     let approved: Vec<&str> = item
@@ -168,7 +168,7 @@ fn render_header(
         if !assignees.is_empty() {
             people.push(Span::styled(
                 format!("@{}", assignees.join(" @")),
-                Style::default().fg(styles::TEXT_BRIGHT),
+                Style::default().fg(styles::text_bright()),
             ));
         }
         if !reviewers.is_empty() {
@@ -178,7 +178,7 @@ fn render_header(
             people.push(Span::styled("review ", styles::help_desc_style()));
             people.push(Span::styled(
                 format!("@{}", reviewers.join(" @")),
-                Style::default().fg(styles::TEXT_BRIGHT),
+                Style::default().fg(styles::text_bright()),
             ));
         }
     }
@@ -197,7 +197,7 @@ fn render_header(
             Line::from(status),
             Line::from(people),
         ])
-        .style(Style::default().bg(styles::SURFACE)),
+        .style(Style::default().bg(styles::surface())),
         area,
     );
 }
