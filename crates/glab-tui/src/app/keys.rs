@@ -3,7 +3,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::binding_group;
-use crate::cmd::{Effects, EventResult};
+use crate::cmd::{Cmd, Effects, EventResult};
 use crate::keybindings::BindingGroup;
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::picker;
@@ -203,7 +203,11 @@ impl App {
                             }
                             app.ui.dirty.issues = true;
                             app.ui.dirty.mrs = true;
+                            app.ui.dirty.statuses = true;
                             app.ui.dirty.selection = true;
+
+                            app.ui.pending_cmds.push(Cmd::FetchAll);
+                            app.ui.pending_cmds.push(Cmd::PersistViewState);
                         }
                     }),
                 };

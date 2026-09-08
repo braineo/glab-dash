@@ -82,27 +82,11 @@ impl IssueListState {
 
     // ── Filtering ───────────────────────────────────────────────────
 
-    pub fn apply_filters(
-        &mut self,
-        issues: &[Issue],
-        me: &str,
-        team_members: &[String],
-        label_orders: &LabelOrders,
-    ) {
+    pub fn apply_filters(&mut self, issues: &[Issue], me: &str, label_orders: &LabelOrders) {
         self.list.indices = issues
             .iter()
             .enumerate()
-            .filter(|(_, item)| {
-                // Implicit team filter: when a team is selected, only show items
-                // assigned to team members or unassigned items.
-                team_members.is_empty()
-                    || item.assignees.is_empty()
-                    || item
-                        .assignees
-                        .iter()
-                        .any(|a| team_members.contains(&a.username))
-            })
-            .filter(|(_, item)| matches_issue(item, &self.filter.conditions, me, team_members))
+            .filter(|(_, item)| matches_issue(item, &self.filter.conditions, me))
             .filter(|(_, item)| {
                 let mut haystack = item.title.to_lowercase();
                 for a in &item.assignees {

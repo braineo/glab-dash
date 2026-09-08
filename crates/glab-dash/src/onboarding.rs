@@ -7,6 +7,7 @@ use glab_api::GitLabClient;
 use glab_config::{Config, FilterPreset};
 use glab_core::filter::{Field, FilterCondition, Op};
 use glab_core::sort::label_order::LabelOrders;
+use glab_core::team::Team;
 
 const LOGO: &str = r"
    __ _  _       _             _           _
@@ -73,15 +74,11 @@ pub async fn run_onboarding() -> Result<Config> {
         prompt_with_default("Your GitLab username", &detected_username)?
     };
 
-    // Step 5: Tracking project
-    println!();
-    println!("  The tracking project is the main repo where your teams manage issues.");
-    let tracking_project = prompt_required("Tracking project path (e.g. myorg/team-tracker)")?;
-
-    // Step 6: Teams
+    // Step 5: Teams
     println!();
     println!("  Now let's set up your teams. You can add more later in the config file.");
-    let mut teams = Vec::new();
+    println!("  Each team names the projects it tracks; teams sharing a board name the same ones.");
+    let mut teams: Vec<Team> = Vec::new();
 
     loop {
         println!();
@@ -111,24 +108,43 @@ pub async fn run_onboarding() -> Result<Config> {
             continue;
         }
 
+        // Most teams share the previous one's board, so offer it as the default.
+        let previous = teams.last().map(|t| t.tracking_projects.join(", "));
+        let prompt =
+            format!("  Projects '{team_name}' tracks (comma-separated, e.g. myorg/team-tracker)");
+        let projects_str = match &previous {
+            Some(p) => prompt_with_default(&prompt, p)?,
+            None => prompt_required(&prompt)?,
+        };
+        let tracking_projects: Vec<String> = projects_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if tracking_projects.is_empty() {
+            println!("  No projects given. Skipping this team.");
+            continue;
+        }
+
         println!(
             "  Added team '{}' with {} members: {}",
             team_name,
             members.len(),
             members.join(", ")
         );
-        teams.push(glab_config::TeamConfig {
+        teams.push(Team {
             name: team_name,
             members,
+            tracking_projects,
         });
     }
 
-    // Step 7: Generate config
+    // Step 6: Generate config
     let config = Config {
         gitlab_url: gitlab_url.clone(),
         token: token.clone(),
         me: me.clone(),
-        tracking_projects: vec![tracking_project.clone()],
         refresh_interval_secs: 60,
         teams: teams.clone(),
         filters: default_filter_presets(),
@@ -137,7 +153,7 @@ pub async fn run_onboarding() -> Result<Config> {
         kanban_columns: Vec::new(),
     };
 
-    // Step 8: Write config file
+    // Step 7: Write config file
     let config_path = config_path()?;
     let toml_str = generate_toml(&config);
 

@@ -52,6 +52,13 @@ impl App {
                 };
                 let _ = self.ctx.db.set_kv("issue_view_state", &ivs);
                 let _ = self.ctx.db.set_kv("mr_view_state", &mvs);
+
+                let team = self
+                    .ui
+                    .active_team
+                    .and_then(|i| self.ctx.config.teams.get(i))
+                    .map(|t| t.name.clone());
+                let _ = self.ctx.db.set_kv("active_team", &team);
             }
             Cmd::PersistUnplannedWork => {
                 let _ = self

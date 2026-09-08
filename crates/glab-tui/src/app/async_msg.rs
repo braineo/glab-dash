@@ -167,7 +167,7 @@ impl App {
                                 .ui
                                 .views
                                 .issue_list
-                                .selected_issue(&self.data.issues)
+                                .selected_issue(&self.data.team_issues)
                                 .or_else(|| self.current_detail_issue())
                                 .map_or("opened".to_string(), |i| i.state.clone());
                             issue_actions::show_close_reopen_confirm(

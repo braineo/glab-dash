@@ -185,6 +185,9 @@ impl Db {
     pub fn upsert_iterations(&self, iters: &[Iteration]) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         {
+            // Each fetch is one group's full cadence, and a team switch changes
+            // groups — so replace the cache rather than accumulating both.
+            tx.execute("DELETE FROM iterations", [])?;
             let mut stmt =
                 tx.prepare_cached("INSERT OR REPLACE INTO iterations (id, data) VALUES (?1, ?2)")?;
             for iter in iters {

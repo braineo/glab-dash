@@ -38,8 +38,8 @@ impl App {
                     chunks[1],
                     &self.ctx.config,
                     self.ui.active_team,
-                    &self.data.issues,
-                    &self.data.mrs,
+                    &self.data.team_issues,
+                    &self.data.team_mrs,
                     self.ui.loading,
                     &mut self.ui.views.board,
                     &self.data.board_issues,
@@ -54,7 +54,7 @@ impl App {
                     frame,
                     chunks[1],
                     &mut self.ui.views.issue_list,
-                    &self.data.issues,
+                    &self.data.team_issues,
                     &ctx,
                 );
             }
@@ -74,7 +74,7 @@ impl App {
                     frame,
                     chunks[1],
                     &mut self.ui.views.mr_list,
-                    &self.data.mrs,
+                    &self.data.team_mrs,
                     &ctx,
                 );
             }
@@ -88,7 +88,7 @@ impl App {
                     frame,
                     chunks[1],
                     &mut self.ui.views.planning,
-                    &self.data.issues,
+                    &self.data.team_issues,
                     &self.ctx.config,
                     self.ui.active_team,
                     &ctx,
@@ -121,7 +121,7 @@ impl App {
                 .iter()
                 .map(|c| c.list.len())
                 .sum(),
-            _ => self.data.issues.len() + self.data.mrs.len(),
+            _ => self.data.team_issues.len() + self.data.team_mrs.len(),
         };
         // The same chain the help overlay reads, so a hint always names the
         // action the key really fires.  Contextual only — the globals are on

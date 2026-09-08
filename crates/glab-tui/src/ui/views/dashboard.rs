@@ -294,7 +294,6 @@ impl IterationBoardState {
         current_iteration: Option<&Iteration>,
         label_orders: &LabelOrders,
         me: &str,
-        team_members: &[String],
     ) {
         for col in &mut self.columns {
             col.list.indices.clear();
@@ -326,12 +325,7 @@ impl IterationBoardState {
         for col in &mut self.columns {
             col.list.indices.retain(|&i| {
                 let item = &issues[i];
-                if !glab_core::filter::condition::matches_issue(
-                    item,
-                    &self.filter.conditions,
-                    me,
-                    team_members,
-                ) {
+                if !glab_core::filter::condition::matches_issue(item, &self.filter.conditions, me) {
                     return false;
                 }
                 let mut haystack = item.title.to_lowercase();
@@ -391,7 +385,7 @@ pub fn render(
     let team_name = active_team
         .and_then(|idx| config.teams.get(idx))
         .map_or("all", |t| t.name.as_str());
-    let tracking_display = config.tracking_projects.join(", ");
+    let tracking_display = config.team_tracking_projects(active_team).join(", ");
     let header_text = Line::from(vec![
         Span::styled(
             format!(" {} glab-dash", styles::ICON_DASHBOARD),
@@ -1435,7 +1429,7 @@ mod tests {
         ];
 
         // Must not panic even though columns is empty
-        board.partition_issues(&issues, Some(&iter), &LabelOrders::default(), "", &[]);
+        board.partition_issues(&issues, Some(&iter), &LabelOrders::default(), "");
         assert!(board.columns.is_empty());
     }
 
@@ -1477,7 +1471,7 @@ mod tests {
         let no_status = make_issue(2, Some("gid://gitlab/Iteration/1"));
 
         let issues = vec![in_progress, no_status];
-        board.partition_issues(&issues, Some(&iter), &LabelOrders::default(), "", &[]);
+        board.partition_issues(&issues, Some(&iter), &LabelOrders::default(), "");
 
         assert_eq!(board.columns[0].list.indices.len(), 1); // "No Status"
         assert_eq!(board.columns[1].list.indices.len(), 1); // "In Progress"
