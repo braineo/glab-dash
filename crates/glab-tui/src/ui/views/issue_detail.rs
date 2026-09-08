@@ -14,6 +14,7 @@ use glab_core::domain::{Discussion, Issue};
 
 #[derive(Default)]
 pub struct IssueDetailState {
+    pub id: String,
     pub project: String,
     pub iid: String,
     pub scroll: u16,
@@ -85,8 +86,9 @@ impl IssueDetailState {
         self.loading_notes = false;
     }
 
-    pub fn open(&mut self, project: &str, iid: &str) {
+    pub fn open(&mut self, id: &str, project: &str, iid: &str) {
         self.reset();
+        self.id = id.to_string();
         self.project = project.to_string();
         self.iid = iid.to_string();
         self.loading_notes = true;

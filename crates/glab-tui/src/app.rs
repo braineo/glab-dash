@@ -195,6 +195,14 @@ pub struct App {
     pub ui: UiState,
 }
 
+pub(super) fn issue_by_id<'a>(data: &'a AppData, id: &str) -> Option<&'a Issue> {
+    data.issues
+        .iter()
+        .chain(&data.board_issues)
+        .chain(&data.shadow_work_cache)
+        .find(|i| i.id == id)
+}
+
 impl App {
     pub fn new(
         config: Config,
@@ -605,12 +613,24 @@ impl App {
                 .iter()
                 .map(|i| i.id.clone())
                 .collect();
-            self.data
-                .board_issues
-                .extend(closed.into_iter().filter(|i| {
+
+            let team = self
+                .ui
+                .active_team
+                .and_then(|i| self.ctx.config.teams.get(i));
+
+            let me = &self.ctx.config.me;
+
+            let scoped: Vec<Issue> = closed
+                .into_iter()
+                .filter(|i| {
                     !existing.contains(&i.id)
                         && i.iteration.as_ref().is_some_and(|it| it.id == *iter_id)
-                }));
+                        && team.is_none_or(|t| t.owns_issue(i, me))
+                })
+                .collect();
+
+            self.data.board_issues.extend(scoped);
         }
     }
 

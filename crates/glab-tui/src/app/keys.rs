@@ -113,13 +113,7 @@ impl App {
         // Disjoint borrows: &data (immutable) + &ctx (immutable) + &mut ui (mutable)
         match &focused {
             FocusedItem::Issue { id, .. } => {
-                let Some(issue) = self
-                    .data
-                    .issues
-                    .iter()
-                    .find(|i| i.id == *id)
-                    .or_else(|| self.data.shadow_work_cache.iter().find(|i| i.id == *id))
-                else {
+                let Some(issue) = super::issue_by_id(&self.data, id) else {
                     return EventResult::Bubble;
                 };
                 issue.handle_action_key(action, &self.ctx, &self.data, &mut self.ui)
