@@ -15,6 +15,17 @@ use super::{App, Overlay, View};
 impl App {
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
+        // Paint the theme's own background over the whole frame rather than
+        // letting the terminal's show through, so a light theme is legible in
+        // a dark terminal and the reverse.
+        frame.render_widget(
+            ratatui::widgets::Block::default().style(
+                ratatui::style::Style::default()
+                    .bg(crate::ui::styles::base())
+                    .fg(crate::ui::styles::text()),
+            ),
+            area,
+        );
         let chunks = Layout::vertical([
             Constraint::Length(1), // Tab bar
             Constraint::Min(1),    // Main content

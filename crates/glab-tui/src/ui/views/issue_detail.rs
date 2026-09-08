@@ -100,13 +100,13 @@ fn render_header(frame: &mut Frame, area: Rect, item: &Issue, ctx: &crate::ui::R
         Span::styled(
             format!(" #{}  ", item.iid),
             Style::default()
-                .fg(styles::TEXT_DIM)
+                .fg(styles::text_dim())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             item.title.clone(),
             Style::default()
-                .fg(styles::TEXT_BRIGHT)
+                .fg(styles::text_bright())
                 .add_modifier(Modifier::BOLD),
         ),
     ]);
@@ -119,7 +119,7 @@ fn render_header(frame: &mut Frame, area: Rect, item: &Issue, ctx: &crate::ui::R
         meta.push(styles::chip_sep());
         meta.push(Span::styled(
             format!("@{}", author.username),
-            Style::default().fg(styles::TEXT),
+            Style::default().fg(styles::text()),
         ));
     }
     let assignees: Vec<&str> = item.assignees.iter().map(|a| a.username.as_str()).collect();
@@ -130,7 +130,7 @@ fn render_header(frame: &mut Frame, area: Rect, item: &Issue, ctx: &crate::ui::R
         ));
         meta.push(Span::styled(
             format!("@{}", assignees.join(" @")),
-            Style::default().fg(styles::TEXT_BRIGHT),
+            Style::default().fg(styles::text_bright()),
         ));
     }
     meta.push(styles::chip_sep());
@@ -148,7 +148,7 @@ fn render_header(frame: &mut Frame, area: Rect, item: &Issue, ctx: &crate::ui::R
     }
 
     frame.render_widget(
-        Paragraph::new(vec![title, Line::from(meta)]).style(Style::default().bg(styles::SURFACE)),
+        Paragraph::new(vec![title, Line::from(meta)]).style(Style::default().bg(styles::surface())),
         area,
     );
 }

@@ -13,6 +13,7 @@ pub enum KeyAction {
     ToggleHelp,
     ShowLastError,
     SwitchTeam,
+    SwitchTheme,
     NavigateTo(crate::app::View),
 
     // --- List / column navigation ---

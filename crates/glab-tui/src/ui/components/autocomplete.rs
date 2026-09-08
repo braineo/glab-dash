@@ -194,16 +194,16 @@ pub fn render(frame: &mut Frame, input_area: Rect, state: &AutocompleteState) {
             let is_selected = vi == state.selected;
             let style = if is_selected {
                 ratatui::style::Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .bg(styles::HIGHLIGHT)
+                    .fg(styles::text_bright())
+                    .bg(styles::highlight())
                     .add_modifier(Modifier::BOLD)
             } else {
-                ratatui::style::Style::default().fg(styles::OVERLAY_TEXT)
+                ratatui::style::Style::default().fg(styles::overlay_text())
             };
             let line = Line::from(vec![
                 Span::styled(
                     prefix,
-                    ratatui::style::Style::default().fg(styles::OVERLAY_TEXT_DIM),
+                    ratatui::style::Style::default().fg(styles::overlay_text_dim()),
                 ),
                 Span::styled(&item.label, style),
             ]);
@@ -213,8 +213,8 @@ pub fn render(frame: &mut Frame, input_area: Rect, state: &AutocompleteState) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(ratatui::style::Style::default().fg(styles::BORDER))
-        .style(ratatui::style::Style::default().bg(styles::OVERLAY));
+        .border_style(ratatui::style::Style::default().fg(styles::border()))
+        .style(ratatui::style::Style::default().bg(styles::overlay()));
 
     let mut list_state = ListState::default();
     list_state.select(Some(state.selected));

@@ -394,7 +394,7 @@ pub fn render(
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
         Span::styled(
             format!("Team: {team_name}"),
-            Style::default().fg(styles::TEAL),
+            Style::default().fg(styles::teal()),
         ),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
         Span::styled(
@@ -404,7 +404,7 @@ pub fn render(
         if loading {
             Span::styled(
                 format!(" {}", styles::ICON_LOADING),
-                Style::default().fg(styles::YELLOW),
+                Style::default().fg(styles::yellow()),
             )
         } else {
             Span::raw("")
@@ -414,7 +414,7 @@ pub fn render(
         Block::default()
             .borders(Borders::BOTTOM)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(styles::BORDER)),
+            .border_style(Style::default().fg(styles::border())),
     );
     frame.render_widget(header, chunks[0]);
 
@@ -480,29 +480,29 @@ fn render_iteration_board(
             Span::styled(
                 format!(" {} {iter_label} /", styles::ICON_OPEN),
                 Style::default()
-                    .fg(styles::CYAN)
+                    .fg(styles::cyan())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 board.filter.fuzzy_query.as_str(),
                 Style::default()
-                    .fg(styles::TEXT_BRIGHT)
+                    .fg(styles::text_bright())
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("\u{258e}", Style::default().fg(styles::CYAN)),
+            Span::styled("\u{258e}", Style::default().fg(styles::cyan())),
         ])
     } else if board.filter.has_query() {
         Line::from(vec![
             Span::styled(
                 format!(" {} {iter_label} /", styles::ICON_OPEN),
                 Style::default()
-                    .fg(styles::CYAN)
+                    .fg(styles::cyan())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 board.filter.fuzzy_query.as_str(),
                 Style::default()
-                    .fg(styles::TEXT_BRIGHT)
+                    .fg(styles::text_bright())
                     .add_modifier(Modifier::BOLD),
             ),
         ])
@@ -510,7 +510,7 @@ fn render_iteration_board(
         Line::from(Span::styled(
             format!(" {} {iter_label}", styles::ICON_OPEN),
             Style::default()
-                .fg(styles::TEXT_BRIGHT)
+                .fg(styles::text_bright())
                 .add_modifier(Modifier::BOLD),
         ))
     };
@@ -519,9 +519,9 @@ fn render_iteration_board(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(if board.filter.is_searching() {
-            Style::default().fg(styles::CYAN)
+            Style::default().fg(styles::cyan())
         } else {
-            Style::default().fg(styles::BORDER)
+            Style::default().fg(styles::border())
         })
         .title(title_line);
 
@@ -591,10 +591,10 @@ fn render_board_column(
 
     let border_style = if is_focused {
         Style::default()
-            .fg(styles::BLUE)
+            .fg(styles::blue())
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(styles::TEXT_DIM)
+        Style::default().fg(styles::text_dim())
     };
 
     let block = Block::default()
@@ -609,10 +609,10 @@ fn render_board_column(
             header_text,
             if is_focused {
                 Style::default()
-                    .fg(styles::TEXT_BRIGHT)
+                    .fg(styles::text_bright())
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(styles::TEXT)
+                Style::default().fg(styles::text())
             },
         ));
 
@@ -634,12 +634,12 @@ fn render_board_column(
             let assignee = item.assignees.first().map_or("-", |u| u.username.as_str());
 
             Row::new(vec![
-                Cell::from(Span::styled(iid, Style::default().fg(styles::TEXT_DIM))),
+                Cell::from(Span::styled(iid, Style::default().fg(styles::text_dim()))),
                 Cell::from(Span::styled(
                     item.title.as_str(),
-                    Style::default().fg(styles::TEXT),
+                    Style::default().fg(styles::text()),
                 )),
-                Cell::from(Span::styled(assignee, Style::default().fg(styles::CYAN))),
+                Cell::from(Span::styled(assignee, Style::default().fg(styles::cyan()))),
             ])
         })
         .collect();
@@ -668,7 +668,7 @@ fn render_column_indicator(
     if win_start > 0 {
         spans.push(Span::styled(
             "\u{25c0} ",
-            Style::default().fg(styles::TEXT_DIM),
+            Style::default().fg(styles::text_dim()),
         ));
     } else {
         spans.push(Span::raw("  "));
@@ -678,7 +678,7 @@ fn render_column_indicator(
         if i > 0 {
             spans.push(Span::styled(
                 " \u{2502} ",
-                Style::default().fg(styles::BORDER),
+                Style::default().fg(styles::border()),
             ));
         }
 
@@ -688,12 +688,12 @@ fn render_column_indicator(
 
         let style = if is_focused {
             Style::default()
-                .fg(styles::CYAN)
+                .fg(styles::cyan())
                 .add_modifier(Modifier::BOLD)
         } else if in_window {
-            Style::default().fg(styles::TEXT_BRIGHT)
+            Style::default().fg(styles::text_bright())
         } else {
-            Style::default().fg(styles::TEXT_DIM)
+            Style::default().fg(styles::text_dim())
         };
 
         spans.push(Span::styled(label, style));
@@ -703,7 +703,7 @@ fn render_column_indicator(
     if win_end < board.columns.len() {
         spans.push(Span::styled(
             " \u{25b6}",
-            Style::default().fg(styles::TEXT_DIM),
+            Style::default().fg(styles::text_dim()),
         ));
     }
 
@@ -724,9 +724,9 @@ fn render_iteration_health(
     unplanned_work_cache: &HashMap<String, DateTime<Utc>>,
 ) {
     let border_color = if is_focused {
-        styles::CYAN
+        styles::cyan()
     } else {
-        styles::BORDER
+        styles::border()
     };
 
     let Some(health) = health else {
@@ -811,20 +811,20 @@ fn render_progress_line(
 
     // Burn rate indicator
     let (burn_label, burn_color) = match health.burn_rate {
-        BurnRate::Ahead => ("\u{25b2} Ahead", styles::GREEN),
-        BurnRate::OnTrack => ("\u{25cf} On Track", styles::GREEN),
-        BurnRate::Behind => ("\u{25bc} Behind", styles::RED),
-        BurnRate::Unknown => ("\u{25cb} \u{2014}", styles::TEXT_DIM),
+        BurnRate::Ahead => ("\u{25b2} Ahead", styles::green()),
+        BurnRate::OnTrack => ("\u{25cf} On Track", styles::green()),
+        BurnRate::Behind => ("\u{25bc} Behind", styles::red()),
+        BurnRate::Unknown => ("\u{25cb} \u{2014}", styles::text_dim()),
     };
 
     let mut spans = vec![
         Span::styled(
             format!(" {iter_label}"),
             Style::default()
-                .fg(styles::TEXT_BRIGHT)
+                .fg(styles::text_bright())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" \u{2502} ", Style::default().fg(styles::BORDER)),
+        Span::styled(" \u{2502} ", Style::default().fg(styles::border())),
     ];
 
     // Day X/Y (N days left)
@@ -834,27 +834,30 @@ fn render_progress_line(
                 "Day {}/{} ({}d left)",
                 health.days_elapsed, health.days_total, health.days_remaining
             ),
-            Style::default().fg(styles::TEXT),
+            Style::default().fg(styles::text()),
         ));
         spans.push(Span::styled(
             " \u{2502} ",
-            Style::default().fg(styles::BORDER),
+            Style::default().fg(styles::border()),
         ));
     }
 
     // Progress bar
-    spans.push(Span::styled(bar_filled, Style::default().fg(styles::GREEN)));
+    spans.push(Span::styled(
+        bar_filled,
+        Style::default().fg(styles::green()),
+    ));
     spans.push(Span::styled(
         bar_empty,
-        Style::default().fg(styles::TEXT_DIM),
+        Style::default().fg(styles::text_dim()),
     ));
     spans.push(Span::styled(
         format!(" {}/{} done", health.done_issues, health.total_issues),
-        Style::default().fg(styles::TEXT),
+        Style::default().fg(styles::text()),
     ));
     spans.push(Span::styled(
         " \u{2502} ",
-        Style::default().fg(styles::BORDER),
+        Style::default().fg(styles::border()),
     ));
 
     // Burn rate
@@ -900,14 +903,14 @@ fn render_health_tabs(frame: &mut Frame, area: Rect, health: &IterationHealth) {
             spans.push(Span::styled(
                 format!("[{count_str}]"),
                 Style::default()
-                    .fg(styles::CYAN)
+                    .fg(styles::cyan())
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
             let color = if *count > 0 {
-                styles::YELLOW
+                styles::yellow()
             } else {
-                styles::TEXT_DIM
+                styles::text_dim()
             };
             spans.push(Span::styled(
                 format!(" {count_str} "),
@@ -980,13 +983,16 @@ fn render_health_list(
                 }
             };
             let row = Row::new(vec![
-                Cell::from(Span::styled(iid_str, Style::default().fg(styles::TEXT_DIM))),
+                Cell::from(Span::styled(
+                    iid_str,
+                    Style::default().fg(styles::text_dim()),
+                )),
                 Cell::from(Span::styled(
                     item.title.as_str(),
-                    Style::default().fg(styles::TEXT),
+                    Style::default().fg(styles::text()),
                 )),
-                Cell::from(Span::styled(assignee, Style::default().fg(styles::CYAN))),
-                Cell::from(Span::styled(detail, Style::default().fg(styles::YELLOW))),
+                Cell::from(Span::styled(assignee, Style::default().fg(styles::cyan()))),
+                Cell::from(Span::styled(detail, Style::default().fg(styles::yellow()))),
             ]);
             if i % 2 == 1 {
                 row.style(styles::row_alt_style())
@@ -1072,17 +1078,17 @@ fn render_stats_summary(
         Span::styled(
             format!("{tracking_issues}"),
             Style::default()
-                .fg(styles::TEXT_BRIGHT)
+                .fg(styles::text_bright())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" tracking  ", Style::default().fg(styles::TEXT_DIM)),
+        Span::styled(" tracking  ", Style::default().fg(styles::text_dim())),
         Span::styled(
             format!("{external_issues}"),
             Style::default()
-                .fg(styles::TEXT_BRIGHT)
+                .fg(styles::text_bright())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" external", Style::default().fg(styles::TEXT_DIM)),
+        Span::styled(" external", Style::default().fg(styles::text_dim())),
     ];
     if unassigned_issues > 0 {
         issue_spans.push(Span::styled("  ", Style::default()));
@@ -1100,23 +1106,23 @@ fn render_stats_summary(
         Span::styled(
             format!("{open_mrs}"),
             Style::default()
-                .fg(styles::TEXT_BRIGHT)
+                .fg(styles::text_bright())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" open  ", Style::default().fg(styles::TEXT_DIM)),
+        Span::styled(" open  ", Style::default().fg(styles::text_dim())),
         Span::styled(
             format!("{draft_mrs}"),
             Style::default()
-                .fg(styles::TEXT_BRIGHT)
+                .fg(styles::text_bright())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" draft", Style::default().fg(styles::TEXT_DIM)),
+        Span::styled(" draft", Style::default().fg(styles::text_dim())),
     ];
     if my_review_mrs > 0 {
         mr_spans.push(Span::styled("  ", Style::default()));
         mr_spans.push(Span::styled(
             format!("{my_review_mrs} review"),
-            Style::default().fg(styles::YELLOW),
+            Style::default().fg(styles::yellow()),
         ));
     }
 
@@ -1168,18 +1174,18 @@ fn render_member_table(
             let row = Row::new(vec![
                 Cell::from(Span::styled(
                     member.clone(),
-                    Style::default().fg(styles::TEXT),
+                    Style::default().fg(styles::text()),
                 )),
                 Cell::from(Span::styled(
                     issue_count.to_string(),
                     Style::default()
-                        .fg(styles::TEXT_BRIGHT)
+                        .fg(styles::text_bright())
                         .add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
                     mr_count.to_string(),
                     Style::default()
-                        .fg(styles::TEXT_BRIGHT)
+                        .fg(styles::text_bright())
                         .add_modifier(Modifier::BOLD),
                 )),
             ]);

@@ -278,48 +278,48 @@ pub fn search_block<'a>(label: &'a str, filter: &'a UserFilter) -> Block<'a> {
             Span::styled(
                 format!(" {label} /"),
                 Style::default()
-                    .fg(styles::CYAN)
+                    .fg(styles::cyan())
                     .add_modifier(ratatui::style::Modifier::BOLD),
             ),
             Span::styled(
                 filter.fuzzy_query.as_str(),
                 Style::default()
-                    .fg(styles::TEXT_BRIGHT)
+                    .fg(styles::text_bright())
                     .add_modifier(ratatui::style::Modifier::BOLD),
             ),
-            Span::styled("\u{258e}", Style::default().fg(styles::CYAN)),
+            Span::styled("\u{258e}", Style::default().fg(styles::cyan())),
             Span::styled(
                 " Enter",
                 Style::default()
-                    .fg(styles::YELLOW)
+                    .fg(styles::yellow())
                     .add_modifier(ratatui::style::Modifier::BOLD),
             ),
-            Span::styled(":accept ", Style::default().fg(styles::TEXT_DIM)),
+            Span::styled(":accept ", Style::default().fg(styles::text_dim())),
             Span::styled(
                 "Esc",
                 Style::default()
-                    .fg(styles::YELLOW)
+                    .fg(styles::yellow())
                     .add_modifier(ratatui::style::Modifier::BOLD),
             ),
-            Span::styled(":cancel ", Style::default().fg(styles::TEXT_DIM)),
+            Span::styled(":cancel ", Style::default().fg(styles::text_dim())),
         ]);
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(styles::CYAN))
+            .border_style(Style::default().fg(styles::cyan()))
             .title(title_line)
     } else if filter.has_query() {
         let title_line = Line::from(vec![
             Span::styled(
                 format!(" {label} /"),
                 Style::default()
-                    .fg(styles::CYAN)
+                    .fg(styles::cyan())
                     .add_modifier(ratatui::style::Modifier::BOLD),
             ),
             Span::styled(
                 filter.fuzzy_query.as_str(),
                 Style::default()
-                    .fg(styles::TEXT_BRIGHT)
+                    .fg(styles::text_bright())
                     .add_modifier(ratatui::style::Modifier::BOLD),
             ),
             Span::styled(" ", Style::default()),
@@ -327,7 +327,7 @@ pub fn search_block<'a>(label: &'a str, filter: &'a UserFilter) -> Block<'a> {
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(styles::BORDER))
+            .border_style(Style::default().fg(styles::border()))
             .title(title_line)
     } else {
         styles::block(label)

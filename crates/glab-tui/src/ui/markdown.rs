@@ -1,9 +1,9 @@
 use comrak::nodes::{AstNode, ListType, NodeValue};
 use comrak::{Arena, Options, parse_document};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::ui::{styles, wrap};
+use crate::ui::{highlight, styles, wrap};
 
 /// The gutter a comment body is drawn behind, on every one of its rows.
 const COMMENT_GUTTER: &str = "  \u{2502} ";
@@ -58,9 +58,9 @@ struct InlineCtx {
 
 impl InlineCtx {
     fn style(&self) -> Style {
-        let mut s = Style::default().fg(styles::TEXT);
+        let mut s = Style::default().fg(styles::text());
         if self.code {
-            s = s.fg(styles::ORANGE).bg(Color::Rgb(35, 38, 52));
+            s = s.fg(styles::orange()).bg(styles::code_bg());
         }
         if self.bold {
             s = s.add_modifier(Modifier::BOLD);
@@ -104,7 +104,7 @@ fn render_node<'a>(
                     Span::styled(
                         format!("{prefix} "),
                         Style::default()
-                            .fg(styles::MAGENTA)
+                            .fg(styles::magenta())
                             .add_modifier(Modifier::BOLD),
                     ),
                 ],
@@ -116,32 +116,50 @@ fn render_node<'a>(
         // Code keeps its source rows: reflowing it would move the line breaks
         // its meaning rests on, so a row wider than the pane is left to clip.
         NodeValue::CodeBlock(cb) => {
-            let code_bg = Color::Rgb(35, 38, 52);
+            let code_bg = styles::code_bg();
             if cb.info.is_empty() {
                 lines.push(Line::from(vec![
                     Span::raw(indent.to_string()),
-                    Span::styled("╭───", Style::default().fg(styles::BORDER)),
+                    Span::styled("╭───", Style::default().fg(styles::border())),
                 ]));
             } else {
                 lines.push(Line::from(vec![
                     Span::raw(indent.to_string()),
                     Span::styled(
                         format!("╭─ {} ", cb.info),
-                        Style::default().fg(styles::BORDER),
+                        Style::default().fg(styles::border()),
                     ),
                 ]));
             }
-            for code_line in cb.literal.trim_end().lines() {
-                let expanded = code_line.replace('\t', "    ");
-                lines.push(Line::from(vec![
-                    Span::raw(indent.to_string()),
-                    Span::styled("│ ", Style::default().fg(styles::BORDER)),
-                    Span::styled(expanded, Style::default().fg(styles::ORANGE).bg(code_bg)),
-                ]));
+            let body = cb.literal.trim_end();
+            let rail = Span::styled("│ ", Style::default().fg(styles::border()));
+            // A fence naming a language syntect knows is colored token by
+            // token; anything else stays one flat run, as it always was.
+            match highlight::code_lines(&cb.info, body, styles::theme_name(), code_bg) {
+                Some(rows) => {
+                    for row in rows {
+                        let mut spans = vec![Span::raw(indent.to_string()), rail.clone()];
+                        spans.extend(row);
+                        lines.push(Line::from(spans));
+                    }
+                }
+                None => {
+                    for code_line in body.lines() {
+                        let expanded = code_line.replace('\t', "    ");
+                        lines.push(Line::from(vec![
+                            Span::raw(indent.to_string()),
+                            rail.clone(),
+                            Span::styled(
+                                expanded,
+                                Style::default().fg(styles::orange()).bg(code_bg),
+                            ),
+                        ]));
+                    }
+                }
             }
             lines.push(Line::from(vec![
                 Span::raw(indent.to_string()),
-                Span::styled("╰───", Style::default().fg(styles::BORDER)),
+                Span::styled("╰───", Style::default().fg(styles::border())),
             ]));
             lines.push(Line::from(""));
         }
@@ -174,14 +192,14 @@ fn render_node<'a>(
                     Span::styled(
                         bar,
                         Style::default()
-                            .fg(styles::BORDER_ACTIVE)
+                            .fg(styles::border_active())
                             .add_modifier(Modifier::BOLD),
                     ),
                 ];
                 for span in line.spans {
                     spans.push(Span::styled(
                         span.content.to_string(),
-                        span.style.fg(styles::TEXT_DIM),
+                        span.style.fg(styles::text_dim()),
                     ));
                 }
                 lines.push(Line::from(spans));
@@ -192,7 +210,7 @@ fn render_node<'a>(
                 Span::raw(indent.to_string()),
                 Span::styled(
                     "────────────────────────────────",
-                    Style::default().fg(styles::BORDER),
+                    Style::default().fg(styles::border()),
                 ),
             ]));
             lines.push(Line::from(""));
@@ -207,7 +225,7 @@ fn render_node<'a>(
                     &[Span::raw(indent.to_string())],
                     &[Span::styled(
                         line.to_string(),
-                        Style::default().fg(styles::TEXT_DIM),
+                        Style::default().fg(styles::text_dim()),
                     )],
                     width,
                 ));
@@ -246,9 +264,9 @@ fn render_list_item<'a>(
                 format!("{indent}{bullet}○ ")
             };
             let s = if checked {
-                Style::default().fg(styles::GREEN)
+                Style::default().fg(styles::green())
             } else {
-                Style::default().fg(styles::TEXT_DIM)
+                Style::default().fg(styles::text_dim())
             };
             // Skip the TaskItem node itself
             let _ = children.next();
@@ -257,15 +275,15 @@ fn render_list_item<'a>(
             (
                 format!("{indent}{bullet}"),
                 match list_type {
-                    ListType::Bullet => Style::default().fg(styles::CYAN),
-                    ListType::Ordered => Style::default().fg(styles::BLUE),
+                    ListType::Bullet => Style::default().fg(styles::cyan()),
+                    ListType::Ordered => Style::default().fg(styles::blue()),
                 },
             )
         }
     } else {
         (
             format!("{indent}{bullet}"),
-            Style::default().fg(styles::CYAN),
+            Style::default().fg(styles::cyan()),
         )
     };
 
@@ -331,19 +349,19 @@ fn collect_inline<'a>(node: &'a AstNode<'a>, spans: &mut Vec<Span<'static>>, ctx
                 spans.push(Span::styled(
                     link.url.clone(),
                     Style::default()
-                        .fg(styles::BLUE)
+                        .fg(styles::blue())
                         .add_modifier(Modifier::UNDERLINED),
                 ));
             } else {
                 spans.push(Span::styled(
                     text,
                     Style::default()
-                        .fg(styles::BLUE)
+                        .fg(styles::blue())
                         .add_modifier(Modifier::UNDERLINED),
                 ));
                 spans.push(Span::styled(
                     format!(" ({})", link.url),
-                    Style::default().fg(styles::TEXT_DIM),
+                    Style::default().fg(styles::text_dim()),
                 ));
             }
         }
@@ -361,7 +379,7 @@ fn collect_inline<'a>(node: &'a AstNode<'a>, spans: &mut Vec<Span<'static>>, ctx
             spans.push(Span::styled(
                 format!("[{label}]"),
                 Style::default()
-                    .fg(styles::TEXT_DIM)
+                    .fg(styles::text_dim())
                     .add_modifier(Modifier::ITALIC),
             ));
         }
@@ -371,7 +389,7 @@ fn collect_inline<'a>(node: &'a AstNode<'a>, spans: &mut Vec<Span<'static>>, ctx
         NodeValue::HtmlInline(html) => {
             spans.push(Span::styled(
                 html.clone(),
-                Style::default().fg(styles::TEXT_DIM),
+                Style::default().fg(styles::text_dim()),
             ));
         }
         _ => {
@@ -425,14 +443,14 @@ fn render_table<'a>(
             let pad = " ".repeat(w.saturating_sub(wrap::width(cell)));
             let style = if is_header.get(row_idx) == Some(&true) {
                 Style::default()
-                    .fg(styles::BLUE)
+                    .fg(styles::blue())
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(styles::TEXT)
+                Style::default().fg(styles::text())
             };
             spans.push(Span::styled(format!("{cell}{pad}"), style));
             if i + 1 < row.len() {
-                spans.push(Span::styled(" │ ", Style::default().fg(styles::BORDER)));
+                spans.push(Span::styled(" │ ", Style::default().fg(styles::border())));
             }
         }
         lines.push(Line::from(spans));
@@ -445,7 +463,7 @@ fn render_table<'a>(
                 .join("─┼─");
             lines.push(Line::from(vec![
                 Span::raw(format!("{indent}  ")),
-                Span::styled(sep, Style::default().fg(styles::BORDER)),
+                Span::styled(sep, Style::default().fg(styles::border())),
             ]));
         }
     }

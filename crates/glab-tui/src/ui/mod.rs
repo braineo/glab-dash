@@ -1,4 +1,5 @@
 pub mod components;
+pub mod highlight;
 pub mod keys;
 pub mod markdown;
 pub mod styles;

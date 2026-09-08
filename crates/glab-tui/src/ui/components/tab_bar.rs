@@ -61,25 +61,27 @@ pub fn render(frame: &mut Frame, area: Rect, current_view: View) {
             spans.push(Span::styled(
                 format!(" {} ", tab.icon),
                 Style::default()
-                    .fg(styles::CYAN)
-                    .bg(styles::HIGHLIGHT)
+                    .fg(styles::cyan())
+                    .bg(styles::highlight())
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 format!("{} ", tab.label),
                 Style::default()
-                    .fg(styles::TEXT_BRIGHT)
-                    .bg(styles::HIGHLIGHT)
+                    .fg(styles::text_bright())
+                    .bg(styles::highlight())
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
             spans.push(Span::styled(
                 format!(" {} ", tab.icon),
-                Style::default().fg(styles::TEXT_DIM).bg(styles::SURFACE),
+                Style::default()
+                    .fg(styles::text_dim())
+                    .bg(styles::surface()),
             ));
             spans.push(Span::styled(
                 format!("{}:{} ", tab.key, tab.label),
-                Style::default().fg(styles::TEXT).bg(styles::SURFACE),
+                Style::default().fg(styles::text()).bg(styles::surface()),
             ));
         }
     }
@@ -89,7 +91,7 @@ pub fn render(frame: &mut Frame, area: Rect, current_view: View) {
     let remaining = usize::from(area.width).saturating_sub(used);
     spans.push(Span::styled(
         " ".repeat(remaining),
-        Style::default().bg(styles::SURFACE),
+        Style::default().bg(styles::surface()),
     ));
 
     let bar = Paragraph::new(Line::from(spans));
