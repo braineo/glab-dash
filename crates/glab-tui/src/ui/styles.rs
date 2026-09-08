@@ -436,52 +436,35 @@ pub fn overlay_block(title: &str) -> Block<'_> {
 /// Powerline right-arrow separator (requires Nerd Font / Powerline-patched font).
 const PL: &str = "\u{E0B0}";
 
-/// Curated palette of (fg, bg) chip colors tuned for the Tokyo Night theme.
-/// Hand-picked for readability (WCAG AA), visual harmony, and distinctness.
-type ChipColor = ((u8, u8, u8), (u8, u8, u8));
-const CHIP_PALETTE: &[ChipColor] = &[
-    ((148, 200, 240), (25, 45, 70)), // cerulean
-    ((170, 220, 195), (22, 52, 42)), // jade
-    ((195, 175, 230), (42, 32, 65)), // wisteria
-    ((235, 185, 165), (60, 35, 28)), // apricot
-    ((180, 210, 155), (34, 50, 25)), // fern
-    ((235, 200, 150), (58, 46, 24)), // marigold
-    ((160, 195, 220), (26, 42, 58)), // glacier
-    ((215, 175, 200), (52, 28, 42)), // orchid
-    ((155, 215, 210), (22, 50, 48)), // seafoam
-    ((195, 185, 225), (40, 34, 60)), // periwinkle
-    ((220, 200, 165), (50, 44, 26)), // wheat
-    ((175, 215, 190), (28, 48, 38)), // eucalyptus
-    ((200, 195, 150), (45, 42, 25)), // lichen
-    ((180, 200, 230), (30, 42, 62)), // cornflower
-    ((210, 180, 185), (50, 30, 34)), // dusty rose
-    ((165, 210, 180), (25, 48, 34)), // sage
-];
-
 fn djb2(text: &str) -> u32 {
     text.bytes().fold(5381u32, |h, b| {
         h.wrapping_mul(33).wrapping_add(u32::from(b))
     })
 }
 
-/// Select a (fg, bg) pair from the curated palette using a deterministic hash.
+/// A chip's (fg, bg) pair for hue `h` at saturation `s`.
 ///
-/// The pairs are tuned for a dark background; on a light theme the two swap
-/// roles, which keeps each chip's hue and its contrast ratio while putting the
-/// pale half where the eye now expects it.
+/// The background is the theme's own backdrop tinted toward the hue and the
+/// text is the theme's own foreground tinted the same way, lifted to body-text
+/// contrast over it — so a chip belongs to whatever theme is in effect instead
+/// of carrying one theme's hand-picked colors onto every other, and a gray
+/// label (no saturation) stays a neutral chip.
+fn chip(h: f64, s: f64) -> (Color, Color) {
+    let t = theme();
+    let hue = color::hsl_to_rgb(h, s, 0.5);
+    let bg = mix(color::channels(t.base), hue, 0.28);
+    let fg = readable(mix(color::channels(t.text), hue, 0.45), bg, TEXT_CONTRAST);
+    (color(fg), color(bg))
+}
+
+/// Pick a chip hue for `text` deterministically: sixteen evenly spaced hues,
+/// nudged off the primaries so no label lands on a pure red or green.
 fn palette_color(text: &str) -> (Color, Color) {
-    let idx = djb2(text) as usize % CHIP_PALETTE.len();
-    let ((fr, fg, fb), (br, bg, bb)) = CHIP_PALETTE[idx];
-    let (light, dark) = (Color::Rgb(fr, fg, fb), Color::Rgb(br, bg, bb));
-    if theme().dark {
-        (light, dark)
-    } else {
-        (dark, light)
-    }
+    chip(f64::from(djb2(text) % 16) * 22.5 + 10.0, 0.6)
 }
 
 /// Parse "#FF0000" → (255, 0, 0).
-fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
+fn parse_hex_color(hex: &str) -> Option<Rgb> {
     let hex = hex.trim_start_matches('#');
     if hex.len() != 6 {
         return None;
@@ -492,21 +475,11 @@ fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
-/// Derive a (fg, bg) chip pair from a server-provided hex label color.
-#[allow(clippy::many_single_char_names)]
+/// Derive a chip pair from a server-provided hex label color, keeping the hue
+/// GitLab chose and letting the theme decide the lightness.
 fn color_pair_from_hex(hex: &str) -> Option<(Color, Color)> {
-    let (r, g, b) = parse_hex_color(hex)?;
-    let (h, s, _) = color::rgb_to_hsl((r, g, b));
-    // The chip background stays near the theme's own backdrop and the text
-    // rides at the far end of the same hue, whichever way round that is.
-    let (bg_l, fg_l) = if theme().dark {
-        (0.20, 0.82)
-    } else {
-        (0.88, 0.28)
-    };
-    let (br, bg, bb) = color::hsl_to_rgb(h, s.min(0.40), bg_l);
-    let (fr, fg, fb) = color::hsl_to_rgb(h, s.min(0.50), fg_l);
-    Some((Color::Rgb(fr, fg, fb), Color::Rgb(br, bg, bb)))
+    let (h, s, _) = color::rgb_to_hsl(parse_hex_color(hex)?);
+    Some(chip(h, s))
 }
 
 // ── Label Rendering ──
@@ -865,8 +838,8 @@ mod tests {
         assert!(set_theme("Catppuccin Latte"));
         assert!(!theme().dark);
         assert_ne!(text(), dark_text);
-        // The light theme puts the pale half of the curated pair behind the
-        // text rather than in front of it.
+        // The chips are tinted from the theme's own backdrop, so a new theme
+        // repaints them.
         assert_ne!(label_spans("backend", None)[0].style.bg, dark_chip);
 
         assert!(!set_theme("no such theme"));
@@ -874,6 +847,27 @@ mod tests {
 
         assert!(set_theme(DEFAULT_THEME));
         assert_eq!(text(), dark_text);
+    }
+
+    #[test]
+    fn label_chips_stay_legible_on_every_theme() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for name in theme_names() {
+            assert!(set_theme(&name));
+            // A hashed label, a saturated server color and a gray one.
+            for (label, color) in [
+                ("backend", None),
+                ("priority::high", Some("#D9534F")),
+                ("stale", Some("#666666")),
+            ] {
+                let span = &label_spans(label, color)[0];
+                let ratio = contrast(rgb(span.style.fg.unwrap()), rgb(span.style.bg.unwrap()));
+                assert!(ratio >= 4.4, "{name}: chip {label} is {ratio:.2}:1");
+            }
+        }
+        assert!(set_theme(DEFAULT_THEME));
     }
 
     #[test]
