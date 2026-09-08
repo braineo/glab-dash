@@ -8,12 +8,14 @@ use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table};
 use crossterm::event::KeyEvent;
 
 use crate::cmd::{Cmd, Effects, EventResult};
-use crate::config::{Config, KanbanColumnConfig};
 use crate::keybindings::KeyAction;
 use crate::ui::styles;
 use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
+use glab_config::Config;
 use glab_core::domain::{Issue, Iteration, MergeRequest, WorkItemStatus};
+use glab_core::kanban::KanbanColumn;
 use glab_core::sort;
+use glab_core::sort::label_order::LabelOrders;
 
 use std::collections::HashMap;
 
@@ -147,10 +149,9 @@ impl IterationHealth {
 // ── Iteration Board ──
 
 pub struct StatusColumn {
+    /// Which statuses this column gathers, and the heading it shows.
+    pub column: KanbanColumn,
     pub list: ItemList<Issue>,
-    pub status_name: String,
-    /// Status names that map to this column (lowercase for matching).
-    pub status_matches: Vec<String>,
 }
 
 /// Max visible columns in the sliding window.
@@ -253,52 +254,24 @@ impl IterationBoardState {
 
     // ── Column management ───────────────────────────────────────────
 
-    /// Build columns from config `kanban_columns` if present, otherwise one column per status.
-    pub fn build_columns(
-        &mut self,
-        statuses: &[WorkItemStatus],
-        kanban_config: &[KanbanColumnConfig],
-    ) {
-        let cols = if kanban_config.is_empty() {
-            Self::build_columns_auto(statuses)
+    /// Build columns from the configured ones if any are declared, otherwise
+    /// one column per status the project defines.
+    pub fn build_columns(&mut self, statuses: &[WorkItemStatus], configured: &[KanbanColumn]) {
+        let columns = if configured.is_empty() {
+            KanbanColumn::from_statuses(statuses)
         } else {
-            Self::build_columns_from_config(kanban_config)
+            configured.to_vec()
         };
-        self.columns = cols;
+        self.columns = columns
+            .into_iter()
+            .map(|column| StatusColumn {
+                column,
+                list: ItemList::default(),
+            })
+            .collect();
         if self.focused_column >= self.columns.len() {
             self.focused_column = self.columns.len().saturating_sub(1);
         }
-    }
-
-    fn build_columns_auto(statuses: &[WorkItemStatus]) -> Vec<StatusColumn> {
-        let mut cols = vec![StatusColumn {
-            list: ItemList::default(),
-            status_name: "No Status".to_string(),
-            status_matches: vec![String::new()],
-        }];
-
-        let mut sorted_statuses: Vec<&WorkItemStatus> = statuses.iter().collect();
-        sorted_statuses.sort_by_key(|s| s.position.unwrap_or(i32::MAX));
-
-        for status in sorted_statuses {
-            cols.push(StatusColumn {
-                list: ItemList::default(),
-                status_name: status.name.clone(),
-                status_matches: vec![status.name.to_lowercase()],
-            });
-        }
-        cols
-    }
-
-    fn build_columns_from_config(kanban_config: &[KanbanColumnConfig]) -> Vec<StatusColumn> {
-        kanban_config
-            .iter()
-            .map(|kc| StatusColumn {
-                list: ItemList::default(),
-                status_name: kc.name.clone(),
-                status_matches: kc.statuses.iter().map(|s| s.to_lowercase()).collect(),
-            })
-            .collect()
     }
 
     /// Compute the window start so `focused_column` is visible in the window.
@@ -319,7 +292,7 @@ impl IterationBoardState {
         &mut self,
         issues: &[Issue],
         current_iteration: Option<&Iteration>,
-        label_orders: &HashMap<String, Vec<String>>,
+        label_orders: &LabelOrders,
         me: &str,
         team_members: &[String],
     ) {
@@ -336,16 +309,15 @@ impl IterationBoardState {
                 continue;
             }
 
-            // Match to status column by checking status_matches
-            if self.columns.is_empty() {
-                continue;
-            }
-            let status_lower = item.status_name().unwrap_or("").to_lowercase();
-            let col_idx = self
+            // An item whose status no column claims is left off the board
+            // rather than filed under whichever column happens to be first.
+            let Some(col_idx) = self
                 .columns
                 .iter()
-                .position(|c| c.status_matches.iter().any(|m| m == &status_lower))
-                .unwrap_or(0); // fallback to first column
+                .position(|c| c.column.matches(item.status_name()))
+            else {
+                continue;
+            };
 
             self.columns[col_idx].list.indices.push(i);
         }
@@ -621,7 +593,7 @@ fn render_board_column(
 ) {
     let col = &board.columns[col_idx];
     let count = col.list.len();
-    let header_text = format!("{} ({})", col.status_name, count);
+    let header_text = format!("{} ({})", col.column.name, count);
 
     let border_style = if is_focused {
         Style::default()
@@ -716,7 +688,7 @@ fn render_column_indicator(
             ));
         }
 
-        let label = format!("{} {}", col.status_name, col.list.len());
+        let label = format!("{} {}", col.column.name, col.list.len());
         let in_window = i >= win_start && i < win_end;
         let is_focused = i == board.focused_column;
 
@@ -1463,13 +1435,7 @@ mod tests {
         ];
 
         // Must not panic even though columns is empty
-        board.partition_issues(
-            &issues,
-            Some(&iter),
-            &std::collections::HashMap::new(),
-            "",
-            &[],
-        );
+        board.partition_issues(&issues, Some(&iter), &LabelOrders::default(), "", &[]);
         assert!(board.columns.is_empty());
     }
 
@@ -1478,14 +1444,18 @@ mod tests {
         let mut board = IterationBoardState {
             columns: vec![
                 StatusColumn {
+                    column: KanbanColumn {
+                        name: "No Status".to_string(),
+                        statuses: vec![String::new()],
+                    },
                     list: ItemList::default(),
-                    status_name: "No Status".to_string(),
-                    status_matches: vec![String::new()],
                 },
                 StatusColumn {
+                    column: KanbanColumn {
+                        name: "In Progress".to_string(),
+                        statuses: vec!["in progress".to_string()],
+                    },
                     list: ItemList::default(),
-                    status_name: "In Progress".to_string(),
-                    status_matches: vec!["in progress".to_string()],
                 },
             ],
             ..Default::default()
@@ -1507,13 +1477,7 @@ mod tests {
         let no_status = make_issue(2, Some("gid://gitlab/Iteration/1"));
 
         let issues = vec![in_progress, no_status];
-        board.partition_issues(
-            &issues,
-            Some(&iter),
-            &std::collections::HashMap::new(),
-            "",
-            &[],
-        );
+        board.partition_issues(&issues, Some(&iter), &LabelOrders::default(), "", &[]);
 
         assert_eq!(board.columns[0].list.indices.len(), 1); // "No Status"
         assert_eq!(board.columns[1].list.indices.len(), 1); // "In Progress"

@@ -7,14 +7,13 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use crossterm::event::KeyEvent;
 
 use crate::cmd::{Cmd, Effects, EventResult};
-use crate::config::Config;
 use crate::keybindings::KeyAction;
 use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
 use crate::ui::{RenderCtx, components, styles};
+use glab_config::Config;
 use glab_core::domain::{Issue, Iteration};
 use glab_core::sort;
-
-use std::collections::HashMap;
+use glab_core::sort::label_order::LabelOrders;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlanningLayout {
@@ -190,11 +189,7 @@ impl PlanningViewState {
 
     /// Partition issues into columns based on iteration (prefilter),
     /// then apply each column's fuzzy search and sort.
-    pub fn partition_issues(
-        &mut self,
-        issues: &[Issue],
-        label_orders: &HashMap<String, Vec<String>>,
-    ) {
+    pub fn partition_issues(&mut self, issues: &[Issue], label_orders: &LabelOrders) {
         for col in &mut self.columns {
             col.list.indices.clear();
         }

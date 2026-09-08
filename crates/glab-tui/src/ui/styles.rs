@@ -249,7 +249,7 @@ fn segment_colors(segments: &[&str], server_color: Option<&str>) -> Vec<(Color, 
 /// Scoped labels (`a::b::c`) become colored segments joined by powerline arrows.
 /// Non-scoped labels use server color when available, else curated palette.
 pub fn label_spans(label: &str, server_color: Option<&str>) -> Vec<Span<'static>> {
-    let segments: Vec<&str> = label.split("::").collect();
+    let segments: Vec<&str> = glab_core::label::segments(label).collect();
     let colors = segment_colors(&segments, server_color);
 
     if segments.len() == 1 {
@@ -285,7 +285,7 @@ pub fn label_spans(label: &str, server_color: Option<&str>) -> Vec<Span<'static>
 
 /// Visual width of a label chip (segments + powerline separators).
 fn label_chip_width(label: &str) -> usize {
-    let n: Vec<&str> = label.split("::").collect();
+    let n: Vec<&str> = glab_core::label::segments(label).collect();
     let text: usize = n.iter().map(|s| s.len()).sum();
     // Each segment boundary + trailing arrow
     text + n.len()

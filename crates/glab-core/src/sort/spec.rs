@@ -1,21 +1,20 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
 
 use crate::domain::{Issue, MergeRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, IntoStaticStr, VariantArray};
 
-use super::label_order::compare_by_label_scope;
+use super::label_order::LabelOrders;
 
 /// A sortable attribute of an issue or merge request.
 ///
-/// As with `Field`, the snake_case strum strings are the config-file names and
-/// the serde representation stays at the default PascalCase, because persisted
-/// view state is written in that shape.
+/// As with `Field`, the snake_case names are what config files and the
+/// persisted view state both spell.
 #[derive(
     Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, EnumString, VariantArray,
 )]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum SortField {
     Iid,
     Title,
@@ -28,6 +27,7 @@ pub enum SortField {
     Milestone,
     /// Named `comments` in config; the GraphQL spelling is accepted too.
     #[strum(to_string = "comments", serialize = "user_notes_count")]
+    #[serde(rename = "comments", alias = "user_notes_count")]
     UserNotesCount,
     Project,
     Weight,
@@ -86,10 +86,14 @@ impl SortField {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, EnumString)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum SortDirection {
     Asc,
+    /// The default, so a config file may name a sort field and leave the
+    /// direction out.
+    #[default]
     Desc,
 }
 
@@ -109,8 +113,10 @@ impl SortDirection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SortSpec {
     pub field: SortField,
+    #[serde(default)]
     pub direction: SortDirection,
     /// For Label field: which scope prefix to sort by (e.g., "workflow", "p")
+    #[serde(default)]
     pub label_scope: Option<String>,
 }
 
@@ -130,7 +136,7 @@ pub fn sort_issues(
     indices: &mut [usize],
     issues: &[Issue],
     specs: &[SortSpec],
-    label_orders: &HashMap<String, Vec<String>>,
+    label_orders: &LabelOrders,
 ) {
     if specs.is_empty() {
         return;
@@ -154,7 +160,7 @@ pub fn sort_mrs(
     indices: &mut [usize],
     mrs: &[MergeRequest],
     specs: &[SortSpec],
-    label_orders: &HashMap<String, Vec<String>>,
+    label_orders: &LabelOrders,
 ) {
     if specs.is_empty() {
         return;
@@ -174,12 +180,7 @@ pub fn sort_mrs(
     });
 }
 
-fn compare_issue(
-    a: &Issue,
-    b: &Issue,
-    spec: &SortSpec,
-    label_orders: &HashMap<String, Vec<String>>,
-) -> Ordering {
+fn compare_issue(a: &Issue, b: &Issue, spec: &SortSpec, label_orders: &LabelOrders) -> Ordering {
     match spec.field {
         SortField::Iid => a.iid.cmp(&b.iid),
         SortField::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
@@ -195,9 +196,8 @@ fn compare_issue(
             b.assignees.first().map(|u| u.username.as_str()),
         ),
         SortField::Label => {
-            let scope = spec.label_scope.as_deref().unwrap_or("");
-            let priority = label_orders.get(scope).map_or([].as_slice(), Vec::as_slice);
-            compare_by_label_scope(&a.labels, &b.labels, scope, priority)
+            let scope = spec.label_scope.as_deref().unwrap_or_default();
+            label_orders.compare(&a.labels, &b.labels, scope)
         }
         SortField::Milestone => cmp_optional_str(
             a.milestone.as_ref().map(|m| m.title.as_str()),
@@ -223,7 +223,7 @@ fn compare_mr(
     a: &MergeRequest,
     b: &MergeRequest,
     spec: &SortSpec,
-    label_orders: &HashMap<String, Vec<String>>,
+    label_orders: &LabelOrders,
 ) -> Ordering {
     match spec.field {
         SortField::Iid => a.iid.cmp(&b.iid),
@@ -240,9 +240,8 @@ fn compare_mr(
             b.assignees.first().map(|u| u.username.as_str()),
         ),
         SortField::Label => {
-            let scope = spec.label_scope.as_deref().unwrap_or("");
-            let priority = label_orders.get(scope).map_or([].as_slice(), Vec::as_slice);
-            compare_by_label_scope(&a.labels, &b.labels, scope, priority)
+            let scope = spec.label_scope.as_deref().unwrap_or_default();
+            label_orders.compare(&a.labels, &b.labels, scope)
         }
         SortField::Milestone => cmp_optional_str(
             a.milestone.as_ref().map(|m| m.title.as_str()),

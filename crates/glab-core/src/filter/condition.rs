@@ -5,13 +5,13 @@ use strum::{EnumString, IntoStaticStr, VariantArray};
 
 /// A filterable attribute of an issue or merge request.
 ///
-/// The snake_case strum strings are the names used in config files and in a
-/// condition's rendered form. The serde representation is deliberately left at
-/// the default PascalCase: it is the on-disk shape of persisted view state.
+/// The snake_case names are what config files, a rendered condition, and the
+/// persisted view state all spell — serde and strum are told the same thing.
 #[derive(
     Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, EnumString, VariantArray,
 )]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum Field {
     Assignee,
     Author,
@@ -44,21 +44,21 @@ impl Field {
 
 /// A comparison operator.
 ///
-/// `to_string` carries the symbol, which is what `symbol()` returns and what a
-/// rendered condition shows; the extra `serialize` spelling is the long form
-/// accepted in config files. strum prefers `to_string` over the LONGEST
-/// `serialize`, so the symbols must be declared this way round.
-#[derive(
-    Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, EnumString, VariantArray,
-)]
+/// strum carries the symbol a rendered condition shows; serde carries what a
+/// config file may write, either the symbol or the long form.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, VariantArray)]
 pub enum Op {
-    #[strum(to_string = "=", serialize = "eq")]
+    #[strum(to_string = "=")]
+    #[serde(rename = "=", alias = "eq")]
     Eq,
-    #[strum(to_string = "!=", serialize = "neq")]
+    #[strum(to_string = "!=")]
+    #[serde(rename = "!=", alias = "neq")]
     Neq,
-    #[strum(to_string = "~", serialize = "contains")]
+    #[strum(to_string = "~")]
+    #[serde(rename = "~", alias = "contains")]
     Contains,
-    #[strum(to_string = "!~", serialize = "not_contains")]
+    #[strum(to_string = "!~")]
+    #[serde(rename = "!~", alias = "not_contains")]
     NotContains,
 }
 
@@ -69,10 +69,6 @@ impl Op {
 
     pub fn symbol(&self) -> &'static str {
         self.into()
-    }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        s.parse().ok()
     }
 }
 

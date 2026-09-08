@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crossterm::event::{KeyCode, KeyEvent};
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
+use glab_core::label;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -187,9 +188,8 @@ impl LabelEditorState {
                 self.pinned.push(i);
             }
         }
-        self.pinned.sort_by(|&a, &b| {
-            label_scope(&self.all_labels[a]).cmp(label_scope(&self.all_labels[b]))
-        });
+        self.pinned
+            .sort_by(|&a, &b| scope_key(&self.all_labels[a]).cmp(scope_key(&self.all_labels[b])));
         let pinned_names: Vec<String> = self
             .pinned
             .iter()
@@ -199,25 +199,9 @@ impl LabelEditorState {
         self.max_code_len = self.chord_codes.iter().map(String::len).max().unwrap_or(1);
     }
 
-    /// Toggle a label, enforcing scoped-label mutual exclusivity.
+    /// Toggle a label under GitLab's one-label-per-scope rule.
     fn toggle_label(&mut self, idx: usize) {
-        if self.selected[idx] {
-            self.selected[idx] = false;
-            return;
-        }
-        // Selecting: deselect any other label with the same scope
-        let label = &self.all_labels[idx];
-        if let Some(scope) = label.split_once("::").map(|(s, _)| s) {
-            for (i, item) in self.all_labels.iter().enumerate() {
-                if i != idx
-                    && self.selected[i]
-                    && item.split_once("::").map(|(s, _)| s) == Some(scope)
-                {
-                    self.selected[i] = false;
-                }
-            }
-        }
-        self.selected[idx] = true;
+        label::toggle(&self.all_labels, &mut self.selected, idx);
     }
 
     fn confirmed_labels(&self) -> Vec<String> {
@@ -299,18 +283,15 @@ fn select_pinned(
 
     // Sort so labels with the same scope (e.g. priority::high, priority::low)
     // are grouped together. Within a scope group, preserve original order.
-    pinned.sort_by(|&a, &b| {
-        let scope_a = label_scope(&all_labels[a]);
-        let scope_b = label_scope(&all_labels[b]);
-        scope_a.cmp(scope_b)
-    });
+    pinned.sort_by(|&a, &b| scope_key(&all_labels[a]).cmp(scope_key(&all_labels[b])));
 
     pinned
 }
 
-/// Extract the scope prefix of a scoped label, or the full name for unscoped labels.
-fn label_scope(label: &str) -> &str {
-    label.split_once("::").map_or(label, |(scope, _)| scope)
+/// The key labels are grouped by when pinned: a scoped label's scope, and an
+/// unscoped label's own name.
+fn scope_key(label: &str) -> &str {
+    label::scope(label).unwrap_or(label)
 }
 
 // ── Rendering ──
@@ -562,7 +543,7 @@ fn render_search_mode(
 
 /// Visual width of a label chip (segments + powerline arrows).
 fn label_display_width(label: &str) -> usize {
-    let segments: Vec<&str> = label.split("::").collect();
+    let segments: Vec<&str> = label::segments(label).collect();
     let text_w: usize = segments.iter().map(|s| s.len()).sum();
     text_w + segments.len() // each segment gets a trailing arrow
 }

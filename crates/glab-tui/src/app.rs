@@ -15,10 +15,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::cmd::{Cmd, Dirty};
-use crate::config::Config;
 use crate::ui::views::Views;
 use crate::ui::views::{dashboard, filter_editor};
 use glab_api::GitLabClient;
+use glab_config::Config;
 use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
 use glab_core::filter::FilterCondition;
 use glab_core::sort::SortSpec;
@@ -151,7 +151,6 @@ pub struct AppData {
     pub iterations: Vec<Iteration>,
     pub work_item_statuses: std::collections::HashMap<String, Vec<WorkItemStatus>>,
     pub label_usage: std::collections::HashMap<String, u32>,
-    pub label_sort_orders: std::collections::HashMap<String, Vec<String>>,
     pub board_issues: Vec<Issue>,
     pub shadow_work_cache: Vec<Issue>,
     pub unplanned_work_cache: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
@@ -197,11 +196,6 @@ impl App {
         async_tx: mpsc::UnboundedSender<AsyncMsg>,
         db: Db,
     ) -> Self {
-        let label_sort_orders = config
-            .label_sort_orders
-            .iter()
-            .map(|o| (o.scope.clone(), o.values.clone()))
-            .collect();
         Self {
             ctx: AppCtx {
                 config,
@@ -217,7 +211,6 @@ impl App {
                 iterations: Vec::new(),
                 work_item_statuses: std::collections::HashMap::new(),
                 label_usage: std::collections::HashMap::new(),
-                label_sort_orders,
                 board_issues: Vec::new(),
                 shadow_work_cache: Vec::new(),
                 unplanned_work_cache: std::collections::HashMap::new(),
@@ -463,7 +456,7 @@ impl App {
             &self.data.issues,
             &me,
             &members,
-            &self.data.label_sort_orders,
+            &self.ctx.config.label_sort_orders,
         );
     }
 
@@ -471,7 +464,7 @@ impl App {
         self.ui
             .views
             .planning
-            .partition_issues(&self.data.issues, &self.data.label_sort_orders);
+            .partition_issues(&self.data.issues, &self.ctx.config.label_sort_orders);
     }
 
     pub fn refilter_iteration_board(&mut self) {
@@ -481,7 +474,7 @@ impl App {
         self.ui.views.board.partition_issues(
             &self.data.board_issues,
             current_iter,
-            &self.data.label_sort_orders,
+            &self.ctx.config.label_sort_orders,
             &me,
             &members,
         );
@@ -624,7 +617,7 @@ impl App {
             &self.data.mrs,
             &me,
             &members,
-            &self.data.label_sort_orders,
+            &self.ctx.config.label_sort_orders,
         );
     }
 }

@@ -301,19 +301,6 @@ fn test_field_from_str() {
 }
 
 #[test]
-fn test_op_from_str() {
-    assert_eq!(Op::from_str("eq"), Some(Op::Eq));
-    assert_eq!(Op::from_str("="), Some(Op::Eq));
-    assert_eq!(Op::from_str("neq"), Some(Op::Neq));
-    assert_eq!(Op::from_str("!="), Some(Op::Neq));
-    assert_eq!(Op::from_str("contains"), Some(Op::Contains));
-    assert_eq!(Op::from_str("~"), Some(Op::Contains));
-    assert_eq!(Op::from_str("not_contains"), Some(Op::NotContains));
-    assert_eq!(Op::from_str("!~"), Some(Op::NotContains));
-    assert_eq!(Op::from_str("garbage"), None);
-}
-
-#[test]
 fn test_condition_display() {
     let cond = FilterCondition {
         field: Field::Assignee,

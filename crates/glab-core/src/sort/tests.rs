@@ -1,11 +1,19 @@
-use std::collections::HashMap;
-
 use chrono::{Duration, Utc};
 
 use crate::domain::*;
 
-use super::label_order::compare_by_label_scope;
+use super::label_order::{LabelOrder, LabelOrders};
 use super::spec::*;
+
+/// The declared order of one scope's values.
+fn label_orders(scope: &str, values: &[&str]) -> LabelOrders {
+    [LabelOrder {
+        scope: scope.to_string(),
+        values: values.iter().map(ToString::to_string).collect(),
+    }]
+    .into_iter()
+    .collect()
+}
 
 fn make_user(username: &str) -> User {
     User {
@@ -53,7 +61,7 @@ fn test_sort_by_updated_at_desc() {
         direction: SortDirection::Desc,
         label_scope: None,
     }];
-    sort_issues(&mut indices, &issues, &specs, &HashMap::new());
+    sort_issues(&mut indices, &issues, &specs, &LabelOrders::default());
     // Most recent first: New(1d), Mid(5d), Old(10d)
     assert_eq!(indices, vec![1, 2, 0]);
 }
@@ -71,7 +79,7 @@ fn test_sort_by_iid_asc() {
         direction: SortDirection::Asc,
         label_scope: None,
     }];
-    sort_issues(&mut indices, &issues, &specs, &HashMap::new());
+    sort_issues(&mut indices, &issues, &specs, &LabelOrders::default());
     assert_eq!(indices, vec![1, 2, 0]); // 10, 20, 30
 }
 
@@ -99,7 +107,7 @@ fn test_multi_key_sort() {
             label_scope: None,
         },
     ];
-    sort_issues(&mut indices, &issues, &specs, &HashMap::new());
+    sort_issues(&mut indices, &issues, &specs, &LabelOrders::default());
     // opened items first (3 desc, 1 desc), then closed (2)
     assert_eq!(indices, vec![2, 0, 1]);
 }
@@ -111,16 +119,7 @@ fn test_label_scope_sort() {
         make_issue(2, "Backlog", &["workflow::backlog"], 0),
         make_issue(3, "Review", &["workflow::review"], 0),
     ];
-    let mut label_orders = HashMap::new();
-    label_orders.insert(
-        "workflow".to_string(),
-        vec![
-            "backlog".to_string(),
-            "in_progress".to_string(),
-            "review".to_string(),
-            "done".to_string(),
-        ],
-    );
+    let label_orders = label_orders("workflow", &["backlog", "in_progress", "review", "done"]);
     let mut indices: Vec<usize> = vec![0, 1, 2];
     let specs = vec![SortSpec {
         field: SortField::Label,
@@ -138,14 +137,7 @@ fn test_label_scope_nested() {
         make_issue(1, "Robot", &["workflow::workspace::hardware::robot"], 0),
         make_issue(2, "Simple", &["workflow::backlog"], 0),
     ];
-    let mut label_orders = HashMap::new();
-    label_orders.insert(
-        "workflow".to_string(),
-        vec![
-            "backlog".to_string(),
-            "workspace::hardware::robot".to_string(),
-        ],
-    );
+    let label_orders = label_orders("workflow", &["backlog", "workspace::hardware::robot"]);
     let mut indices: Vec<usize> = vec![0, 1];
     let specs = vec![SortSpec {
         field: SortField::Label,
@@ -164,8 +156,7 @@ fn test_label_scope_missing_sorts_last() {
         make_issue(2, "No label", &[], 0),
         make_issue(3, "Has label", &["p::low"], 0),
     ];
-    let mut label_orders = HashMap::new();
-    label_orders.insert("p".to_string(), vec!["high".to_string(), "low".to_string()]);
+    let label_orders = label_orders("p", &["high", "low"]);
     let mut indices: Vec<usize> = vec![0, 1, 2];
     let specs = vec![SortSpec {
         field: SortField::Label,
@@ -179,31 +170,20 @@ fn test_label_scope_missing_sorts_last() {
 
 #[test]
 fn test_compare_by_label_scope_direct() {
-    let priority = vec![
-        "critical".to_string(),
-        "high".to_string(),
-        "medium".to_string(),
-        "low".to_string(),
-    ];
+    let orders = label_orders("p", &["critical", "high", "medium", "low"]);
 
     let a = vec!["p::high".to_string()];
     let b = vec!["p::low".to_string()];
-    assert_eq!(
-        compare_by_label_scope(&a, &b, "p", &priority),
-        std::cmp::Ordering::Less,
-    );
+    assert_eq!(orders.compare(&a, &b, "p"), std::cmp::Ordering::Less);
 
     let c = vec!["unrelated".to_string()];
-    assert_eq!(
-        compare_by_label_scope(&a, &c, "p", &priority),
-        std::cmp::Ordering::Less,
-    );
+    assert_eq!(orders.compare(&a, &c, "p"), std::cmp::Ordering::Less);
 }
 
 #[test]
 fn test_empty_specs_preserves_order() {
     let issues = vec![make_issue(3, "C", &[], 0), make_issue(1, "A", &[], 0)];
     let mut indices: Vec<usize> = vec![0, 1];
-    sort_issues(&mut indices, &issues, &[], &HashMap::new());
+    sort_issues(&mut indices, &issues, &[], &LabelOrders::default());
     assert_eq!(indices, vec![0, 1]); // unchanged
 }

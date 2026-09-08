@@ -4,15 +4,13 @@
 //! the [`ui`] layer that paints it, and the [`run`] event loop that drives the
 //! whole cycle in the terminal.
 //!
-//! The domain model, filters and sorts live in `glab-core`; every HTTP
+//! The domain model, filters and sorts live in `glab-core`; the user's
+//! `config.toml` is read into those types by `glab-config`; every HTTP
 //! round-trip to GitLab lives in `glab-api`; the SQLite cache lives in
-//! `glab-store`. [`config`] is the last piece still to be carved out.
+//! `glab-store`.
 
 pub mod app;
 pub mod cmd;
-pub mod config;
-#[cfg(test)]
-mod config_tests;
 pub mod keybindings;
 pub mod run;
 pub mod ui;

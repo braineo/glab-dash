@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
+use glab_core::label;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Modifier;
@@ -81,30 +82,9 @@ impl PickerState {
         PickerAction::Continue
     }
 
-    /// Toggle a label, enforcing scoped label mutual exclusivity.
-    /// If the toggled label is a scoped label (contains `::`) and is being
-    /// selected, deselect any other label with the same scope.
+    /// Toggle a label under GitLab's one-label-per-scope rule.
     fn toggle_label(&mut self, idx: usize) {
-        let was_selected = self.selected[idx];
-        if was_selected {
-            // Just deselect
-            self.selected[idx] = false;
-            return;
-        }
-        // Selecting: check for scoped label conflict
-        let label = &self.items[idx];
-        if let Some(scope) = label.split_once("::").map(|(s, _)| s) {
-            // Deselect any other label with the same scope
-            for (i, item) in self.items.iter().enumerate() {
-                if i != idx
-                    && self.selected[i]
-                    && item.split_once("::").map(|(s, _)| s) == Some(scope)
-                {
-                    self.selected[i] = false;
-                }
-            }
-        }
-        self.selected[idx] = true;
+        label::toggle(&self.items, &mut self.selected, idx);
     }
 
     fn refilter(&mut self) {

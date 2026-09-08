@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use glab_api::GitLabClient;
-use glab_tui::config::Config;
+use glab_config::{Config, FilterPreset};
+use glab_core::filter::{Field, FilterCondition, Op};
+use glab_core::sort::label_order::LabelOrders;
 
 const LOGO: &str = r"
    __ _  _       _             _           _
@@ -115,7 +117,7 @@ pub async fn run_onboarding() -> Result<Config> {
             members.len(),
             members.join(", ")
         );
-        teams.push(glab_tui::config::TeamConfig {
+        teams.push(glab_config::TeamConfig {
             name: team_name,
             members,
         });
@@ -131,7 +133,7 @@ pub async fn run_onboarding() -> Result<Config> {
         teams: teams.clone(),
         filters: default_filter_presets(),
         sort_presets: Vec::new(),
-        label_sort_orders: Vec::new(),
+        label_sort_orders: LabelOrders::default(),
         kanban_columns: Vec::new(),
     };
 
@@ -171,86 +173,63 @@ pub fn generate_toml(config: &Config) -> String {
     toml::to_string_pretty(config).expect("Config should be serializable to TOML")
 }
 
-pub fn default_filter_presets() -> Vec<glab_tui::config::FilterPreset> {
+/// One condition of a preset, spelled in the domain's own vocabulary.
+fn condition(field: Field, op: Op, value: &str) -> FilterCondition {
+    FilterCondition {
+        field,
+        op,
+        value: value.to_string(),
+    }
+}
+
+fn preset(name: &str, kind: &str, conditions: Vec<FilterCondition>) -> FilterPreset {
+    FilterPreset {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        conditions,
+    }
+}
+
+pub fn default_filter_presets() -> Vec<FilterPreset> {
     vec![
-        glab_tui::config::FilterPreset {
-            name: "My open issues".to_string(),
-            kind: "issue".to_string(),
-            conditions: vec![
-                glab_tui::config::PresetCondition {
-                    field: "assignee".to_string(),
-                    op: "eq".to_string(),
-                    value: "$me".to_string(),
-                },
-                glab_tui::config::PresetCondition {
-                    field: "state".to_string(),
-                    op: "eq".to_string(),
-                    value: "opened".to_string(),
-                },
+        preset(
+            "My open issues",
+            "issue",
+            vec![
+                condition(Field::Assignee, Op::Eq, "$me"),
+                condition(Field::State, Op::Eq, "opened"),
             ],
-        },
-        glab_tui::config::FilterPreset {
-            name: "Unassigned issues".to_string(),
-            kind: "issue".to_string(),
-            conditions: vec![glab_tui::config::PresetCondition {
-                field: "assignee".to_string(),
-                op: "eq".to_string(),
-                value: "none".to_string(),
-            }],
-        },
-        glab_tui::config::FilterPreset {
-            name: "My open MRs".to_string(),
-            kind: "merge_request".to_string(),
-            conditions: vec![
-                glab_tui::config::PresetCondition {
-                    field: "author".to_string(),
-                    op: "eq".to_string(),
-                    value: "$me".to_string(),
-                },
-                glab_tui::config::PresetCondition {
-                    field: "state".to_string(),
-                    op: "eq".to_string(),
-                    value: "opened".to_string(),
-                },
+        ),
+        preset(
+            "Unassigned issues",
+            "issue",
+            vec![condition(Field::Assignee, Op::Eq, "none")],
+        ),
+        preset(
+            "My open MRs",
+            "merge_request",
+            vec![
+                condition(Field::Author, Op::Eq, "$me"),
+                condition(Field::State, Op::Eq, "opened"),
             ],
-        },
-        glab_tui::config::FilterPreset {
-            name: "Needs my review".to_string(),
-            kind: "merge_request".to_string(),
-            conditions: vec![
-                glab_tui::config::PresetCondition {
-                    field: "reviewer".to_string(),
-                    op: "contains".to_string(),
-                    value: "$me".to_string(),
-                },
-                glab_tui::config::PresetCondition {
-                    field: "draft".to_string(),
-                    op: "eq".to_string(),
-                    value: "false".to_string(),
-                },
-                glab_tui::config::PresetCondition {
-                    field: "approved_by".to_string(),
-                    op: "not_contains".to_string(),
-                    value: "$me".to_string(),
-                },
+        ),
+        preset(
+            "Needs my review",
+            "merge_request",
+            vec![
+                condition(Field::Reviewer, Op::Contains, "$me"),
+                condition(Field::Draft, Op::Eq, "false"),
+                condition(Field::ApprovedBy, Op::NotContains, "$me"),
             ],
-        },
-        glab_tui::config::FilterPreset {
-            name: "Ready to merge".to_string(),
-            kind: "merge_request".to_string(),
-            conditions: vec![
-                glab_tui::config::PresetCondition {
-                    field: "draft".to_string(),
-                    op: "eq".to_string(),
-                    value: "false".to_string(),
-                },
-                glab_tui::config::PresetCondition {
-                    field: "state".to_string(),
-                    op: "eq".to_string(),
-                    value: "opened".to_string(),
-                },
+        ),
+        preset(
+            "Ready to merge",
+            "merge_request",
+            vec![
+                condition(Field::Draft, Op::Eq, "false"),
+                condition(Field::State, Op::Eq, "opened"),
             ],
-        },
+        ),
     ]
 }
 

@@ -5,7 +5,7 @@ use crate::cmd::Cmd;
 use crate::ui::components::chord_popup;
 use crate::ui::views::filter_editor;
 use crate::ui::views::list_model::UserFilter;
-use glab_core::filter::{Field, FilterCondition, Op};
+use glab_core::filter::{Field, Op};
 
 impl App {
     /// Returns a mutable reference to the `UserFilter` for the current view.
@@ -148,41 +148,14 @@ impl App {
             .sort_presets
             .iter()
             .find(|p| p.name == name)
-            .map(|preset| {
-                preset
-                    .specs
-                    .iter()
-                    .filter_map(|s| {
-                        let field = glab_core::sort::SortField::from_str(&s.field)?;
-                        let direction = glab_core::sort::SortDirection::from_str(&s.direction)?;
-                        Some(glab_core::sort::SortSpec {
-                            field,
-                            direction,
-                            label_scope: s.label_scope.clone(),
-                        })
-                    })
-                    .collect()
-            })
+            .map(|preset| preset.specs.clone())
             .unwrap_or_default();
         self.apply_sort_specs(specs);
     }
 
     pub(super) fn apply_preset(&mut self, name: &str) {
         if let Some(preset) = self.ctx.config.filters.iter().find(|f| f.name == name) {
-            let conditions: Vec<FilterCondition> = preset
-                .conditions
-                .iter()
-                .filter_map(|c| {
-                    let field = Field::from_str(&c.field)?;
-                    let op = Op::from_str(&c.op)?;
-                    Some(FilterCondition {
-                        field,
-                        op,
-                        value: c.value.clone(),
-                    })
-                })
-                .collect();
-
+            let conditions = preset.conditions.clone();
             self.active_filter_mut().conditions = conditions;
             self.ui.dirty.view_state = true;
             self.ui.pending_cmds.push(Cmd::PersistViewState);
