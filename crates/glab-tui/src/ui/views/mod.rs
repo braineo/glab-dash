@@ -15,6 +15,8 @@ binding_group! {
         ('k') => MoveUp,
         (key Up) => MoveUp,
         (ctrl 'p') => MoveUp,
+        ('J') => NextUnresolved | "J/K" "Next / prev unresolved",
+        ('K') => PrevUnresolved,
         ('g') => Top | "g/G" "First / last row",
         ('G') => Bottom,
         (ctrl 'd') => PageDown | "^d/^u" "Page down/up",
