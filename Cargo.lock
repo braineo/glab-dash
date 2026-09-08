@@ -845,6 +845,8 @@ dependencies = [
  "tokio",
  "tracing",
  "tui-textarea",
+ "unicode-segmentation",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

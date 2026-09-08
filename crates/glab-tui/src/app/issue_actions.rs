@@ -97,6 +97,11 @@ impl IssueActions for Issue {
                     ui,
                 );
             }
+            // GitLab resolves merge request threads only; an issue's notes come
+            // back `resolvable: false` and there is no endpoint to call.
+            KeyAction::ResolveThread => {
+                ui.error = Some("GitLab does not support resolving issue threads".to_string());
+            }
             KeyAction::EditLabels => {
                 let label_names: Vec<String> = data.labels.iter().map(|l| l.name.clone()).collect();
                 let issue_labels: Vec<Vec<String>> =
@@ -249,16 +254,14 @@ impl IssueActions for Issue {
         ui.loading = true;
         tokio::spawn(async move {
             let create_result = match &reply_discussion_id {
-                Some(disc_id) => {
-                    client
-                        .reply_to_discussion(Issuable::Issue, &project, &iid, disc_id, &body)
-                        .await
-                }
-                None => {
-                    client
-                        .create_note(Issuable::Issue, &project, &iid, &body)
-                        .await
-                }
+                Some(disc_id) => client
+                    .reply_to_discussion(Issuable::Issue, &project, &iid, disc_id, &body)
+                    .await
+                    .map(|_| ()),
+                None => client
+                    .create_thread(Issuable::Issue, &project, &iid, &body)
+                    .await
+                    .map(|_| ()),
             };
             if let Err(e) = create_result {
                 let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));

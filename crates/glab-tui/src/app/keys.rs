@@ -337,22 +337,50 @@ mod tests {
         }
     }
 
-    /// A detail view is innermost, so its own `r` shadows the global refresh
-    /// with no special case; and it composes neither a list nor filtering, so
-    /// those keys resolve to nothing at all.
+    /// A detail view is innermost, so its `c` shadows the focused item's "add
+    /// comment" with "reply to this thread" and no special case.  `x` and `r`
+    /// are deliberately left alone, so closing the item and refreshing still
+    /// work from a detail; and the view composes neither a list nor filtering,
+    /// so those keys resolve to nothing at all.
     #[test]
-    fn a_detail_chain_shadows_refresh_and_offers_no_list_or_filtering() {
+    fn a_detail_chain_shadows_comment_but_leaves_close_and_refresh_alone() {
         let list = chain(View::IssueList, Some(&an_issue()));
         assert_eq!(
-            keybindings::resolve(&list, &key('r')),
-            Some(KeyAction::Refresh)
+            keybindings::resolve(&list, &key('c')),
+            Some(KeyAction::Comment)
         );
 
         for view in [View::IssueDetail, View::MrDetail] {
             let groups = chain(view, Some(&an_issue()));
             assert_eq!(
+                keybindings::resolve(&groups, &key('c')),
+                Some(KeyAction::ReplyThread),
+                "{view:?}"
+            );
+            assert_eq!(
+                keybindings::resolve(&groups, &key('C')),
+                Some(KeyAction::NewThread),
+                "{view:?}"
+            );
+            assert_eq!(
+                keybindings::resolve(&groups, &code(KeyCode::Tab)),
+                Some(KeyAction::ToggleThread),
+                "{view:?}"
+            );
+            assert_eq!(
+                keybindings::resolve(&groups, &key(' ')),
+                Some(KeyAction::ResolveThread),
+                "{view:?}"
+            );
+            assert_eq!(
+                keybindings::resolve(&groups, &key('x')),
+                Some(KeyAction::ToggleState),
+                "{view:?}"
+            );
+            assert_eq!(
                 keybindings::resolve(&groups, &key('r')),
-                Some(KeyAction::ReplyThread)
+                Some(KeyAction::Refresh),
+                "{view:?}"
             );
             assert_eq!(
                 keybindings::resolve(&groups, &key('R')),
@@ -365,13 +393,11 @@ mod tests {
                     "{view:?} / {c}"
                 );
             }
-            for c in [KeyCode::Tab, KeyCode::Enter] {
-                assert_eq!(
-                    keybindings::resolve(&groups, &code(c)),
-                    None,
-                    "{view:?} / {c:?}"
-                );
-            }
+            assert_eq!(
+                keybindings::resolve(&groups, &code(KeyCode::Enter)),
+                None,
+                "{view:?} / Enter"
+            );
         }
     }
 }

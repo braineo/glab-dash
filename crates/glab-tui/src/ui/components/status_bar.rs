@@ -5,16 +5,21 @@ use ratatui::widgets::Paragraph;
 
 use crate::ui::styles;
 
-fn format_age(secs: u64) -> String {
+/// A duration as its largest whole unit: `45s`, `12m`, `3h`, `2d`.
+pub fn format_span(secs: u64) -> String {
     if secs < 60 {
-        format!("{secs}s ago")
+        format!("{secs}s")
     } else if secs < 3600 {
-        format!("{}m ago", secs / 60)
+        format!("{}m", secs / 60)
     } else if secs < 86400 {
-        format!("{}h ago", secs / 3600)
+        format!("{}h", secs / 3600)
     } else {
-        format!("{}d ago", secs / 86400)
+        format!("{}d", secs / 86400)
     }
+}
+
+fn format_age(secs: u64) -> String {
+    format!("{} ago", format_span(secs))
 }
 
 pub struct StatusBarProps<'a> {
