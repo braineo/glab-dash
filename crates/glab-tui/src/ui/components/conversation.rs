@@ -129,6 +129,24 @@ impl Conversation {
         self.cursor = self.settle(target, true);
     }
 
+    /// Jump to the row opening the next unresolved thread in `dir`, staying put
+    /// when there is none that way.  On an issue nothing is resolvable, so every
+    /// thread counts and this walks thread to thread.
+    pub fn move_unresolved(&mut self, down: bool) {
+        let open = |row: &usize| {
+            matches!(self.kinds[*row], RowKind::Thread { thread, head: true }
+                if !self.discussions[thread].resolved())
+        };
+        let found = if down {
+            (self.cursor + 1..self.kinds.len()).find(open)
+        } else {
+            (0..self.cursor).rev().find(open)
+        };
+        if let Some(row) = found {
+            self.cursor = row;
+        }
+    }
+
     /// The next row past `from` in `dir` that a key can act on, or `None` at the
     /// end.  Chrome — a section rule — is stepped over rather than landed on, so
     /// the cursor is never parked somewhere reply has nothing to reply to.
@@ -858,6 +876,44 @@ mod tests {
         assert_ne!(state.kinds[state.cursor], RowKind::Chrome);
         state.page_up();
         assert_ne!(state.kinds[state.cursor], RowKind::Chrome);
+    }
+
+    /// `J` and `K` land on the row opening a thread and pass over a resolved
+    /// one, so they walk what still needs an answer.
+    #[test]
+    fn unresolved_jumps_skip_a_settled_thread() {
+        let mut state = Conversation {
+            discussions: vec![
+                thread("open-1", vec![note(1, "alice", "why?", true, false)]),
+                thread("settled", vec![note(2, "bob", "fixed", true, true)]),
+                thread("open-2", vec![note(3, "carol", "and this?", true, false)]),
+            ],
+            ..Conversation::default()
+        };
+        state.build(None, 60);
+
+        state.move_top();
+        assert_eq!(
+            state.thread_at_cursor().map(|d| d.id.as_str()),
+            Some("open-1")
+        );
+        state.move_unresolved(true);
+        assert_eq!(
+            state.thread_at_cursor().map(|d| d.id.as_str()),
+            Some("open-2"),
+            "J should pass over the resolved thread"
+        );
+        state.move_unresolved(true);
+        assert_eq!(
+            state.thread_at_cursor().map(|d| d.id.as_str()),
+            Some("open-2"),
+            "with none left, J stays put"
+        );
+        state.move_unresolved(false);
+        assert_eq!(
+            state.thread_at_cursor().map(|d| d.id.as_str()),
+            Some("open-1")
+        );
     }
 
     /// One thread runs straight into the next with no blank row between them —

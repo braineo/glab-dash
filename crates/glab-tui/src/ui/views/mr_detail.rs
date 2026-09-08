@@ -33,6 +33,8 @@ impl MrDetailState {
             KeyAction::Bottom => self.conversation.move_bottom(),
             KeyAction::PageDown => self.conversation.page_down(),
             KeyAction::PageUp => self.conversation.page_up(),
+            KeyAction::NextUnresolved => self.conversation.move_unresolved(true),
+            KeyAction::PrevUnresolved => self.conversation.move_unresolved(false),
             KeyAction::ToggleThread => self.conversation.toggle_fold(),
             KeyAction::ReplyThread => *overlay = conversation::draft_reply(&self.conversation),
             KeyAction::NewThread => *overlay = conversation::draft_new_thread(),

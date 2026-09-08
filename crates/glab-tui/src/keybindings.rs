@@ -54,6 +54,10 @@ pub enum KeyAction {
     ResolveThread,
     /// Fold the thread the cursor is on away, or open it back up.
     ToggleThread,
+    /// Jump to the next thread still needing an answer.
+    NextUnresolved,
+    /// Jump back to the previous one.
+    PrevUnresolved,
 
     // --- Board / column navigation (Dashboard & Planning) ---
     ColumnLeft,
