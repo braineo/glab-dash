@@ -35,6 +35,7 @@ fn test_generate_toml_roundtrip() {
         sort_presets: Vec::new(),
         label_sort_orders: LabelOrders::default(),
         kanban_columns: Vec::new(),
+        hide_comment: None,
     };
 
     let toml_str = generate_toml(&config);
@@ -75,6 +76,7 @@ fn test_generate_toml_contains_all_fields() {
         sort_presets: Vec::new(),
         label_sort_orders: LabelOrders::default(),
         kanban_columns: Vec::new(),
+        hide_comment: None,
     };
 
     let toml_str = generate_toml(&config);
@@ -109,4 +111,28 @@ fn test_default_filter_presets() {
             .iter()
             .any(|c| c.field == Field::ApprovedBy && c.op == Op::NotContains && c.value == "$me")
     );
+}
+
+/// The generated file must round-trip the multi-line Lua the default rule is.
+#[test]
+fn test_generate_toml_keeps_the_comment_rule() {
+    let config = Config {
+        gitlab_url: "https://gitlab.com".to_string(),
+        token: "glpat-abc".to_string(),
+        me: "user".to_string(),
+        refresh_interval_secs: 60,
+        teams: vec![Team {
+            name: "team".to_string(),
+            members: vec!["user".to_string()],
+            tracking_projects: vec!["a/b".to_string()],
+        }],
+        filters: vec![],
+        sort_presets: Vec::new(),
+        label_sort_orders: LabelOrders::default(),
+        kanban_columns: Vec::new(),
+        hide_comment: Some(glab_core::comment_filter::DEFAULT.to_string()),
+    };
+    let parsed: Config = toml::from_str(&generate_toml(&config)).expect("must parse");
+    glab_core::comment_filter::CommentFilter::new(parsed.hide_comment.as_deref().unwrap())
+        .expect("the generated rule must compile");
 }

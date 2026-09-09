@@ -37,7 +37,28 @@ members = ["alice", "bob", "charlie"]
 [[teams]]
 name = "platform"
 members = ["dave", "eve"]
+
+# Which comments the conversation view hides: Lua, function(note) -> boolean,
+# where note has `author` and `body`. Onboarding writes this rule for you;
+# delete the key to hide nothing.
+hide_comment = """
+return function(note)
+  local first = note.body:match("^%S+")
+  return ("-" .. note.author .. "-"):match("%-bot%-") ~= nil
+      or (first ~= nil and first:match("^/%a[%w_-]*$") ~= nil)
+end
+"""
 ```
+
+That hides any account with `bot` as a hyphen-delimited word — `testing-bot`
+and `bot-testing`, but not `robot` — and comments whose first word is a quick
+action (`/test --some-param`); testing the whole first word is what keeps a
+comment opening on `/etc/hosts` in the conversation.
+
+The Lua state is loaded with the `string`, `table` and `math` libraries only — a
+script cannot reach the filesystem or the network. A chunk that fails to compile
+is reported on the status line, and one that raises on a note keeps that note
+rather than losing it to a typo.
 
 You can override with environment variables: `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_PROJECT`.
 

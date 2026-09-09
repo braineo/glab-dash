@@ -38,6 +38,11 @@ pub struct Config {
     pub label_sort_orders: LabelOrders,
     #[serde(default)]
     pub kanban_columns: Vec<KanbanColumn>,
+    /// The reader's rule for comments the conversation should not show: a Lua
+    /// chunk returning `function(note) -> boolean`.  See
+    /// [`glab_core::comment_filter`].
+    #[serde(default)]
+    pub hide_comment: Option<String>,
 }
 
 fn default_refresh() -> u64 {

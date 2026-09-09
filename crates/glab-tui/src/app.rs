@@ -19,6 +19,7 @@ use crate::ui::views::Views;
 use crate::ui::views::{dashboard, filter_editor};
 use glab_api::GitLabClient;
 use glab_config::Config;
+use glab_core::comment_filter::CommentFilter;
 use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
 use glab_core::filter::FilterCondition;
 use glab_core::sort::SortSpec;
@@ -126,6 +127,9 @@ pub enum FetchState {
 /// Infrastructure context — immutable during event handling.
 pub struct AppCtx {
     pub config: Config,
+    /// Which comments the conversation view drops, from the config's author
+    /// list and Lua predicate.
+    pub comment_filter: CommentFilter,
     pub client: GitLabClient,
     pub async_tx: mpsc::UnboundedSender<AsyncMsg>,
     pub db: Db,
@@ -199,9 +203,22 @@ impl App {
         async_tx: mpsc::UnboundedSender<AsyncMsg>,
         db: Db,
     ) -> Self {
+        // A `hide_comment` that will not compile is reported on the status
+        // line; the built-in rule stands, so the rest of the config keeps
+        // working.
+        let mut filter_error = None;
+        let comment_filter = match config.hide_comment.as_deref().map(CommentFilter::new) {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => {
+                filter_error = Some(format!("config: {e:#}"));
+                CommentFilter::default()
+            }
+            None => CommentFilter::default(),
+        };
         Self {
             ctx: AppCtx {
                 config,
+                comment_filter,
                 client,
                 async_tx,
                 db,
@@ -230,7 +247,7 @@ impl App {
                 active_team: None,
                 loading: false,
                 loading_msg: "",
-                error: None,
+                error: filter_error,
                 last_fetched_at: None,
                 fetch_started_at: None,
                 last_fetch_ms: None,
