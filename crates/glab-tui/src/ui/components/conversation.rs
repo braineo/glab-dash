@@ -24,6 +24,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use glab_core::domain::{Discussion, Note};
 
 use crate::app::Overlay;
+use crate::cmd::EventResult;
+use crate::keybindings::KeyAction;
 use crate::ui::components::input::CommentInput;
 use crate::ui::components::status_bar::format_span;
 use crate::ui::{markdown, styles};
@@ -83,6 +85,32 @@ pub struct Conversation {
 }
 
 impl Conversation {
+    /// Handle a key aimed at the conversation: walking it, folding a thread,
+    /// and drafting a reply into the one the cursor is on.  Anything else —
+    /// resolving included, since that needs the API client — bubbles to the
+    /// focused item.  Both detail views answer to this identically, so it lives
+    /// here rather than once per view.
+    pub fn handle_key(&mut self, action: Option<KeyAction>, overlay: &mut Overlay) -> EventResult {
+        let Some(action) = action else {
+            return EventResult::Bubble;
+        };
+        match action {
+            KeyAction::MoveDown => self.move_down(),
+            KeyAction::MoveUp => self.move_up(),
+            KeyAction::Top => self.move_top(),
+            KeyAction::Bottom => self.move_bottom(),
+            KeyAction::PageDown => self.page_down(),
+            KeyAction::PageUp => self.page_up(),
+            KeyAction::NextUnresolved => self.move_unresolved(true),
+            KeyAction::PrevUnresolved => self.move_unresolved(false),
+            KeyAction::ToggleThread => self.toggle_fold(),
+            KeyAction::ReplyThread => *overlay = draft_reply(self),
+            KeyAction::NewThread => *overlay = draft_new_thread(),
+            _ => return EventResult::Bubble,
+        }
+        EventResult::Consumed
+    }
+
     pub fn reset(&mut self) {
         self.discussions.clear();
         self.loading = false;
@@ -583,9 +611,8 @@ mod tests {
         }
     }
 
-    fn note(id: u64, author: &str, body: &str, resolvable: bool, resolved: bool) -> Note {
+    fn note(author: &str, body: &str, resolvable: bool, resolved: bool) -> Note {
         Note {
-            id,
             body: body.to_string(),
             author: user(author),
             created_at: Utc::now(),
@@ -626,8 +653,8 @@ mod tests {
     fn reply_addresses_a_lone_comment_rather_than_starting_a_new_thread() {
         let mut state = Conversation {
             discussions: vec![
-                standalone("d1", note(1, "alice", "a single comment", false, false)),
-                thread("d2", vec![note(2, "bob", "in a thread", false, false)]),
+                standalone("d1", note("alice", "a single comment", false, false)),
+                thread("d2", vec![note("bob", "in a thread", false, false)]),
             ],
             ..Conversation::default()
         };
@@ -666,11 +693,11 @@ mod tests {
                 thread(
                     "d1",
                     vec![
-                        note(1, "alice", "why is the runner full?", false, false),
-                        note(2, "bob", "the layer cache never expires", false, false),
+                        note("alice", "why is the runner full?", false, false),
+                        note("bob", "the layer cache never expires", false, false),
                     ],
                 ),
-                thread("d2", vec![note(3, "carol", "raised the quota", true, true)]),
+                thread("d2", vec![note("carol", "raised the quota", true, true)]),
             ],
             ..Conversation::default()
         }
@@ -720,9 +747,8 @@ mod tests {
             discussions: vec![thread(
                 "d1",
                 vec![
-                    note(1, "alice", "root", false, false),
+                    note("alice", "root", false, false),
                     note(
-                        2,
                         "bob",
                         "a reply long enough that it has to wrap onto a second row",
                         false,
@@ -884,9 +910,9 @@ mod tests {
     fn unresolved_jumps_skip_a_settled_thread() {
         let mut state = Conversation {
             discussions: vec![
-                thread("open-1", vec![note(1, "alice", "why?", true, false)]),
-                thread("settled", vec![note(2, "bob", "fixed", true, true)]),
-                thread("open-2", vec![note(3, "carol", "and this?", true, false)]),
+                thread("open-1", vec![note("alice", "why?", true, false)]),
+                thread("settled", vec![note("bob", "fixed", true, true)]),
+                thread("open-2", vec![note("carol", "and this?", true, false)]),
             ],
             ..Conversation::default()
         };
@@ -967,8 +993,8 @@ mod tests {
             discussions: vec![thread(
                 "d1",
                 vec![
-                    note(1, "alice", "first\n\nsecond paragraph", false, false),
-                    note(2, "bob", "reply", false, false),
+                    note("alice", "first\n\nsecond paragraph", false, false),
+                    note("bob", "reply", false, false),
                 ],
             )],
             ..Conversation::default()

@@ -19,28 +19,8 @@ pub struct MrDetailState {
 }
 
 impl MrDetailState {
-    /// Handle keys for the detail view.  See
-    /// [`IssueDetailState::handle_key`](super::issue_detail::IssueDetailState::handle_key)
-    /// — a merge request's conversation answers to exactly the same keys.
     pub fn handle_key(&mut self, action: Option<KeyAction>, overlay: &mut Overlay) -> EventResult {
-        let Some(action) = action else {
-            return EventResult::Bubble;
-        };
-        match action {
-            KeyAction::MoveDown => self.conversation.move_down(),
-            KeyAction::MoveUp => self.conversation.move_up(),
-            KeyAction::Top => self.conversation.move_top(),
-            KeyAction::Bottom => self.conversation.move_bottom(),
-            KeyAction::PageDown => self.conversation.page_down(),
-            KeyAction::PageUp => self.conversation.page_up(),
-            KeyAction::NextUnresolved => self.conversation.move_unresolved(true),
-            KeyAction::PrevUnresolved => self.conversation.move_unresolved(false),
-            KeyAction::ToggleThread => self.conversation.toggle_fold(),
-            KeyAction::ReplyThread => *overlay = conversation::draft_reply(&self.conversation),
-            KeyAction::NewThread => *overlay = conversation::draft_new_thread(),
-            _ => return EventResult::Bubble,
-        }
-        EventResult::Consumed
+        self.conversation.handle_key(action, overlay)
     }
 
     pub fn reset(&mut self) {

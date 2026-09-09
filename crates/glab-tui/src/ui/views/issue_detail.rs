@@ -20,29 +20,8 @@ pub struct IssueDetailState {
 }
 
 impl IssueDetailState {
-    /// Handle keys for the detail view.  The conversation under the cursor is
-    /// the detail's domain: moving through it, folding a thread, and drafting a
-    /// reply into the one the cursor is on.  Resolving needs the API client, so
-    /// it bubbles to the focused item, as does everything else.
     pub fn handle_key(&mut self, action: Option<KeyAction>, overlay: &mut Overlay) -> EventResult {
-        let Some(action) = action else {
-            return EventResult::Bubble;
-        };
-        match action {
-            KeyAction::MoveDown => self.conversation.move_down(),
-            KeyAction::MoveUp => self.conversation.move_up(),
-            KeyAction::Top => self.conversation.move_top(),
-            KeyAction::Bottom => self.conversation.move_bottom(),
-            KeyAction::PageDown => self.conversation.page_down(),
-            KeyAction::PageUp => self.conversation.page_up(),
-            KeyAction::NextUnresolved => self.conversation.move_unresolved(true),
-            KeyAction::PrevUnresolved => self.conversation.move_unresolved(false),
-            KeyAction::ToggleThread => self.conversation.toggle_fold(),
-            KeyAction::ReplyThread => *overlay = conversation::draft_reply(&self.conversation),
-            KeyAction::NewThread => *overlay = conversation::draft_new_thread(),
-            _ => return EventResult::Bubble,
-        }
-        EventResult::Consumed
+        self.conversation.handle_key(action, overlay)
     }
 
     pub fn reset(&mut self) {

@@ -5,9 +5,6 @@ use ratatui::text::{Line, Span};
 
 use crate::ui::{highlight, styles, wrap};
 
-/// The gutter a comment body is drawn behind, on every one of its rows.
-const COMMENT_GUTTER: &str = "  \u{2502} ";
-
 /// Render a markdown string into styled ratatui Lines, each one screen row wide
 /// at most, wrapped to `width` columns behind `indent`.  A `width` of zero means
 /// the target width is not known yet, so nothing wraps.
@@ -18,23 +15,6 @@ pub fn render(text: &str, indent: &str, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     render_node(root, &mut lines, indent, &mut InlineCtx::default(), width);
     lines
-}
-
-/// Render markdown for a comment body, behind the gutter that marks it as one.
-/// The body wraps into the room the gutter leaves, so every row it takes keeps
-/// the gutter and a wrapped comment still reads as one block.
-pub fn render_comment(text: &str, width: usize) -> Vec<Line<'static>> {
-    let gutter_width = wrap::width(COMMENT_GUTTER);
-    let body = render(text, "", width.saturating_sub(gutter_width));
-
-    let gutter = Span::styled(COMMENT_GUTTER, styles::help_desc_style());
-    body.into_iter()
-        .map(|line| {
-            let mut spans = vec![gutter.clone()];
-            spans.extend(line.spans);
-            Line::from(spans)
-        })
-        .collect()
 }
 
 fn options() -> Options<'static> {
@@ -534,7 +514,7 @@ fn render_table<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{render, render_comment};
+    use super::render;
 
     /// The plain text of each rendered row.
     fn rows(lines: &[ratatui::text::Line<'static>]) -> Vec<String> {
@@ -542,19 +522,6 @@ mod tests {
             .iter()
             .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect()
-    }
-
-    /// A body longer than the pane keeps the comment gutter on every row it
-    /// takes, which is what `Paragraph`'s own wrapping cannot do.
-    #[test]
-    fn a_wrapped_comment_keeps_its_gutter_on_every_row() {
-        let body = "The pipeline failed because the runner ran out of disk space.";
-        let rendered = rows(&render_comment(body, 30));
-        assert!(rendered.len() > 1, "{rendered:?} should have wrapped");
-        for row in &rendered {
-            assert!(row.starts_with("  \u{2502} "), "{row:?} lost the gutter");
-            assert!(super::wrap::width(row) <= 30, "{row:?} overflows the pane");
-        }
     }
 
     /// A bullet's text holds the bullet's column when it wraps, rather than

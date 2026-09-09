@@ -119,49 +119,9 @@ pub fn hue_distance(a: f64, b: f64) -> f64 {
     d.min(360.0 - d)
 }
 
-fn hue_to_rgb(p: f64, q: f64, t: f64) -> f64 {
-    let mut t = t;
-    if t < 0.0 {
-        t += 1.0;
-    }
-    if t > 1.0 {
-        t -= 1.0;
-    }
-    if t < 1.0 / 6.0 {
-        return p + (q - p) * 6.0 * t;
-    }
-    if t < 0.5 {
-        return q;
-    }
-    if t < 2.0 / 3.0 {
-        return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
-    }
-    p
-}
-
-#[allow(
-    clippy::many_single_char_names,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-pub fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Rgb {
-    if s == 0.0 {
-        let v = (l * 255.0) as u8;
-        return (v, v, v);
-    }
-    let q = if l < 0.5 {
-        l * (1.0 + s)
-    } else {
-        l + s - l * s
-    };
-    let p = 2.0 * l - q;
-    let h = h / 360.0;
-    let r = hue_to_rgb(p, q, h + 1.0 / 3.0);
-    let g = hue_to_rgb(p, q, h);
-    let b = hue_to_rgb(p, q, h - 1.0 / 3.0);
-    ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
-}
-
+/// A color's hue in degrees, saturation and lightness.  Kept for the accent
+/// harvest, which sorts a theme's syntax colors by the hue names everyone
+/// spells in HSL — Oklch's red sits at 29 degrees, not zero.
 #[allow(clippy::many_single_char_names)]
 pub fn rgb_to_hsl((r, g, b): Rgb) -> (f64, f64, f64) {
     let r = f64::from(r) / 255.0;

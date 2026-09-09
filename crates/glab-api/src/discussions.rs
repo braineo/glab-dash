@@ -4,7 +4,7 @@
 //! endpoints under a different collection segment, so [`Issuable`] names which
 //! and the three operations are written once.
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use reqwest::Method;
 
 use glab_core::domain::{Discussion, Note};
@@ -94,23 +94,23 @@ impl GitLabClient {
         Self::send(request).await
     }
 
-    /// Resolve or reopen the thread `discussion_id`.
+    /// Resolve or reopen the merge request thread `discussion_id`.
     ///
-    /// GitLab only resolves merge request threads — an issue's notes come back
-    /// with `resolvable: false` and there is no route to resolve them — so this
-    /// refuses an issue rather than calling an endpoint that does not exist.
+    /// Merge requests only: an issue's notes come back with `resolvable: false`
+    /// and GitLab has no route to resolve them, so there is no `kind` to pass.
     pub async fn resolve_discussion(
         &self,
-        kind: Issuable,
         project: &str,
         iid: &str,
         discussion_id: &str,
         resolved: bool,
     ) -> Result<Discussion> {
-        if kind == Issuable::Issue {
-            bail!("GitLab does not support resolving issue threads");
-        }
-        let path = Self::issuable_path(kind, project, iid, &format!("discussions/{discussion_id}"));
+        let path = Self::issuable_path(
+            Issuable::MergeRequest,
+            project,
+            iid,
+            &format!("discussions/{discussion_id}"),
+        );
         let request = self
             .rest(Method::PUT, &path)
             .json(&serde_json::json!({ "resolved": resolved }));

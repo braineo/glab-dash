@@ -259,12 +259,9 @@ impl App {
             self.ui.last_fetched_at = Some(ts);
         }
 
-        // The last theme picked outlives the config's default.
-        let theme = match self.ctx.db.get_kv::<String>("theme") {
-            Ok(Some(name)) => Some(name),
-            _ => self.ctx.config.theme.clone(),
-        };
-        if let Some(name) = theme {
+        // The theme the picker last persisted; a name no bundled theme goes by
+        // is ignored and the default stands.
+        if let Ok(Some(name)) = self.ctx.db.get_kv::<String>("theme") {
             crate::ui::styles::set_theme(&name);
         }
 

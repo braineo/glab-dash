@@ -251,13 +251,7 @@ impl MrActions for MergeRequest {
         ui.loading = true;
         tokio::spawn(async move {
             if let Err(e) = client
-                .resolve_discussion(
-                    Issuable::MergeRequest,
-                    &project,
-                    &iid,
-                    &discussion,
-                    resolved,
-                )
+                .resolve_discussion(&project, &iid, &discussion, resolved)
                 .await
             {
                 let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));

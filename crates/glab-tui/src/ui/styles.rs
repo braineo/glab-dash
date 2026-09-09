@@ -970,6 +970,48 @@ mod tests {
         assert!(set_theme(DEFAULT_THEME));
     }
 
+    /// Every token in a code block stays at least as readable on the panel
+    /// `derive` lifts off the theme's background as the theme made it on that
+    /// background itself.
+    ///
+    /// Lives here rather than in `highlight` because the panel is `code_bg`,
+    /// and a test that re-derived it would drift the moment the recipe changed.
+    /// The theme's own choice is the floor, not a fixed ratio: a comment is
+    /// meant to recede, and forcing it to body-text contrast would be as wrong
+    /// as letting it vanish.
+    #[test]
+    fn no_token_reads_worse_on_the_code_panel_than_the_theme_intended() {
+        use crate::ui::color::channels;
+        use crate::ui::highlight::code_lines;
+
+        const SAMPLE: &str = "// a comment\nlet s = \"text\";\nfn f(x: u32) -> u32 { x + 1 }";
+
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for name in theme_names() {
+            assert!(set_theme(&name));
+            let (base, panel) = (super::base(), super::code_bg());
+            let on_base = code_lines("rust", SAMPLE, &name, base).expect("rust is known");
+            let on_panel = code_lines("rust", SAMPLE, &name, panel).expect("rust is known");
+
+            for (want, got) in on_base.iter().flatten().zip(on_panel.iter().flatten()) {
+                if want.content.trim().is_empty() {
+                    continue;
+                }
+                let intended = contrast(channels(want.style.fg.unwrap()), channels(base)).min(4.5);
+                let actual = contrast(channels(got.style.fg.unwrap()), channels(panel));
+                assert!(
+                    actual >= intended - 0.05,
+                    "{name}: {:?} reads at {actual:.2}:1 on the panel, \
+                     against {intended:.2}:1 the theme gave it",
+                    want.content,
+                );
+            }
+        }
+        assert!(set_theme(DEFAULT_THEME));
+    }
+
     #[test]
     fn the_picker_lists_every_theme_and_the_default_is_one_of_them() {
         let _guard = TEST_LOCK
