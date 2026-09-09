@@ -46,6 +46,7 @@
         "fileCount": 1
     },
     "approved": false,
+    "detailedMergeStatus": "NOT_APPROVED",
     "approvedBy": {
         "nodes": [
             {

@@ -21,6 +21,7 @@ pub enum Field {
     State,
     Draft,
     ApprovedBy,
+    MergeStatus,
     Title,
     Project,
     Iteration,
@@ -131,7 +132,7 @@ pub fn matches_issue(item: &Issue, conditions: &[FilterCondition], me: &str) -> 
                 match_string(&w, &c.op, &value)
             }
             // Issue doesn't have these fields
-            Field::Reviewer | Field::Draft | Field::ApprovedBy => true,
+            Field::Reviewer | Field::Draft | Field::ApprovedBy | Field::MergeStatus => true,
         }
     })
 }
@@ -187,6 +188,9 @@ pub fn matches_mr(item: &MergeRequest, conditions: &[FilterCondition], me: &str)
                 &c.op,
                 &value,
             ),
+            Field::MergeStatus => {
+                match_optional_string(item.detailed_merge_status.as_deref(), &c.op, &value)
+            }
             Field::Title => match_string_contains(&item.title, &c.op, &value),
             Field::Project => match_string(item.project_path(), &c.op, &value),
             // MRs don't have iteration/weight
