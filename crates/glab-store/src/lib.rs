@@ -11,7 +11,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 /// SQLite-backed persistence layer.
 ///
@@ -111,6 +111,17 @@ impl Db {
             self.conn.execute_batch(
                 "ALTER TABLE issues ADD COLUMN closed_at TEXT;
                  CREATE INDEX IF NOT EXISTS idx_issues_closed ON issues(closed_at);",
+            )?;
+        }
+
+        if version < 3 {
+            // The cached MergeRequest JSON gained `detailedMergeStatus`, and a
+            // row missing a non-optional key no longer deserializes. Drop the
+            // cached merge requests and the fetch timestamp so the next fetch
+            // is full rather than incremental.
+            self.conn.execute_batch(
+                "DELETE FROM merge_requests;
+                 DELETE FROM kv WHERE key = 'last_fetched_at';",
             )?;
         }
 
@@ -215,14 +226,7 @@ impl Db {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT data FROM issues WHERE ?1 IS NULL OR state = ?1")?;
-        let rows = stmt.query_map(params![state], |row| row.get::<_, String>(0))?;
-        let mut items = Vec::new();
-        for row in rows {
-            if let Ok(item) = serde_json::from_str(&row?) {
-                items.push(item);
-            }
-        }
-        Ok(items)
+        parse_rows("issues", stmt.query_map(params![state], |row| row.get(0))?)
     }
 
     /// Load merge requests, optionally filtered to a single state.
@@ -230,40 +234,17 @@ impl Db {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT data FROM merge_requests WHERE ?1 IS NULL OR state = ?1")?;
-        let rows = stmt.query_map(params![state], |row| row.get::<_, String>(0))?;
-        let mut items = Vec::new();
-        for row in rows {
-            if let Ok(item) = serde_json::from_str(&row?) {
-                items.push(item);
-            }
-        }
-        Ok(items)
+        parse_rows("merge_requests", stmt.query_map(params![state], |row| row.get(0))?)
     }
 
     pub fn load_labels(&self) -> Result<Vec<ProjectLabel>> {
         let mut stmt = self.conn.prepare_cached("SELECT data FROM labels")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-        let mut items = Vec::new();
-        for row in rows {
-            let json = row?;
-            if let Ok(item) = serde_json::from_str(&json) {
-                items.push(item);
-            }
-        }
-        Ok(items)
+        parse_rows("labels", stmt.query_map([], |row| row.get(0))?)
     }
 
     pub fn load_iterations(&self) -> Result<Vec<Iteration>> {
         let mut stmt = self.conn.prepare_cached("SELECT data FROM iterations")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-        let mut items = Vec::new();
-        for row in rows {
-            let json = row?;
-            if let Ok(item) = serde_json::from_str(&json) {
-                items.push(item);
-            }
-        }
-        Ok(items)
+        parse_rows("iterations", stmt.query_map([], |row| row.get(0))?)
     }
 
     pub fn load_work_item_statuses(&self) -> Result<HashMap<String, Vec<WorkItemStatus>>> {
@@ -336,6 +317,25 @@ impl Db {
             Ok(None)
         }
     }
+}
+
+/// Deserialize the `data` column of every row, skipping a row whose JSON no
+/// longer matches the type — a cached row is disposable, but the skip is logged
+/// rather than silent, because a shape change otherwise shows up only as an
+/// inexplicably short list.
+fn parse_rows<T: DeserializeOwned>(
+    table: &str,
+    rows: impl Iterator<Item = rusqlite::Result<String>>,
+) -> Result<Vec<T>> {
+    let mut items = Vec::new();
+    for row in rows {
+        let json = row?;
+        match serde_json::from_str(&json) {
+            Ok(item) => items.push(item),
+            Err(e) => tracing::warn!(table, error = %e, "cached row no longer readable, skipped"),
+        }
+    }
+    Ok(items)
 }
 
 #[cfg(test)]
@@ -417,6 +417,23 @@ mod tests {
         let closed = db.load_issues(Some("closed")).unwrap();
         assert_eq!(closed.len(), 1);
         assert_eq!(closed[0].id, "2");
+    }
+
+    #[test]
+    fn an_unreadable_cached_row_is_skipped_not_fatal() {
+        let db = Db::open_in_memory().unwrap();
+        db.upsert_mrs(&[make_mr(1, "opened")]).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO merge_requests (id, iid, project_path, state, updated_at, data)
+                 VALUES ('99', '99', 'test/project', 'opened', '2026-01-01T00:00:00+00:00', '{}')",
+                [],
+            )
+            .unwrap();
+
+        let mrs = db.load_mrs(Some("opened")).unwrap();
+        assert_eq!(mrs.len(), 1);
+        assert_eq!(mrs[0].id, "1");
     }
 
     #[test]
