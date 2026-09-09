@@ -18,16 +18,13 @@ impl App {
                         .pending_cmds
                         .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
                     self.data.issues.retain(|i| i.state == "opened");
-                    let now = Self::now_secs();
-                    self.ui.last_fetched_at = Some(now);
-                    self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
                     self.ui.error = None;
-                    self.record_fetch_done();
+                    self.record_fetch_done(true);
                     self.ui.dirty.issues = true;
                     self.ui.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
-                    self.record_fetch_done();
+                    self.record_fetch_done(false);
                     self.show_error(format!("Issues: {e:#}"));
                 }
             },
@@ -41,15 +38,12 @@ impl App {
                         .pending_cmds
                         .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
                     self.data.mrs.retain(|m| m.state == "opened");
-                    let now = Self::now_secs();
-                    self.ui.last_fetched_at = Some(now);
-                    self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
-                    self.record_fetch_done();
+                    self.record_fetch_done(true);
                     self.ui.error = None;
                     self.ui.dirty.mrs = true;
                 }
                 Err(e) => {
-                    self.record_fetch_done();
+                    self.record_fetch_done(false);
                     self.show_error(format!("MRs: {e:#}"));
                 }
             },
