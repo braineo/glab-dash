@@ -35,6 +35,7 @@ const MR_FIELDS: &str = r"
         reference(full: true)
         diffStatsSummary { additions deletions fileCount }
         approved
+        detailedMergeStatus
         approvedBy { nodes { ...UserFields } }
         headPipeline { status }
         resolvableDiscussionsCount

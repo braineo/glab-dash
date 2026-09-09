@@ -137,6 +137,12 @@ pub struct MergeRequest {
     pub reference: String,
     pub diff_stats_summary: Option<DiffStats>,
     pub approved: Option<bool>,
+    /// `detailedMergeStatus` — why the merge button is or is not enabled, as a
+    /// `SCREAMING_CASE` enum lowercased on the way in. `mergeable` is the one
+    /// value that means GitLab would let the merge through: approval rules
+    /// satisfied, threads resolved, no conflicts, pipeline not blocking.
+    #[serde(deserialize_with = "crate::de::lower_opt")]
+    pub detailed_merge_status: Option<String>,
     #[serde(deserialize_with = "crate::de::nodes")]
     pub approved_by: Vec<User>,
     pub head_pipeline: Option<PipelineRef>,

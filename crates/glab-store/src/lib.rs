@@ -397,6 +397,7 @@ mod tests {
             approved: None,
             resolvable_discussions_count: None,
             resolved_discussions_count: None,
+            detailed_merge_status: None,
         }
     }
 

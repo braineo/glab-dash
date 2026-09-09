@@ -75,6 +75,7 @@ fn make_mr(
         approved: None,
         resolvable_discussions_count: None,
         resolved_discussions_count: None,
+        detailed_merge_status: None,
     }
 }
 
@@ -360,4 +361,20 @@ fn a_team_owns_its_namespace_and_its_people_but_not_a_co_tenants_work() {
     assert!(!own.owns_issue(&at("elsewhere/lib", &["alice"]), "me"));
     // Your own work follows you into any team's view.
     assert!(own.owns_issue(&at("elsewhere/lib", &["me"]), "me"));
+}
+
+#[test]
+fn test_filter_merge_status() {
+    let mut mr = make_mr("Ready", "opened", &[], &[], false, &["alice"], "org/repo");
+    mr.detailed_merge_status = Some("mergeable".to_string());
+    let mergeable = vec![FilterCondition {
+        field: Field::MergeStatus,
+        op: Op::Eq,
+        value: "mergeable".to_string(),
+    }];
+    assert!(matches_mr(&mr, &mergeable, "me"));
+
+    // Approved by someone, but a rule or an open thread still blocks the merge.
+    mr.detailed_merge_status = Some("discussions_not_resolved".to_string());
+    assert!(!matches_mr(&mr, &mergeable, "me"));
 }
