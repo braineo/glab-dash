@@ -364,6 +364,33 @@ fn a_team_owns_its_namespace_and_its_people_but_not_a_co_tenants_work() {
 }
 
 #[test]
+fn a_team_owns_an_mr_a_member_authored_even_with_no_assignee() {
+    use crate::team::Team;
+    let team = Team {
+        name: "carol".to_string(),
+        members: vec!["carol".to_string()],
+        tracking_projects: vec!["org/own".to_string()],
+    };
+    let authored_by = |project, who: &str| {
+        let mut mr = make_mr("t", "opened", &[], &[], false, &[], project);
+        mr.author = Some(make_user(who));
+        mr
+    };
+
+    // Outside the board an unassigned MR rides in on its author alone.
+    assert!(team.owns_mr(&authored_by("elsewhere/lib", "carol"), "me"));
+    assert!(team.owns_mr(&authored_by("elsewhere/lib", "me"), "me"));
+    assert!(!team.owns_mr(&authored_by("elsewhere/lib", "alice"), "me"));
+    // A reviewer alone is still not ownership.
+    let mut reviewed = authored_by("elsewhere/lib", "alice");
+    reviewed.reviewers = vec![make_user("carol")];
+    assert!(!team.owns_mr(&reviewed, "me"));
+    // Inside the board, an outsider's unassigned MR still shows — the
+    // unassigned rule is unchanged by widening to authorship.
+    assert!(team.owns_mr(&authored_by("org/own", "alice"), "me"));
+}
+
+#[test]
 fn test_filter_merge_status() {
     let mut mr = make_mr("Ready", "opened", &[], &[], false, &["alice"], "org/repo");
     mr.detailed_merge_status = Some("mergeable".to_string());
