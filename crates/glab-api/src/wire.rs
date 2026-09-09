@@ -221,11 +221,13 @@ pub(crate) struct GqlUserMrs {
     user: Option<GqlUserMrConnection>,
 }
 
-/// One response shape for both `assignedMergeRequests` and
+/// One response shape for every `User` merge-request connection —
+/// `authoredMergeRequests`, `assignedMergeRequests` or
 /// `reviewRequestedMergeRequests` — whichever field the document selected wins.
 #[derive(Deserialize)]
 struct GqlUserMrConnection {
     #[serde(
+        alias = "authoredMergeRequests",
         alias = "assignedMergeRequests",
         alias = "reviewRequestedMergeRequests"
     )]
