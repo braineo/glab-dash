@@ -57,6 +57,7 @@ impl App {
                 self.ui.loading = false;
                 match result {
                     Ok(discussions) => {
+                        let discussions = self.ctx.comment_filter.visible_threads(discussions);
                         if self.ui.view == View::IssueDetail {
                             self.ui
                                 .views

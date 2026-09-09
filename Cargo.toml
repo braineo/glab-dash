@@ -41,6 +41,7 @@ glab-config = { path = "crates/glab-config" }
 glab-core = { path = "crates/glab-core" }
 glab-store = { path = "crates/glab-store" }
 glab-tui = { path = "crates/glab-tui" }
+mlua = { version = "0.12", features = ["lua54", "vendored"] }
 open = "5"
 ratatui = "0.29"
 reqwest = { version = "0.12", features = ["json"] }
