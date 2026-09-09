@@ -179,7 +179,6 @@ impl MergeRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
-    pub id: u64,
     pub body: String,
     pub author: User,
     pub created_at: DateTime<Utc>,
