@@ -4,10 +4,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use glab_api::Issuable;
 
+use crate::cmd::Cmd;
+
 use super::{App, AsyncMsg, FetchState};
 
 impl App {
-    pub fn fetch_all(&self) {
+    pub fn fetch_all(&mut self) {
+        self.ui.fetch_started_at = Some(Self::now_millis());
+        // Candidate incremental cursor for this cycle. It is only promoted to
+        // `last_fetched_at` once every leg has succeeded — see
+        // `record_fetch_done`.
+        self.ui.fetch_pending_at = Some(Self::now_secs());
+        self.ui.fetch_legs_left = 2; // issues + MRs
         self.fetch_issues();
         self.fetch_mrs();
         self.fetch_labels();
@@ -64,12 +72,25 @@ impl App {
             .unwrap_or(u64::MAX)
     }
 
-    /// Record fetch duration. Called by each data handler; the last one to arrive
+    /// Record fetch duration and, once every leg has succeeded, advance the
+    /// incremental cursor. Called by each data handler; the last one to arrive
     /// captures the total wall-clock time from `fetch_all()`.
-    pub(super) fn record_fetch_done(&mut self) {
+    ///
+    /// The cursor is the fetch *start* time and only moves when the whole cycle
+    /// succeeded: advancing it after a failed or timed-out request would make
+    /// the next incremental fetch skip everything the failure missed.
+    pub(super) fn record_fetch_done(&mut self, ok: bool) {
         self.ui.loading = false;
         if let Some(started) = self.ui.fetch_started_at {
             self.ui.last_fetch_ms = Some(Self::now_millis().saturating_sub(started));
+        }
+        if let Some(ts) = commit_cursor(
+            &mut self.ui.fetch_pending_at,
+            &mut self.ui.fetch_legs_left,
+            ok,
+        ) {
+            self.ui.last_fetched_at = Some(ts);
+            self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(ts));
         }
     }
 
@@ -97,13 +118,34 @@ impl App {
             .into_iter()
             .collect();
 
+        tracing::info!(
+            incremental,
+            members = members.len(),
+            tracking_projects = tracking_projects.len(),
+            external_projects = external_projects.len(),
+            tracked = tracked_ids.len(),
+            updated_after = ?updated_after,
+            "fetch_issues spawn"
+        );
         tokio::spawn(async move {
             let ua = updated_after.as_deref();
+            let t0 = std::time::Instant::now();
             let (tracking, assigned, external) = tokio::join!(
                 client.list_namespace_issues(&tracking_projects, None, ua),
                 client.list_assigned_issues(&members, None, ua),
                 client.list_namespace_issues(&external_projects, None, ua),
             );
+            let join_ms = t0.elapsed().as_millis(); // all three legs, not each
+            for (op, res) in [
+                ("namespace(tracking)", tracking.as_ref()),
+                ("assigned", assigned.as_ref()),
+                ("namespace(external)", external.as_ref()),
+            ] {
+                match res {
+                    Ok(v) => tracing::info!(op, count = v.len(), join_ms, "issues leg ✓"),
+                    Err(e) => tracing::warn!(op, error = ?e, join_ms, "issues leg ✗"),
+                }
+            }
             let result = match (tracking, assigned, external) {
                 (Ok(mut t), Ok(a), Ok(ext)) => {
                     let mut seen: std::collections::HashSet<String> =
@@ -123,7 +165,9 @@ impl App {
                 }
                 (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
             };
-            let _ = tx.send(AsyncMsg::IssuesLoaded(result, incremental));
+            if let Err(e) = tx.send(AsyncMsg::IssuesLoaded(result, incremental)) {
+                tracing::error!(error = %e, "failed to send IssuesLoaded — receiver dropped");
+            }
         });
     }
 
@@ -309,5 +353,45 @@ impl App {
         if self.data.unplanned_work_state != FetchState::InFlight {
             self.fetch_unplanned_work_data();
         }
+    }
+}
+
+/// Account for one finished fetch leg, returning the cursor to commit once the
+/// whole cycle has succeeded. A failure drops the candidate entirely, so the
+/// next fetch re-reads the window the failed request never delivered.
+fn commit_cursor(pending: &mut Option<u64>, legs_left: &mut u8, ok: bool) -> Option<u64> {
+    if !ok {
+        tracing::warn!("fetch leg failed — holding incremental cursor back");
+        *pending = None;
+        return None;
+    }
+    *legs_left = legs_left.saturating_sub(1);
+    if *legs_left == 0 {
+        pending.take()
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_cursor;
+
+    /// One leg per call, in the order given; returns the committed cursor.
+    fn cycle(legs: &[bool]) -> Option<u64> {
+        let mut pending = Some(100);
+        let mut left = 2;
+        legs.iter()
+            .filter_map(|ok| commit_cursor(&mut pending, &mut left, *ok))
+            .last()
+    }
+
+    #[test]
+    fn cursor_commits_only_when_every_leg_succeeds() {
+        assert_eq!(cycle(&[true, true]), Some(100));
+        assert_eq!(cycle(&[true]), None, "still one leg outstanding");
+        assert_eq!(cycle(&[false, true]), None, "earlier failure lost data");
+        assert_eq!(cycle(&[true, false]), None, "later failure lost data");
+        assert_eq!(cycle(&[false, false]), None);
     }
 }

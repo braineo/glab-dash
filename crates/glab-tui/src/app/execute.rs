@@ -78,14 +78,10 @@ impl App {
             }
 
             // ── API fetches ──────────────────────────────────────────
-            Cmd::FetchAll => {
-                self.ui.fetch_started_at = Some(Self::now_millis());
-                self.fetch_all();
-            }
+            Cmd::FetchAll => self.fetch_all(),
             Cmd::FetchAllFull => {
                 self.ui.last_fetched_at = None;
                 self.data.unplanned_work_state = FetchState::Idle;
-                self.ui.fetch_started_at = Some(Self::now_millis());
                 self.fetch_all();
             }
             Cmd::FetchHealthData => self.maybe_fetch_health_data(),

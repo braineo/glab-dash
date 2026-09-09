@@ -176,6 +176,11 @@ pub struct UiState {
     pub error: Option<String>,
     pub last_fetched_at: Option<u64>,
     pub fetch_started_at: Option<u64>,
+    /// Cursor candidate for the in-flight fetch cycle, promoted to
+    /// `last_fetched_at` only when every leg succeeds.
+    pub fetch_pending_at: Option<u64>,
+    /// Successful legs still needed before the candidate cursor is committed.
+    pub fetch_legs_left: u8,
     pub last_fetch_ms: Option<u64>,
     pub needs_redraw: bool,
     pub dirty: Dirty,
@@ -250,6 +255,8 @@ impl App {
                 error: filter_error,
                 last_fetched_at: None,
                 fetch_started_at: None,
+                fetch_pending_at: None,
+                fetch_legs_left: 0,
                 last_fetch_ms: None,
                 needs_redraw: true,
                 dirty: Dirty::default(),

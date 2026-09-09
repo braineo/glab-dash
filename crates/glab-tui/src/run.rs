@@ -56,7 +56,6 @@ pub async fn run(mut app: App, mut async_rx: mpsc::UnboundedReceiver<AsyncMsg>) 
     // Load cache for instant startup, then fetch fresh data in background
     app.load_from_db();
     app.ui.loading = true;
-    app.ui.fetch_started_at = Some(App::now_millis());
     app.fetch_all();
 
     // Main loop — event-driven rendering with drain-before-paint.
@@ -89,7 +88,6 @@ pub async fn run(mut app: App, mut async_rx: mpsc::UnboundedReceiver<AsyncMsg>) 
                 app.ui.needs_redraw = true;
             }
             _ = refresh_timer.tick() => {
-                app.ui.fetch_started_at = Some(App::now_millis());
                 app.fetch_all();
                 app.ui.needs_redraw = true;
             }
