@@ -188,9 +188,9 @@ impl App {
                 let popup = centered_rect(60, 40, area);
                 ratatui::widgets::Clear.render(popup, frame.buffer_mut());
                 let title = if reply_discussion_id.is_some() {
-                    "Reply (Enter submit, C-j newline)"
+                    "Reply (C-c submit, C-j newline)"
                 } else {
-                    "Comment (Enter submit, C-j newline)"
+                    "Comment (C-c submit, C-j newline)"
                 };
                 crate::ui::components::input::render(frame, popup, input, title);
                 crate::ui::components::autocomplete::render(frame, popup, autocomplete);

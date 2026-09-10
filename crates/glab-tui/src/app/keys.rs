@@ -19,7 +19,6 @@ binding_group! {
     /// (reply) beats `r` (refresh) here, and help drops the shadowed row.
     GLOBAL_GROUP: "Global" {
         ('q') => Back | "q" "Back / Quit",
-        (ctrl 'c') => Back,
         ('?') => ToggleHelp | "?" "Toggle help",
         (key Esc) => Back | "Esc" "Go back / close",
         ('E') => ShowLastError | "E" "Show last error",

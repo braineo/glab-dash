@@ -43,19 +43,17 @@ impl CommentInput {
             return InputAction::Cancel;
         }
         // Ctrl+J → newline (works on all terminals, classic Unix newline key)
-        if key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if (key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL))
+            || key.code == KeyCode::Enter
+        {
             self.textarea.insert_newline();
             return InputAction::Continue;
         }
-        if key.code == KeyCode::Enter {
-            if key.modifiers.intersects(KeyModifiers::SHIFT) {
-                // Shift+Enter → newline (requires Kitty keyboard protocol)
-                self.textarea.insert_newline();
-            } else {
-                return InputAction::Submit;
-            }
-            return InputAction::Continue;
+
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return InputAction::Submit;
         }
+
         self.textarea.input(*key);
         InputAction::Continue
     }
