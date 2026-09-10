@@ -192,9 +192,9 @@ rm ~/.cache/glab-dash/data.db
 ## Development
 
 ```bash
-cargo build              # dev build
+cargo build --workspace  # dev build
 cargo run                # run
-cargo test               # run tests
+cargo test --workspace   # run tests
 make all                 # format + lint + test (pre-commit check)
 make install             # build release + install
 ```
