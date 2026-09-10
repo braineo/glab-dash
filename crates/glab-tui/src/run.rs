@@ -55,7 +55,6 @@ pub async fn run(mut app: App, mut async_rx: mpsc::UnboundedReceiver<AsyncMsg>) 
 
     // Load cache for instant startup, then fetch fresh data in background
     app.load_from_db();
-    app.ui.loading = true;
     app.fetch_all();
 
     // Main loop — event-driven rendering with drain-before-paint.

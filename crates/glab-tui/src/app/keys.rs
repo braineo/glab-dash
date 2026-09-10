@@ -233,14 +233,8 @@ impl App {
                 }
             }
             KeyAction::OpenDetail => self.action_open_detail(),
-            KeyAction::Refresh => {
-                self.ui.loading = true;
-                self.ui.pending_cmds.push(crate::cmd::Cmd::FetchAll);
-            }
-            KeyAction::FullRefresh => {
-                self.ui.loading = true;
-                self.ui.pending_cmds.push(crate::cmd::Cmd::FetchAllFull);
-            }
+            KeyAction::Refresh => self.ui.pending_cmds.push(crate::cmd::Cmd::FetchAll),
+            KeyAction::FullRefresh => self.ui.pending_cmds.push(crate::cmd::Cmd::FetchAllFull),
             KeyAction::FilterMenu => self.action_show_filter_menu(),
             KeyAction::SortByField => self.action_sort_by_field(),
             KeyAction::ClearFilters => self.action_clear_filters(),

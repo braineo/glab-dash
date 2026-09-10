@@ -80,9 +80,11 @@ impl App {
             // ── API fetches ──────────────────────────────────────────
             Cmd::FetchAll => self.fetch_all(),
             Cmd::FetchAllFull => {
-                self.ui.last_fetched_at = None;
-                self.data.unplanned_work_state = FetchState::Idle;
-                self.fetch_all();
+                if !self.fetch_in_flight() {
+                    self.ui.last_fetched_at = None;
+                    self.data.unplanned_work_state = FetchState::Idle;
+                    self.fetch_all();
+                }
             }
             Cmd::FetchHealthData => self.maybe_fetch_health_data(),
 
