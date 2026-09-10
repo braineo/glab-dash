@@ -35,6 +35,10 @@ impl GitLabClient {
 
         let http = reqwest::Client::builder()
             .default_headers(headers)
+            // Without this a stalled connection never returns, and the caller's
+            // fetch task never finishes — which wedges every later refresh.
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .context("Failed to create HTTP client")?;
 
