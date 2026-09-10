@@ -15,9 +15,8 @@ test:
 
 .PHONY: install
 install:
-	cargo build --release
+	cargo build --workspace --release
 	cargo install --path crates/glab-dash
-
 
 .PHONY: build
 build:
