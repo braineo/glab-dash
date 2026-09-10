@@ -19,12 +19,12 @@ impl App {
                         .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
                     self.data.issues.retain(|i| i.state == "opened");
                     self.ui.error = None;
-                    self.record_fetch_done(true);
+                    self.record_fetch_done();
                     self.ui.dirty.issues = true;
                     self.ui.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
-                    self.record_fetch_done(false);
+                    self.cancel_fetch();
                     self.show_error(format!("Issues: {e:#}"));
                 }
             },
@@ -38,12 +38,12 @@ impl App {
                         .pending_cmds
                         .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
                     self.data.mrs.retain(|m| m.state == "opened");
-                    self.record_fetch_done(true);
+                    self.record_fetch_done();
                     self.ui.error = None;
                     self.ui.dirty.mrs = true;
                 }
                 Err(e) => {
-                    self.record_fetch_done(false);
+                    self.cancel_fetch();
                     self.show_error(format!("MRs: {e:#}"));
                 }
             },
@@ -216,6 +216,7 @@ impl App {
                     self.ui.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
+                    self.cancel_fetch();
                     self.show_error(format!("Iterations: {e:#}"));
                 }
             },

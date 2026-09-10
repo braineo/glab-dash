@@ -181,6 +181,9 @@ pub struct UiState {
     pub fetch_pending_at: Option<u64>,
     /// Successful legs still needed before the candidate cursor is committed.
     pub fetch_legs_left: u8,
+    /// Handles for the current cycle's fetch legs: they tell us a refresh is
+    /// still in flight, and let one failed leg abort the rest.
+    pub fetch_tasks: Vec<tokio::task::JoinHandle<()>>,
     pub last_fetch_ms: Option<u64>,
     pub needs_redraw: bool,
     pub dirty: Dirty,
@@ -257,6 +260,7 @@ impl App {
                 fetch_started_at: None,
                 fetch_pending_at: None,
                 fetch_legs_left: 0,
+                fetch_tasks: Vec::new(),
                 last_fetch_ms: None,
                 needs_redraw: true,
                 dirty: Dirty::default(),
