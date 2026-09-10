@@ -36,7 +36,13 @@ impl Team {
         self.owns(
             item.project_path(),
             item.assignees.is_empty(),
-            self.any_member(item.assignees.iter().chain(item.author.as_ref()), me),
+            self.any_member(
+                item.assignees
+                    .iter()
+                    .chain(item.author.as_ref())
+                    .chain(item.reviewers.iter()),
+                me,
+            ),
         )
     }
 
