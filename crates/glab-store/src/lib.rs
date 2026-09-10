@@ -234,7 +234,10 @@ impl Db {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT data FROM merge_requests WHERE ?1 IS NULL OR state = ?1")?;
-        parse_rows("merge_requests", stmt.query_map(params![state], |row| row.get(0))?)
+        parse_rows(
+            "merge_requests",
+            stmt.query_map(params![state], |row| row.get(0))?,
+        )
     }
 
     pub fn load_labels(&self) -> Result<Vec<ProjectLabel>> {

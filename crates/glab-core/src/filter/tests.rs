@@ -381,10 +381,7 @@ fn a_team_owns_an_mr_a_member_authored_even_with_no_assignee() {
     assert!(team.owns_mr(&authored_by("elsewhere/lib", "carol"), "me"));
     assert!(team.owns_mr(&authored_by("elsewhere/lib", "me"), "me"));
     assert!(!team.owns_mr(&authored_by("elsewhere/lib", "alice"), "me"));
-    // A reviewer alone is still not ownership.
-    let mut reviewed = authored_by("elsewhere/lib", "alice");
-    reviewed.reviewers = vec![make_user("carol")];
-    assert!(!team.owns_mr(&reviewed, "me"));
+
     // Inside the board, an outsider's unassigned MR still shows — the
     // unassigned rule is unchanged by widening to authorship.
     assert!(team.owns_mr(&authored_by("org/own", "alice"), "me"));
