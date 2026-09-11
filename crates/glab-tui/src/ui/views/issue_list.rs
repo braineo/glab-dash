@@ -189,7 +189,7 @@ pub fn render(
             let row = Row::new([
                 Cell::from(Span::styled(
                     format!("#{}", item.iid),
-                    Style::default().fg(styles::TEXT_DIM),
+                    Style::default().fg(styles::text_dim()),
                 )),
                 Cell::from(Span::styled(
                     source_span.to_string(),
@@ -202,14 +202,14 @@ pub fn render(
                 ))),
                 Cell::from(Span::styled(
                     author.to_string(),
-                    Style::default().fg(styles::CYAN),
+                    Style::default().fg(styles::cyan()),
                 )),
                 Cell::from(Span::styled(
                     assignees,
-                    Style::default().fg(styles::MAGENTA),
+                    Style::default().fg(styles::magenta()),
                 )),
                 Cell::from(labels),
-                Cell::from(Span::styled(age, Style::default().fg(styles::TEXT_DIM))),
+                Cell::from(Span::styled(age, Style::default().fg(styles::text_dim()))),
             ]);
             let is_selected = selected_idx == Some(row_idx);
             let is_closed = item.state == "closed";
@@ -275,16 +275,16 @@ pub fn render(
                         .map(|a| a.username.as_str())
                         .collect::<Vec<_>>()
                         .join(", "),
-                    ratatui::style::Style::default().fg(styles::TEXT_BRIGHT),
+                    ratatui::style::Style::default().fg(styles::text_bright()),
                 ),
                 Span::styled("  Source: ", styles::help_desc_style()),
                 Span::styled(
                     item.project_path().to_string(),
-                    ratatui::style::Style::default().fg(styles::TEXT),
+                    ratatui::style::Style::default().fg(styles::text()),
                 ),
             ]),
         ])
-        .style(ratatui::style::Style::default().bg(styles::SURFACE));
+        .style(ratatui::style::Style::default().bg(styles::surface()));
         frame.render_widget(preview, chunks[2]);
     }
 }

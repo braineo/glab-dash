@@ -151,6 +151,7 @@ pub async fn run_onboarding() -> Result<Config> {
         sort_presets: Vec::new(),
         label_sort_orders: LabelOrders::default(),
         kanban_columns: Vec::new(),
+        hide_comment: Some(glab_core::comment_filter::DEFAULT.to_string()),
     };
 
     // Step 7: Write config file

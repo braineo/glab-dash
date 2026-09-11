@@ -75,6 +75,7 @@ fn make_mr(
         approved: None,
         resolvable_discussions_count: None,
         resolved_discussions_count: None,
+        detailed_merge_status: None,
     }
 }
 
@@ -360,4 +361,44 @@ fn a_team_owns_its_namespace_and_its_people_but_not_a_co_tenants_work() {
     assert!(!own.owns_issue(&at("elsewhere/lib", &["alice"]), "me"));
     // Your own work follows you into any team's view.
     assert!(own.owns_issue(&at("elsewhere/lib", &["me"]), "me"));
+}
+
+#[test]
+fn a_team_owns_an_mr_a_member_authored_even_with_no_assignee() {
+    use crate::team::Team;
+    let team = Team {
+        name: "carol".to_string(),
+        members: vec!["carol".to_string()],
+        tracking_projects: vec!["org/own".to_string()],
+    };
+    let authored_by = |project, who: &str| {
+        let mut mr = make_mr("t", "opened", &[], &[], false, &[], project);
+        mr.author = Some(make_user(who));
+        mr
+    };
+
+    // Outside the board an unassigned MR rides in on its author alone.
+    assert!(team.owns_mr(&authored_by("elsewhere/lib", "carol"), "me"));
+    assert!(team.owns_mr(&authored_by("elsewhere/lib", "me"), "me"));
+    assert!(!team.owns_mr(&authored_by("elsewhere/lib", "alice"), "me"));
+
+    // Inside the board, an outsider's unassigned MR still shows — the
+    // unassigned rule is unchanged by widening to authorship.
+    assert!(team.owns_mr(&authored_by("org/own", "alice"), "me"));
+}
+
+#[test]
+fn test_filter_merge_status() {
+    let mut mr = make_mr("Ready", "opened", &[], &[], false, &["alice"], "org/repo");
+    mr.detailed_merge_status = Some("mergeable".to_string());
+    let mergeable = vec![FilterCondition {
+        field: Field::MergeStatus,
+        op: Op::Eq,
+        value: "mergeable".to_string(),
+    }];
+    assert!(matches_mr(&mr, &mergeable, "me"));
+
+    // Approved by someone, but a rule or an open thread still blocks the merge.
+    mr.detailed_merge_status = Some("discussions_not_resolved".to_string());
+    assert!(!matches_mr(&mr, &mergeable, "me"));
 }

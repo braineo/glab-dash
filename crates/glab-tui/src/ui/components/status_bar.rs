@@ -5,16 +5,21 @@ use ratatui::widgets::Paragraph;
 
 use crate::ui::styles;
 
-fn format_age(secs: u64) -> String {
+/// A duration as its largest whole unit: `45s`, `12m`, `3h`, `2d`.
+pub fn format_span(secs: u64) -> String {
     if secs < 60 {
-        format!("{secs}s ago")
+        format!("{secs}s")
     } else if secs < 3600 {
-        format!("{}m ago", secs / 60)
+        format!("{}m", secs / 60)
     } else if secs < 86400 {
-        format!("{}h ago", secs / 3600)
+        format!("{}h", secs / 3600)
     } else {
-        format!("{}d ago", secs / 86400)
+        format!("{}d", secs / 86400)
     }
+}
+
+fn format_age(secs: u64) -> String {
+    format!("{} ago", format_span(secs))
 }
 
 pub struct StatusBarProps<'a> {
@@ -41,7 +46,7 @@ pub fn render(frame: &mut Frame, area: Rect, props: &StatusBarProps) {
     let mut spans = vec![
         Span::styled(
             format!(" {view_icon} {} ", props.view_name),
-            styles::title_style().bg(styles::HIGHLIGHT),
+            styles::title_style().bg(styles::highlight()),
         ),
         Span::styled(styles::ICON_SEPARATOR, styles::help_desc_style()),
         Span::styled(props.team_name.to_string(), styles::source_tracking_style()),
@@ -66,7 +71,7 @@ pub fn render(frame: &mut Frame, area: Rect, props: &StatusBarProps) {
     } else {
         spans.push(Span::styled(
             format!("{} items", props.item_count),
-            ratatui::style::Style::default().fg(styles::TEXT),
+            ratatui::style::Style::default().fg(styles::text()),
         ));
     }
 

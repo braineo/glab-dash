@@ -13,6 +13,7 @@ pub enum KeyAction {
     ToggleHelp,
     ShowLastError,
     SwitchTeam,
+    SwitchTheme,
     NavigateTo(crate::app::View),
 
     // --- List / column navigation ---
@@ -46,7 +47,18 @@ pub enum KeyAction {
     Merge,
 
     // --- Detail-specific ---
+    /// Reply into the thread the cursor is on.
     ReplyThread,
+    /// Open a new top-level thread.
+    NewThread,
+    /// Resolve or reopen the thread the cursor is on.
+    ResolveThread,
+    /// Fold the thread the cursor is on away, or open it back up.
+    ToggleThread,
+    /// Jump to the next thread still needing an answer.
+    NextUnresolved,
+    /// Jump back to the previous one.
+    PrevUnresolved,
 
     // --- Board / column navigation (Dashboard & Planning) ---
     ColumnLeft,

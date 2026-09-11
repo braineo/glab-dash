@@ -384,7 +384,7 @@ fn render_chord_mode(
                         if is_active {
                             styles::source_tracking_style()
                         } else {
-                            Style::default().fg(chord_popup::CHORD_DIM)
+                            Style::default().fg(styles::chord_dim())
                         },
                     )
                 } else {
@@ -393,7 +393,7 @@ fn render_chord_mode(
                         if is_active {
                             styles::overlay_desc_style()
                         } else {
-                            Style::default().fg(chord_popup::CHORD_DIM)
+                            Style::default().fg(styles::chord_dim())
                         },
                     )
                 };
@@ -421,7 +421,7 @@ fn render_chord_mode(
                     let padded = format!("{label:<w$}", w = max_label_display + 2);
                     spans.push(Span::styled(
                         padded,
-                        Style::default().fg(chord_popup::CHORD_DIM),
+                        Style::default().fg(styles::chord_dim()),
                     ));
                 }
             }
@@ -445,13 +445,13 @@ fn render_chord_mode(
             Span::styled(
                 state.chord_input.clone(),
                 Style::default()
-                    .fg(styles::MAGENTA)
+                    .fg(styles::magenta())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "\u{00B7}".repeat(remaining_dots),
                 Style::default()
-                    .fg(styles::YELLOW)
+                    .fg(styles::yellow())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
@@ -512,7 +512,7 @@ fn render_search_mode(
             spans.push(Span::styled(
                 "\u{25B8} ",
                 Style::default()
-                    .fg(styles::CYAN)
+                    .fg(styles::cyan())
                     .add_modifier(Modifier::BOLD),
             ));
         } else {

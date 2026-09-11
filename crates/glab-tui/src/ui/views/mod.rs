@@ -3,16 +3,28 @@ use crate::binding_group;
 use crate::keybindings::BindingGroup;
 
 binding_group! {
-    /// Scrolling a detail view and replying to a thread.  Both detail views
-    /// answer to this identically, so they share one group.
-    pub DETAIL_NAV_GROUP: "Detail" {
-        ('j') => MoveDown | "j/k" "Scroll down/up",
+    /// Walking a detail view's conversation and acting on the thread under the
+    /// cursor.  Both detail views answer to this identically, so they share one
+    /// group.  It is innermost in the chain, so `c` here means "reply to this
+    /// thread" rather than the focused item's "add comment" — and `x` is left
+    /// alone, so it still closes the issue or merge request.
+    pub DETAIL_NAV_GROUP: "Conversation" {
+        ('j') => MoveDown | "j/k" "Move down/up",
         (key Down) => MoveDown,
         (ctrl 'n') => MoveDown,
         ('k') => MoveUp,
         (key Up) => MoveUp,
         (ctrl 'p') => MoveUp,
-        ('r') => ReplyThread | "r" "Reply to thread",
+        ('J') => NextUnresolved | "J/K" "Next / prev unresolved",
+        ('K') => PrevUnresolved,
+        ('g') => Top | "g/G" "First / last row",
+        ('G') => Bottom,
+        (ctrl 'd') => PageDown | "^d/^u" "Page down/up",
+        (ctrl 'u') => PageUp,
+        ('c') => ReplyThread | "c" "Reply to this thread",
+        ('C') => NewThread | "C" "Start a new thread",
+        (' ') => ResolveThread | "Space" "Resolve / unresolve",
+        (key Tab) => ToggleThread | "Tab" "Fold thread",
     }
 }
 

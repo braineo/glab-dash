@@ -178,12 +178,12 @@ pub fn render(
                 Some(d) => Cell::from(Line::from(vec![
                     Span::styled(
                         format!("+{}", d.additions),
-                        Style::default().fg(styles::GREEN),
+                        Style::default().fg(styles::green()),
                     ),
                     Span::raw(" "),
                     Span::styled(
                         format!("-{}", d.deletions),
-                        Style::default().fg(styles::RED),
+                        Style::default().fg(styles::red()),
                     ),
                 ])),
                 None => Cell::default(),
@@ -193,15 +193,15 @@ pub fn render(
             let approval_cell = match item.approved {
                 Some(true) => Cell::from(Span::styled(
                     styles::ICON_CHECK,
-                    Style::default().fg(styles::GREEN),
+                    Style::default().fg(styles::green()),
                 )),
                 Some(false) => Cell::from(Span::styled(
                     styles::ICON_UNCHECK,
-                    Style::default().fg(styles::RED),
+                    Style::default().fg(styles::red()),
                 )),
                 None if !item.approved_by.is_empty() => Cell::from(Span::styled(
                     styles::ICON_CHECK,
-                    Style::default().fg(styles::GREEN),
+                    Style::default().fg(styles::green()),
                 )),
                 None => Cell::default(),
             };
@@ -209,16 +209,16 @@ pub fn render(
             // Threads: unresolved in orange, total in dim
             let threads_cell = match (item.unresolved_threads(), item.notes_count()) {
                 (u, n) if u > 0 && n > 0 => Cell::from(Line::from(vec![
-                    Span::styled(format!("{u}!"), Style::default().fg(styles::ORANGE)),
-                    Span::styled(format!(" {n}"), Style::default().fg(styles::TEXT_DIM)),
+                    Span::styled(format!("{u}!"), Style::default().fg(styles::orange())),
+                    Span::styled(format!(" {n}"), Style::default().fg(styles::text_dim())),
                 ])),
                 (u, 0) if u > 0 => Cell::from(Span::styled(
                     format!("{u}!"),
-                    Style::default().fg(styles::ORANGE),
+                    Style::default().fg(styles::orange()),
                 )),
                 (_, n) if n > 0 => Cell::from(Span::styled(
                     format!("{n}"),
-                    Style::default().fg(styles::TEXT_DIM),
+                    Style::default().fg(styles::text_dim()),
                 )),
                 _ => Cell::default(),
             };
@@ -228,17 +228,17 @@ pub fn render(
             let row = Row::new([
                 Cell::from(Span::styled(
                     format!("!{}", item.iid),
-                    Style::default().fg(styles::TEXT_DIM),
+                    Style::default().fg(styles::text_dim()),
                 )),
                 Cell::from(Span::styled(source_str, styles::source_external_style())),
                 Cell::from(title),
                 Cell::from(Span::styled(
                     author.to_string(),
-                    Style::default().fg(styles::CYAN),
+                    Style::default().fg(styles::cyan()),
                 )),
                 Cell::from(Span::styled(
                     reviewers,
-                    Style::default().fg(styles::MAGENTA),
+                    Style::default().fg(styles::magenta()),
                 )),
                 diff_cell,
                 Cell::from(Span::styled(
@@ -247,7 +247,7 @@ pub fn render(
                 )),
                 approval_cell,
                 threads_cell,
-                Cell::from(Span::styled(age, Style::default().fg(styles::TEXT_DIM))),
+                Cell::from(Span::styled(age, Style::default().fg(styles::text_dim()))),
             ]);
             let is_selected = selected_idx == Some(row_idx);
             if is_selected {
@@ -312,7 +312,7 @@ pub fn render(
             Span::styled(" Branch: ", styles::help_desc_style()),
             Span::styled(
                 &item.source_branch,
-                ratatui::style::Style::default().fg(styles::TEAL),
+                ratatui::style::Style::default().fg(styles::teal()),
             ),
             Span::styled(
                 format!(" {} ", styles::ICON_ARROW),
@@ -320,7 +320,7 @@ pub fn render(
             ),
             Span::styled(
                 &item.target_branch,
-                ratatui::style::Style::default().fg(styles::TEAL),
+                ratatui::style::Style::default().fg(styles::teal()),
             ),
             Span::styled("  Pipeline: ", styles::help_desc_style()),
             Span::styled(pipeline_status, styles::pipeline_style(pipeline_status)),
@@ -345,11 +345,11 @@ pub fn render(
             detail_spans.push(Span::styled("  Diff: ", styles::help_desc_style()));
             detail_spans.push(Span::styled(
                 format!("+{}", stats.additions),
-                ratatui::style::Style::default().fg(styles::GREEN),
+                ratatui::style::Style::default().fg(styles::green()),
             ));
             detail_spans.push(Span::styled(
                 format!(" -{}", stats.deletions),
-                ratatui::style::Style::default().fg(styles::RED),
+                ratatui::style::Style::default().fg(styles::red()),
             ));
             {
                 let f = stats.file_count;
@@ -361,7 +361,7 @@ pub fn render(
         }
 
         let preview = Paragraph::new(vec![Line::from(spans), Line::from(detail_spans)])
-            .style(ratatui::style::Style::default().bg(styles::SURFACE));
+            .style(ratatui::style::Style::default().bg(styles::surface()));
         frame.render_widget(preview, chunks[2]);
     }
 }

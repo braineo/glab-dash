@@ -43,19 +43,17 @@ impl CommentInput {
             return InputAction::Cancel;
         }
         // Ctrl+J → newline (works on all terminals, classic Unix newline key)
-        if key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if (key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL))
+            || key.code == KeyCode::Enter
+        {
             self.textarea.insert_newline();
             return InputAction::Continue;
         }
-        if key.code == KeyCode::Enter {
-            if key.modifiers.intersects(KeyModifiers::SHIFT) {
-                // Shift+Enter → newline (requires Kitty keyboard protocol)
-                self.textarea.insert_newline();
-            } else {
-                return InputAction::Submit;
-            }
-            return InputAction::Continue;
+
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return InputAction::Submit;
         }
+
         self.textarea.input(*key);
         InputAction::Continue
     }
@@ -110,13 +108,13 @@ impl CommentInput {
 }
 
 fn apply_style(textarea: &mut TextArea<'_>) {
-    let text_style = styles::overlay_text_style().bg(styles::OVERLAY);
+    let text_style = styles::overlay_text_style().bg(styles::overlay());
     textarea.set_style(text_style);
     textarea.set_cursor_line_style(text_style);
     textarea.set_cursor_style(
         ratatui::style::Style::default()
-            .fg(styles::OVERLAY)
-            .bg(styles::OVERLAY_TEXT),
+            .fg(styles::overlay())
+            .bg(styles::overlay_text()),
     );
 }
 
@@ -125,14 +123,14 @@ pub fn render(frame: &mut Frame, area: Rect, input: &mut CommentInput, title: &s
     let block = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(ratatui::style::Style::default().fg(styles::BORDER_ACTIVE))
+        .border_style(ratatui::style::Style::default().fg(styles::border_active()))
         .title(format!(" {title} "))
         .title_style(
             ratatui::style::Style::default()
-                .fg(styles::CYAN)
+                .fg(styles::cyan())
                 .add_modifier(ratatui::style::Modifier::BOLD),
         )
-        .style(ratatui::style::Style::default().bg(styles::OVERLAY));
+        .style(ratatui::style::Style::default().bg(styles::overlay()));
     input.textarea.set_block(block);
     frame.render_widget(&input.textarea, area);
 }

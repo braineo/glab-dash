@@ -15,6 +15,17 @@ use super::{App, Overlay, View};
 impl App {
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
+        // Paint the theme's own background over the whole frame rather than
+        // letting the terminal's show through, so a light theme is legible in
+        // a dark terminal and the reverse.
+        frame.render_widget(
+            ratatui::widgets::Block::default().style(
+                ratatui::style::Style::default()
+                    .bg(crate::ui::styles::base())
+                    .fg(crate::ui::styles::text()),
+            ),
+            area,
+        );
         let chunks = Layout::vertical([
             Constraint::Length(1), // Tab bar
             Constraint::Min(1),    // Main content
@@ -64,7 +75,7 @@ impl App {
                         frame,
                         chunks[1],
                         &item,
-                        &self.ui.views.issue_detail,
+                        &mut self.ui.views.issue_detail,
                         &ctx,
                     );
                 }
@@ -80,7 +91,7 @@ impl App {
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(frame, chunks[1], &item, &self.ui.views.mr_detail, &ctx);
+                    mr_detail::render(frame, chunks[1], &item, &mut self.ui.views.mr_detail, &ctx);
                 }
             }
             View::Planning => {
@@ -177,9 +188,9 @@ impl App {
                 let popup = centered_rect(60, 40, area);
                 ratatui::widgets::Clear.render(popup, frame.buffer_mut());
                 let title = if reply_discussion_id.is_some() {
-                    "Reply (Enter submit, C-j newline)"
+                    "Reply (C-c submit, C-j newline)"
                 } else {
-                    "Comment (Enter submit, C-j newline)"
+                    "Comment (C-c submit, C-j newline)"
                 };
                 crate::ui::components::input::render(frame, popup, input, title);
                 crate::ui::components::autocomplete::render(frame, popup, autocomplete);

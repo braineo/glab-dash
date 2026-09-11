@@ -18,16 +18,13 @@ impl App {
                         .pending_cmds
                         .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
                     self.data.issues.retain(|i| i.state == "opened");
-                    let now = Self::now_secs();
-                    self.ui.last_fetched_at = Some(now);
-                    self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
                     self.ui.error = None;
                     self.record_fetch_done();
                     self.ui.dirty.issues = true;
                     self.ui.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
-                    self.record_fetch_done();
+                    self.cancel_fetch();
                     self.show_error(format!("Issues: {e:#}"));
                 }
             },
@@ -41,15 +38,12 @@ impl App {
                         .pending_cmds
                         .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
                     self.data.mrs.retain(|m| m.state == "opened");
-                    let now = Self::now_secs();
-                    self.ui.last_fetched_at = Some(now);
-                    self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(now));
                     self.record_fetch_done();
                     self.ui.error = None;
                     self.ui.dirty.mrs = true;
                 }
                 Err(e) => {
-                    self.record_fetch_done();
+                    self.cancel_fetch();
                     self.show_error(format!("MRs: {e:#}"));
                 }
             },
@@ -57,12 +51,19 @@ impl App {
                 self.ui.loading = false;
                 match result {
                     Ok(discussions) => {
+                        let discussions = self.ctx.comment_filter.visible_threads(discussions);
                         if self.ui.view == View::IssueDetail {
-                            self.ui.views.issue_detail.discussions = discussions;
-                            self.ui.views.issue_detail.loading_notes = false;
+                            self.ui
+                                .views
+                                .issue_detail
+                                .conversation
+                                .set_discussions(discussions);
                         } else if self.ui.view == View::MrDetail {
-                            self.ui.views.mr_detail.discussions = discussions;
-                            self.ui.views.mr_detail.loading_notes = false;
+                            self.ui
+                                .views
+                                .mr_detail
+                                .conversation
+                                .set_discussions(discussions);
                         }
                     }
                     Err(e) => {
@@ -215,6 +216,7 @@ impl App {
                     self.ui.pending_cmds.push(Cmd::FetchHealthData);
                 }
                 Err(e) => {
+                    self.cancel_fetch();
                     self.show_error(format!("Iterations: {e:#}"));
                 }
             },

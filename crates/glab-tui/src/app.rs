@@ -19,6 +19,7 @@ use crate::ui::views::Views;
 use crate::ui::views::{dashboard, filter_editor};
 use glab_api::GitLabClient;
 use glab_config::Config;
+use glab_core::comment_filter::CommentFilter;
 use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
 use glab_core::filter::FilterCondition;
 use glab_core::sort::SortSpec;
@@ -89,17 +90,6 @@ pub enum FocusedItem {
     },
 }
 
-/// Metadata for a single thread shown in the reply picker.
-#[derive(Debug)]
-pub struct ThreadPickerInfo {
-    pub discussion_id: String,
-    pub author: String,
-    pub preview: String,
-    pub last_author: Option<String>,
-    pub last_preview: Option<String>,
-    pub reply_count: usize,
-}
-
 /// Messages from async operations
 pub enum AsyncMsg {
     IssuesLoaded(Result<Vec<Issue>>, bool),
@@ -137,6 +127,9 @@ pub enum FetchState {
 /// Infrastructure context — immutable during event handling.
 pub struct AppCtx {
     pub config: Config,
+    /// Which comments the conversation view drops, from the config's author
+    /// list and Lua predicate.
+    pub comment_filter: CommentFilter,
     pub client: GitLabClient,
     pub async_tx: mpsc::UnboundedSender<AsyncMsg>,
     pub db: Db,
@@ -183,6 +176,14 @@ pub struct UiState {
     pub error: Option<String>,
     pub last_fetched_at: Option<u64>,
     pub fetch_started_at: Option<u64>,
+    /// Cursor candidate for the in-flight fetch cycle, promoted to
+    /// `last_fetched_at` only when every leg succeeds.
+    pub fetch_pending_at: Option<u64>,
+    /// Successful legs still needed before the candidate cursor is committed.
+    pub fetch_legs_left: u8,
+    /// Handles for the current cycle's fetch legs: they tell us a refresh is
+    /// still in flight, and let one failed leg abort the rest.
+    pub fetch_tasks: Vec<tokio::task::JoinHandle<()>>,
     pub last_fetch_ms: Option<u64>,
     pub needs_redraw: bool,
     pub dirty: Dirty,
@@ -210,9 +211,22 @@ impl App {
         async_tx: mpsc::UnboundedSender<AsyncMsg>,
         db: Db,
     ) -> Self {
+        // A `hide_comment` that will not compile is reported on the status
+        // line; the built-in rule stands, so the rest of the config keeps
+        // working.
+        let mut filter_error = None;
+        let comment_filter = match config.hide_comment.as_deref().map(CommentFilter::new) {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => {
+                filter_error = Some(format!("config: {e:#}"));
+                CommentFilter::default()
+            }
+            None => CommentFilter::default(),
+        };
         Self {
             ctx: AppCtx {
                 config,
+                comment_filter,
                 client,
                 async_tx,
                 db,
@@ -241,9 +255,12 @@ impl App {
                 active_team: None,
                 loading: false,
                 loading_msg: "",
-                error: None,
+                error: filter_error,
                 last_fetched_at: None,
                 fetch_started_at: None,
+                fetch_pending_at: None,
+                fetch_legs_left: 0,
+                fetch_tasks: Vec::new(),
                 last_fetch_ms: None,
                 needs_redraw: true,
                 dirty: Dirty::default(),
@@ -268,6 +285,12 @@ impl App {
         // Restore last_fetched_at so the first fetch is incremental (fast)
         if let Ok(Some(ts)) = self.ctx.db.get_kv::<u64>("last_fetched_at") {
             self.ui.last_fetched_at = Some(ts);
+        }
+
+        // The theme the picker last persisted; a name no bundled theme goes by
+        // is ignored and the default stands.
+        if let Ok(Some(name)) = self.ctx.db.get_kv::<String>("theme") {
+            crate::ui::styles::set_theme(&name);
         }
 
         // Restore the active team before any refilter below reads it

@@ -35,6 +35,7 @@ const MR_FIELDS: &str = r"
         reference(full: true)
         diffStatsSummary { additions deletions fileCount }
         approved
+        detailedMergeStatus
         approvedBy { nodes { ...UserFields } }
         headPipeline { status }
         resolvableDiscussionsCount
@@ -52,10 +53,11 @@ pub enum MrState {
     Closed,
 }
 
-/// Which of a user's merge requests to list: the ones they are assigned, or the
-/// ones they were asked to review.
+/// Which of a user's merge requests to list: the ones they authored, the ones
+/// they are assigned, or the ones they were asked to review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UserMrRole {
+    Authored,
     Assigned,
     Reviewer,
 }
@@ -64,6 +66,7 @@ impl UserMrRole {
     /// The `User` connection this role reads.
     fn field(self) -> &'static str {
         match self {
+            UserMrRole::Authored => "authoredMergeRequests",
             UserMrRole::Assigned => "assignedMergeRequests",
             UserMrRole::Reviewer => "reviewRequestedMergeRequests",
         }
@@ -119,10 +122,14 @@ impl GitLabClient {
         Ok(all)
     }
 
-    /// List the merge requests each of `members` is assigned or was asked to
-    /// review, anywhere on the instance, deduplicated by id.
+    /// List the merge requests each of `members` authored, is assigned, or was
+    /// asked to review, anywhere on the instance, deduplicated by id.
     ///
-    /// This is the slowest call in a refresh: two queries per member, each
+    /// Authored MRs are included because a project outside the tracking
+    /// namespaces is only reached through its team members, and GitLab does not
+    /// assign an MR to its author.
+    ///
+    /// This is the slowest call in a refresh: three queries per member, each
     /// paginated, so it traces per-member timings at debug level.
     pub async fn list_user_mrs(
         &self,
@@ -140,7 +147,11 @@ impl GitLabClient {
         let mut all = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for member in members {
-            for role in [UserMrRole::Assigned, UserMrRole::Reviewer] {
+            for role in [
+                UserMrRole::Authored,
+                UserMrRole::Assigned,
+                UserMrRole::Reviewer,
+            ] {
                 let started = std::time::Instant::now();
                 let mrs = self.user_mrs(member, role, state, updated_after).await;
                 let elapsed_ms = started.elapsed().as_millis();

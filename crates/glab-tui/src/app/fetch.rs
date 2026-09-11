@@ -4,26 +4,60 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use glab_api::Issuable;
 
+use crate::cmd::Cmd;
+
 use super::{App, AsyncMsg, FetchState};
 
 impl App {
-    pub fn fetch_all(&self) {
-        self.fetch_issues();
-        self.fetch_mrs();
-        self.fetch_labels();
-        self.fetch_iterations();
-        self.fetch_statuses_for_board();
+    pub fn fetch_all(&mut self) {
+        if self.fetch_in_flight() {
+            return; // a refresh is already running — don't stack another cycle
+        }
+        self.ui.loading = true;
+        self.ui.fetch_started_at = Some(Self::now_millis());
+        // Candidate incremental cursor for this cycle. It is only promoted to
+        // `last_fetched_at` once every leg has succeeded — see
+        // `record_fetch_done`.
+        self.ui.fetch_pending_at = Some(Self::now_secs());
+        self.ui.fetch_legs_left = 2; // issues + MRs
+        self.ui.fetch_tasks = vec![
+            self.fetch_issues(),
+            self.fetch_mrs(),
+            self.fetch_labels(),
+            self.fetch_iterations(),
+        ];
+        let statuses = self.fetch_statuses_for_board();
+        self.ui.fetch_tasks.extend(statuses);
+    }
+
+    /// True while any leg of the last cycle is still running. Finished handles
+    /// are dropped here, so no separate counter can drift out of sync.
+    pub(super) fn fetch_in_flight(&mut self) -> bool {
+        self.ui.fetch_tasks.retain(|t| !t.is_finished());
+        !self.ui.fetch_tasks.is_empty()
+    }
+
+    /// Abort the rest of the cycle. One failed leg already means incomplete
+    /// data, so the remaining requests are wasted work — and dropping the
+    /// handles lets the user retry immediately.
+    pub(super) fn cancel_fetch(&mut self) {
+        for task in self.ui.fetch_tasks.drain(..) {
+            task.abort();
+        }
+        self.ui.fetch_pending_at = None;
+        self.ui.loading = false;
     }
 
     /// Fetch work item statuses for each tracking project (for the iteration board).
-    fn fetch_statuses_for_board(&self) {
+    fn fetch_statuses_for_board(&self) -> Vec<tokio::task::JoinHandle<()>> {
+        let mut tasks = Vec::new();
         for project in self.ctx.config.all_tracking_projects() {
             if self.data.work_item_statuses.contains_key(&project) {
                 continue; // already cached
             }
             let client = self.ctx.client.clone();
             let tx = self.ctx.async_tx.clone();
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 let result = client.fetch_work_item_statuses(&project).await;
                 // Reuse StatusesLoaded with sentinel values (issue_id=0, empty
                 // iid) to indicate this is a background fetch, not a chord
@@ -35,8 +69,9 @@ impl App {
                     String::new(),
                     false,
                 ));
-            });
+            }));
         }
+        tasks
     }
 
     /// Convert a unix timestamp to ISO 8601 for the GitLab API, with 60s safety buffer.
@@ -64,16 +99,27 @@ impl App {
             .unwrap_or(u64::MAX)
     }
 
-    /// Record fetch duration. Called by each data handler; the last one to arrive
+    /// Record fetch duration and, once every leg has succeeded, advance the
+    /// incremental cursor. Called by each data handler; the last one to arrive
     /// captures the total wall-clock time from `fetch_all()`.
+    ///
+    /// The cursor is the fetch *start* time and only moves when the whole cycle
+    /// succeeded: advancing it after a failed or timed-out request would make
+    /// the next incremental fetch skip everything the failure missed. A failed
+    /// leg goes to `cancel_fetch` instead, which drops the candidate.
     pub(super) fn record_fetch_done(&mut self) {
         self.ui.loading = false;
         if let Some(started) = self.ui.fetch_started_at {
             self.ui.last_fetch_ms = Some(Self::now_millis().saturating_sub(started));
         }
+        if let Some(ts) = commit_cursor(&mut self.ui.fetch_pending_at, &mut self.ui.fetch_legs_left)
+        {
+            self.ui.last_fetched_at = Some(ts);
+            self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(ts));
+        }
     }
 
-    fn fetch_issues(&self) {
+    fn fetch_issues(&self) -> tokio::task::JoinHandle<()> {
         let client = self.ctx.client.clone();
         let tx = self.ctx.async_tx.clone();
         let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
@@ -97,13 +143,34 @@ impl App {
             .into_iter()
             .collect();
 
+        tracing::info!(
+            incremental,
+            members = members.len(),
+            tracking_projects = tracking_projects.len(),
+            external_projects = external_projects.len(),
+            tracked = tracked_ids.len(),
+            updated_after = ?updated_after,
+            "fetch_issues spawn"
+        );
         tokio::spawn(async move {
             let ua = updated_after.as_deref();
+            let t0 = std::time::Instant::now();
             let (tracking, assigned, external) = tokio::join!(
                 client.list_namespace_issues(&tracking_projects, None, ua),
                 client.list_assigned_issues(&members, None, ua),
                 client.list_namespace_issues(&external_projects, None, ua),
             );
+            let join_ms = t0.elapsed().as_millis(); // all three legs, not each
+            for (op, res) in [
+                ("namespace(tracking)", tracking.as_ref()),
+                ("assigned", assigned.as_ref()),
+                ("namespace(external)", external.as_ref()),
+            ] {
+                match res {
+                    Ok(v) => tracing::info!(op, count = v.len(), join_ms, "issues leg ✓"),
+                    Err(e) => tracing::warn!(op, error = ?e, join_ms, "issues leg ✗"),
+                }
+            }
             let result = match (tracking, assigned, external) {
                 (Ok(mut t), Ok(a), Ok(ext)) => {
                     let mut seen: std::collections::HashSet<String> =
@@ -123,11 +190,13 @@ impl App {
                 }
                 (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
             };
-            let _ = tx.send(AsyncMsg::IssuesLoaded(result, incremental));
-        });
+            if let Err(e) = tx.send(AsyncMsg::IssuesLoaded(result, incremental)) {
+                tracing::error!(error = %e, "failed to send IssuesLoaded — receiver dropped");
+            }
+        })
     }
 
-    fn fetch_mrs(&self) {
+    fn fetch_mrs(&self) -> tokio::task::JoinHandle<()> {
         let client = self.ctx.client.clone();
         let members = self.ctx.config.all_members();
         let tracking_projects = self.ctx.config.all_tracking_projects();
@@ -192,10 +261,10 @@ impl App {
             if let Err(e) = tx.send(AsyncMsg::MrsLoaded(result, incremental)) {
                 tracing::error!(error = %e, "failed to send MrsLoaded — receiver dropped");
             }
-        });
+        })
     }
 
-    fn fetch_labels(&self) {
+    fn fetch_labels(&self) -> tokio::task::JoinHandle<()> {
         let client = self.ctx.client.clone();
         let projects = self.ctx.config.all_tracking_projects();
         let tx = self.ctx.async_tx.clone();
@@ -212,7 +281,7 @@ impl App {
                 }
             }
             let _ = tx.send(AsyncMsg::LabelsLoaded(Ok(all_labels)));
-        });
+        })
     }
 
     pub(super) fn fetch_notes_for_issue(&self, project: &str, iid: &str) {
@@ -241,7 +310,7 @@ impl App {
         });
     }
 
-    pub(super) fn fetch_iterations(&self) {
+    pub(super) fn fetch_iterations(&self) -> tokio::task::JoinHandle<()> {
         let client = self.ctx.client.clone();
         let tx = self.ctx.async_tx.clone();
         // Each team's board reads its own group cadence.
@@ -253,7 +322,7 @@ impl App {
         tokio::spawn(async move {
             let result = client.list_group_iterations(&group).await;
             let _ = tx.send(AsyncMsg::IterationsLoaded(result));
-        });
+        })
     }
 
     /// Fetch "added to iteration" dates for unplanned work detection.
@@ -309,5 +378,36 @@ impl App {
         if self.data.unplanned_work_state != FetchState::InFlight {
             self.fetch_unplanned_work_data();
         }
+    }
+}
+
+/// Account for one succeeded fetch leg, returning the cursor to commit once the
+/// whole cycle is in.
+fn commit_cursor(pending: &mut Option<u64>, legs_left: &mut u8) -> Option<u64> {
+    *legs_left = legs_left.saturating_sub(1);
+    if *legs_left == 0 {
+        pending.take()
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_cursor;
+
+    /// `legs` successful legs of a 2-leg cycle; returns the committed cursor.
+    fn cycle(legs: u8) -> Option<u64> {
+        let mut pending = Some(100);
+        let mut left = 2;
+        (0..legs)
+            .filter_map(|_| commit_cursor(&mut pending, &mut left))
+            .last()
+    }
+
+    #[test]
+    fn cursor_commits_only_once_every_leg_is_in() {
+        assert_eq!(cycle(2), Some(100));
+        assert_eq!(cycle(1), None, "still one leg outstanding");
     }
 }

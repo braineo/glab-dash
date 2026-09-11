@@ -220,9 +220,9 @@ pub enum FilterEditorAction {
 
 fn step_indicator(step: &EditorStep) -> Line<'static> {
     let (s1, s2, s3) = match step {
-        EditorStep::SelectField => (styles::BLUE, styles::TEXT_DIM, styles::TEXT_DIM),
-        EditorStep::SelectOp => (styles::BLUE, styles::BLUE, styles::TEXT_DIM),
-        EditorStep::EnterValue => (styles::BLUE, styles::BLUE, styles::BLUE),
+        EditorStep::SelectField => (styles::blue(), styles::text_dim(), styles::text_dim()),
+        EditorStep::SelectOp => (styles::blue(), styles::blue(), styles::text_dim()),
+        EditorStep::EnterValue => (styles::blue(), styles::blue(), styles::blue()),
     };
     Line::from(vec![
         Span::raw("  "),

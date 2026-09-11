@@ -10,7 +10,7 @@ pub fn render(frame: &mut Frame, area: Rect, chain: &[&'static BindingGroup]) {
     let popup = centered_rect(70, 80, area);
     frame.render_widget(Clear, popup);
 
-    let section_style = styles::section_header_style().bg(styles::OVERLAY);
+    let section_style = styles::section_header_style().bg(styles::overlay());
     let mut lines = vec![Line::from("")];
 
     // Only what can actually fire: `active_bindings` drops any key an earlier
