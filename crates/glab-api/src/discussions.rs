@@ -32,19 +32,32 @@ impl Issuable {
 impl GitLabClient {
     /// List the discussion threads on the issuable `iid` in `project`, oldest
     /// thread first.
+    ///
+    /// Walks every page: a busy merge request has more than one page of
+    /// threads, and stopping at the first drops the rest of the conversation.
     pub async fn list_discussions(
         &self,
         kind: Issuable,
         project: &str,
         iid: &str,
     ) -> Result<Vec<Discussion>> {
-        let request = self
-            .rest(
-                Method::GET,
-                &Self::issuable_path(kind, project, iid, "discussions"),
-            )
-            .query(&[("sort", "asc"), ("per_page", "100")]);
-        Self::send(request).await
+        const PER_PAGE: usize = 100;
+        let path = Self::issuable_path(kind, project, iid, "discussions");
+        let mut all: Vec<Discussion> = Vec::new();
+        for page in 1.. {
+            let request = self.rest(Method::GET, &path).query(&[
+                ("sort", "asc"),
+                ("per_page", &PER_PAGE.to_string()),
+                ("page", &page.to_string()),
+            ]);
+            let batch: Vec<Discussion> = Self::send(request).await?;
+            let done = batch.len() < PER_PAGE;
+            all.extend(batch);
+            if done {
+                break;
+            }
+        }
+        Ok(all)
     }
 
     /// Open a new thread on the issuable `iid` in `project` with `body` as its
