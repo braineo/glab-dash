@@ -114,20 +114,10 @@ impl App {
                 if autocomplete.active {
                     if key.code == KeyCode::Tab {
                         if let Some(item) = autocomplete.selected_item().cloned() {
-                            let trigger_pos = autocomplete.trigger_pos;
-                            let trigger_len = crate::ui::components::autocomplete::AutocompleteState::trigger_char_len();
-                            let text = input.text();
-                            let cursor = input.cursor_byte_pos();
-
-                            let mut new_value =
-                                String::with_capacity(text.len() + item.insert.len());
-                            new_value.push_str(&text[..trigger_pos + trigger_len]);
-                            new_value.push_str(&item.insert);
-                            new_value.push(' ');
-                            new_value.push_str(&text[cursor..]);
-
-                            let new_cursor = trigger_pos + trigger_len + item.insert.len() + 1;
-                            input.set_text_and_cursor(&new_value, new_cursor);
+                            input.replace_before_cursor(
+                                autocomplete.query.chars().count(),
+                                &item.insert,
+                            );
                         }
                         autocomplete.dismiss();
                         self.ui.overlay = Overlay::CommentInput {

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use tui_textarea::{CursorMove, TextArea};
+use tui_textarea::TextArea;
 
 use crate::ui::styles;
 
@@ -82,28 +82,13 @@ impl CommentInput {
         pos
     }
 
-    /// Replace the entire text and reposition the cursor at the given byte offset.
-    pub fn set_text_and_cursor(&mut self, text: &str, byte_pos: usize) {
-        let lines: Vec<&str> = text.split('\n').collect();
-
-        // Convert byte_pos to (row, char_col).
-        let mut remaining = byte_pos;
-        let mut target_row: u16 = 0;
-        let mut target_col: u16 = 0;
-        for (i, line) in lines.iter().enumerate() {
-            if remaining <= line.len() {
-                target_row = u16::try_from(i).unwrap_or(u16::MAX);
-                target_col = u16::try_from(line[..remaining].chars().count()).unwrap_or(u16::MAX);
-                break;
-            }
-            remaining -= line.len() + 1; // +1 for '\n'
+    /// Replace the `query_chars` characters before the cursor with `insert`,
+    /// then append a space. Used to accept an autocomplete suggestion.
+    pub fn replace_before_cursor(&mut self, query_chars: usize, insert: &str) {
+        for _ in 0..query_chars {
+            self.textarea.delete_char();
         }
-
-        let owned_lines: Vec<String> = lines.into_iter().map(String::from).collect();
-        self.textarea = TextArea::new(owned_lines);
-        apply_style(&mut self.textarea);
-        self.textarea
-            .move_cursor(CursorMove::Jump(target_row, target_col));
+        self.textarea.insert_str(format!("{insert} "));
     }
 }
 
@@ -133,4 +118,20 @@ pub fn render(frame: &mut Frame, area: Rect, input: &mut CommentInput, title: &s
         .style(ratatui::style::Style::default().bg(styles::overlay()));
     input.textarea.set_block(block);
     frame.render_widget(&input.textarea, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_before_cursor_swaps_query_for_completion() {
+        let mut input = CommentInput::default();
+        for c in "hi @jo".chars() {
+            input.handle_key(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        input.replace_before_cursor(2, "john.doe");
+        assert_eq!(input.text(), "hi @john.doe ");
+        assert_eq!(input.cursor_byte_pos(), input.text().len());
+    }
 }
