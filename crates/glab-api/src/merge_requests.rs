@@ -12,7 +12,7 @@ use strum::IntoStaticStr;
 use glab_core::domain::MergeRequest;
 use urlencoding::encode;
 
-use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload};
+use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload, join_walks};
 use crate::wire::{GqlProjectMrs, GqlUserMrs};
 
 /// The selection every merge-request query and mutation shares.
@@ -97,23 +97,28 @@ impl GitLabClient {
             MR_FIELDS,
         );
 
-        let mut all = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for project in projects {
-            let mrs = self
-                .paginate::<MergeRequest, GqlProjectMrs>("listProjectMrs", &query, |after| {
-                    serde_json::json!({
-                        "projectPath": project,
-                        "state": state_value(state),
-                        "updatedAfter": updated_after,
-                        "after": after,
-                        "first": PAGE_SIZE,
+        let mut set = tokio::task::JoinSet::new();
+        for (idx, project) in projects.iter().enumerate() {
+            let client = self.clone();
+            let query = query.clone();
+            let project = project.clone();
+            let updated_after = updated_after.map(str::to_string);
+            set.spawn(async move {
+                let mrs = client
+                    .paginate::<MergeRequest, GqlProjectMrs>("listProjectMrs", &query, |after| {
+                        serde_json::json!({
+                            "projectPath": project,
+                            "state": state_value(state),
+                            "updatedAfter": updated_after,
+                            "after": after,
+                            "first": PAGE_SIZE,
+                        })
                     })
-                })
-                .await?;
-            all.extend(mrs.into_iter().filter(|m| seen.insert(m.id.clone())));
+                    .await;
+                (idx, mrs)
+            });
         }
-        Ok(all)
+        join_walks(set, |m| &m.id).await
     }
 
     /// List the merge requests each of `members` authored, is assigned, or was
@@ -138,19 +143,20 @@ impl GitLabClient {
         );
         let overall = std::time::Instant::now();
 
-        // One task per member × role. A JoinSet, not detached spawns: dropping
-        // it on the first error aborts the rest, and the caller aborting this
-        // future takes the whole fan-out down with it.
+        // One task per member × role, results merged in spawn order.
         //
         // ponytail: unbounded fan-out (members × 3). Meter it with a Semaphore
         // if GitLab starts answering 429.
         let mut set = tokio::task::JoinSet::new();
-        for member in members {
-            for role in [
+        for (idx, member) in members.iter().enumerate() {
+            for (role_idx, role) in [
                 UserMrRole::Authored,
                 UserMrRole::Assigned,
                 UserMrRole::Reviewer,
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let client = self.clone();
                 let member = member.clone();
                 let updated_after = updated_after.map(str::to_string);
@@ -159,32 +165,24 @@ impl GitLabClient {
                     let mrs = client
                         .user_mrs(&member, role, state, updated_after.as_deref())
                         .await;
-                    (member, role, started.elapsed().as_millis(), mrs)
+                    let elapsed_ms = started.elapsed().as_millis();
+                    match &mrs {
+                        Ok(mrs) => tracing::debug!(
+                            member,
+                            role = role.field(),
+                            count = mrs.len(),
+                            elapsed_ms,
+                            "user_mrs ✓"
+                        ),
+                        Err(e) => {
+                            tracing::warn!(member, role = role.field(), error = ?e, elapsed_ms, "user_mrs ✗");
+                        }
+                    }
+                    (idx * 3 + role_idx, mrs)
                 });
             }
         }
-
-        let mut all = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        while let Some(joined) = set.join_next().await {
-            let (member, role, elapsed_ms, mrs) = joined.context("user_mrs task failed")?;
-            match mrs {
-                Ok(mrs) => {
-                    tracing::debug!(
-                        member,
-                        role = role.field(),
-                        count = mrs.len(),
-                        elapsed_ms,
-                        "user_mrs ✓"
-                    );
-                    all.extend(mrs.into_iter().filter(|m| seen.insert(m.id.clone())));
-                }
-                Err(e) => {
-                    tracing::warn!(member, role = role.field(), error = ?e, elapsed_ms, "user_mrs ✗");
-                    return Err(e);
-                }
-            }
-        }
+        let all = join_walks(set, |m| &m.id).await?;
 
         tracing::info!(
             total = all.len(),
@@ -311,7 +309,7 @@ impl GitLabClient {
         );
 
         let json = self
-            .graphql(mutation, &query, serde_json::json!({ "input": input }))
+            .graphql_once(mutation, &query, serde_json::json!({ "input": input }))
             .await?;
         let mr = get_mutation_payload(&json, mutation)?
             .get("mergeRequest")

@@ -179,3 +179,32 @@ async fn mutation_errors_fail_the_call() {
         "Status is not available, Iteration is not in the cadence"
     );
 }
+
+#[tokio::test]
+async fn retries_a_page_the_transport_failed() {
+    // A blip mid-walk must not discard the pages already collected — or, with
+    // the fan-out, cancel every sibling walk.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/graphql"))
+        .respond_with(ResponseTemplate::new(502))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/graphql"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(work_item_page(&[work_item("1")], None)),
+        )
+        .mount(&server)
+        .await;
+    let client = GitLabClient::new(&server.uri(), "token").unwrap();
+
+    let issues = client
+        .list_namespace_issues(&["g/p".to_string()], None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(issues.len(), 1);
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}

@@ -50,7 +50,7 @@ impl GitLabClient {
                 ("per_page", &PER_PAGE.to_string()),
                 ("page", &page.to_string()),
             ]);
-            let batch: Vec<Discussion> = Self::send(request).await?;
+            let batch: Vec<Discussion> = Self::fetch(request).await?;
             let done = batch.len() < PER_PAGE;
             all.extend(batch);
             if done {

@@ -53,11 +53,21 @@ impl GitLabClient {
             .request(method, format!("{}/api/v4{path}", self.base_url))
     }
 
-    /// Post one GraphQL document and return its response body. `op` names the
-    /// operation for the trace log only; a top-level `errors` array fails the
-    /// call, since GitLab reports a malformed or unauthorized query there with
-    /// a 200 status.
+    /// Post one GraphQL document and return its response body, retried when the
+    /// request fails. Reads go through here; a mutation uses `graphql_once`.
     pub(crate) async fn graphql(
+        &self,
+        op: &'static str,
+        query: &str,
+        variables: Value,
+    ) -> Result<Value> {
+        with_retry(op, || self.graphql_once(op, query, variables.clone())).await
+    }
+
+    /// Post one GraphQL document, once. `op` names the operation for the trace
+    /// log only; a top-level `errors` array fails the call, since GitLab reports
+    /// a malformed or unauthorized query there with a 200 status.
+    pub(crate) async fn graphql_once(
         &self,
         op: &'static str,
         query: &str,
@@ -87,7 +97,7 @@ impl GitLabClient {
         if let Some(errors) = json.get("errors").and_then(Value::as_array)
             && !errors.is_empty()
         {
-            anyhow::bail!("GraphQL: {}", join_messages(errors, Some("message")));
+            return Err(GqlError(join_messages(errors, Some("message"))).into());
         }
         Ok(json)
     }
@@ -131,6 +141,18 @@ impl GitLabClient {
             }
         }
         Ok(all)
+    }
+
+    /// Send a REST read, retried when the request fails. A write uses `send`:
+    /// retrying it can write twice.
+    pub(crate) async fn fetch<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> Result<T> {
+        with_retry("rest", || async {
+            let request = request
+                .try_clone()
+                .context("request body cannot be replayed")?;
+            Self::send(request).await
+        })
+        .await
     }
 
     pub(crate) async fn send<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> Result<T> {
@@ -189,6 +211,76 @@ const USER_FIELDS: &str = r"
 
 /// Page size for every paginated list query.
 pub(crate) const PAGE_SIZE: u32 = 100;
+
+/// How many times a read is asked for before it fails.
+const ATTEMPTS: u32 = 3;
+
+/// An error GitLab answered with in the response body rather than in the
+/// transport: a malformed query, a field the token may not read. Permanent, so
+/// [`with_retry`] hands it back instead of asking again.
+#[derive(Debug)]
+struct GqlError(String);
+
+impl std::fmt::Display for GqlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GraphQL: {}", self.0)
+    }
+}
+
+impl std::error::Error for GqlError {}
+
+/// Run `attempt` again when it fails, backing off between tries.
+///
+/// A read is idempotent and a fetch cycle is expensive: one blip would
+/// otherwise discard every page already walked and cancel every sibling walk.
+/// A [`GqlError`] is permanent and is handed back on the first answer.
+///
+/// ponytail: retries any transport failure, a permanent 404 included. Classify
+/// the status if a wrong path starts costing a second and a half to fail.
+async fn with_retry<T, Fut: Future<Output = Result<T>>>(
+    op: &str,
+    attempt: impl Fn() -> Fut,
+) -> Result<T> {
+    let mut delay = std::time::Duration::from_millis(500);
+    let mut tries = 1;
+    loop {
+        match attempt().await {
+            Ok(value) => return Ok(value),
+            Err(e) if tries >= ATTEMPTS || e.is::<GqlError>() => return Err(e),
+            Err(e) => {
+                tracing::warn!(op, tries, error = ?e, ?delay, "retrying");
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+                tries += 1;
+            }
+        }
+    }
+}
+
+/// Join concurrent walks, restoring the order they were spawned in, and flatten
+/// them with duplicates dropped: the same issue or merge request is reachable
+/// from more than one namespace, project or member. The first walk to hold it
+/// wins, so the result does not depend on which request came back first.
+///
+/// The first failed walk returns, dropping the set — which aborts the rest.
+pub(crate) async fn join_walks<T: Send + 'static>(
+    mut set: tokio::task::JoinSet<(usize, Result<Vec<T>>)>,
+    id: impl Fn(&T) -> &str,
+) -> Result<Vec<T>> {
+    let mut walks = Vec::with_capacity(set.len());
+    while let Some(joined) = set.join_next().await {
+        let (idx, items) = joined.context("list task failed")?;
+        walks.push((idx, items?));
+    }
+    walks.sort_by_key(|(idx, _)| *idx);
+
+    let mut seen = std::collections::HashSet::new();
+    Ok(walks
+        .into_iter()
+        .flat_map(|(_, items)| items)
+        .filter(|item| seen.insert(id(item).to_string()))
+        .collect())
+}
 
 /// `doc` followed by the fragments it spreads: `fields` itself, and the
 /// `UserFields` every one of them spreads in turn.
