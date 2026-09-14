@@ -1359,9 +1359,9 @@ pub fn compute_health(
 
     // Preserve tab + selection state from previous health
     let active_tab = prev_health.map_or(HealthTab::default(), |h| {
-        unplanned_work.table_state = h.unplanned_work.table_state.clone();
-        shadow_work.table_state = h.shadow_work.table_state.clone();
-        at_risk.table_state = h.at_risk.table_state.clone();
+        unplanned_work.table_state = h.unplanned_work.table_state;
+        shadow_work.table_state = h.shadow_work.table_state;
+        at_risk.table_state = h.at_risk.table_state;
         unplanned_work.clamp_selection();
         shadow_work.clamp_selection();
         at_risk.clamp_selection();
