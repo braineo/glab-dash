@@ -12,13 +12,8 @@ use strum::IntoStaticStr;
 use glab_core::domain::MergeRequest;
 use urlencoding::encode;
 
-use crate::client::{GitLabClient, document, get_mutation_payload};
+use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload};
 use crate::wire::{GqlProjectMrs, GqlUserMrs};
-
-/// Page size for merge-request list queries. Kept small to stay within GitLab's
-/// default query complexity limit of 250 (each MR node with nested discussions
-/// contributes ~5 points).
-const MR_PAGE_SIZE: u32 = 25;
 
 /// The selection every merge-request query and mutation shares.
 const MR_FIELDS: &str = r"
@@ -83,24 +78,22 @@ impl GitLabClient {
         updated_after: Option<&str>,
     ) -> Result<Vec<MergeRequest>> {
         let query = document(
-            &format!(
-                r"
-                query listProjectMrs($projectPath: ID!, $state: MergeRequestState, $updatedAfter: Time, $after: String) {{
-                    project(fullPath: $projectPath) {{
-                        mergeRequests(
-                            state: $state
-                            updatedAfter: $updatedAfter
-                            after: $after
-                            first: {MR_PAGE_SIZE}
-                            sort: UPDATED_DESC
-                        ) {{
-                            nodes {{ ...MrFields }}
-                            pageInfo {{ hasNextPage endCursor }}
-                        }}
-                    }}
-                }}
-                "
-            ),
+            r"
+            query listProjectMrs($projectPath: ID!, $state: MergeRequestState, $updatedAfter: Time, $after: String, $first: Int) {
+                project(fullPath: $projectPath) {
+                    mergeRequests(
+                        state: $state
+                        updatedAfter: $updatedAfter
+                        after: $after
+                        first: $first
+                        sort: UPDATED_DESC
+                    ) {
+                        nodes { ...MrFields }
+                        pageInfo { hasNextPage endCursor }
+                    }
+                }
+            }
+            ",
             MR_FIELDS,
         );
 
@@ -114,6 +107,7 @@ impl GitLabClient {
                         "state": state_value(state),
                         "updatedAfter": updated_after,
                         "after": after,
+                        "first": PAGE_SIZE,
                     })
                 })
                 .await?;
@@ -144,32 +138,50 @@ impl GitLabClient {
         );
         let overall = std::time::Instant::now();
 
-        let mut all = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        // One task per member × role. A JoinSet, not detached spawns: dropping
+        // it on the first error aborts the rest, and the caller aborting this
+        // future takes the whole fan-out down with it.
+        //
+        // ponytail: unbounded fan-out (members × 3). Meter it with a Semaphore
+        // if GitLab starts answering 429.
+        let mut set = tokio::task::JoinSet::new();
         for member in members {
             for role in [
                 UserMrRole::Authored,
                 UserMrRole::Assigned,
                 UserMrRole::Reviewer,
             ] {
-                let started = std::time::Instant::now();
-                let mrs = self.user_mrs(member, role, state, updated_after).await;
-                let elapsed_ms = started.elapsed().as_millis();
-                match mrs {
-                    Ok(mrs) => {
-                        tracing::debug!(
-                            member,
-                            role = role.field(),
-                            count = mrs.len(),
-                            elapsed_ms,
-                            "user_mrs ✓"
-                        );
-                        all.extend(mrs.into_iter().filter(|m| seen.insert(m.id.clone())));
-                    }
-                    Err(e) => {
-                        tracing::warn!(member, role = role.field(), error = ?e, elapsed_ms, "user_mrs ✗");
-                        return Err(e);
-                    }
+                let client = self.clone();
+                let member = member.clone();
+                let updated_after = updated_after.map(str::to_string);
+                set.spawn(async move {
+                    let started = std::time::Instant::now();
+                    let mrs = client
+                        .user_mrs(&member, role, state, updated_after.as_deref())
+                        .await;
+                    (member, role, started.elapsed().as_millis(), mrs)
+                });
+            }
+        }
+
+        let mut all = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(joined) = set.join_next().await {
+            let (member, role, elapsed_ms, mrs) = joined.context("user_mrs task failed")?;
+            match mrs {
+                Ok(mrs) => {
+                    tracing::debug!(
+                        member,
+                        role = role.field(),
+                        count = mrs.len(),
+                        elapsed_ms,
+                        "user_mrs ✓"
+                    );
+                    all.extend(mrs.into_iter().filter(|m| seen.insert(m.id.clone())));
+                }
+                Err(e) => {
+                    tracing::warn!(member, role = role.field(), error = ?e, elapsed_ms, "user_mrs ✗");
+                    return Err(e);
                 }
             }
         }
@@ -193,9 +205,9 @@ impl GitLabClient {
         let query = document(
             &format!(
                 r"
-                query listUserMrs($username: String!, $state: MergeRequestState, $after: String, $updatedAfter: Time) {{
+                query listUserMrs($username: String!, $state: MergeRequestState, $after: String, $updatedAfter: Time, $first: Int) {{
                     user(username: $username) {{
-                        {field}(state: $state, after: $after, updatedAfter: $updatedAfter, first: {MR_PAGE_SIZE}, sort: UPDATED_DESC) {{
+                        {field}(state: $state, after: $after, updatedAfter: $updatedAfter, first: $first, sort: UPDATED_DESC) {{
                             nodes {{ ...MrFields }}
                             pageInfo {{ hasNextPage endCursor }}
                         }}
@@ -213,6 +225,7 @@ impl GitLabClient {
                 "state": state_value(state),
                 "after": after,
                 "updatedAfter": updated_after,
+                "first": PAGE_SIZE,
             })
         })
         .await

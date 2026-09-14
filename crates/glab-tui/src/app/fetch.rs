@@ -2,7 +2,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use glab_api::Issuable;
+use glab_api::{Issuable, MrState};
 
 use crate::cmd::Cmd;
 
@@ -108,7 +108,6 @@ impl App {
     /// the next incremental fetch skip everything the failure missed. A failed
     /// leg goes to `cancel_fetch` instead, which drops the candidate.
     pub(super) fn record_fetch_done(&mut self) {
-        self.ui.loading = false;
         if let Some(started) = self.ui.fetch_started_at {
             self.ui.last_fetch_ms = Some(Self::now_millis().saturating_sub(started));
         }
@@ -117,6 +116,9 @@ impl App {
             self.ui.last_fetched_at = Some(ts);
             self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(ts));
         }
+        // Only the last leg clears the spinner: the first one to land used to
+        // clear it, leaving the bar idle while the other leg was still running.
+        self.ui.loading = self.ui.fetch_legs_left > 0;
     }
 
     fn fetch_issues(&self) -> tokio::task::JoinHandle<()> {
@@ -204,6 +206,14 @@ impl App {
         let tx = self.ctx.async_tx.clone();
         let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
+        // A full refresh asks for open merge requests only — the bulk of the
+        // instance is merged history nobody looks at. `merge_mrs` closes out
+        // the cached open ones the walk did not return.
+        let state = if incremental {
+            None
+        } else {
+            Some(MrState::Opened)
+        };
         tracing::info!(
             incremental,
             members = members.len(),
@@ -213,7 +223,7 @@ impl App {
         tokio::spawn(async move {
             let ua = updated_after.as_deref();
             let t0 = std::time::Instant::now();
-            let tracking = client.list_project_mrs(&tracking_projects, None, ua).await;
+            let tracking = client.list_project_mrs(&tracking_projects, state, ua).await;
             match &tracking {
                 Ok(t) => tracing::info!(
                     count = t.len(),
@@ -227,13 +237,9 @@ impl App {
                 ),
             }
             let t1 = std::time::Instant::now();
-            // External MRs enter the cache only via team-member assignment, so
-            // we only want currently-open MRs. Fetching `"all"` paginates
-            // through every merged/closed MR ever assigned to each member —
-            // that's tens of thousands of requests for long-tenured teams and
-            // causes the MR list to appear frozen on load.
+
             let external = client
-                .list_user_mrs(&members, Some(glab_api::MrState::Opened), ua)
+                .list_user_mrs(&members, state, ua)
                 .await
                 // A user's MRs are instance-wide; the ones inside a tracking
                 // project already came from the per-project walk above.

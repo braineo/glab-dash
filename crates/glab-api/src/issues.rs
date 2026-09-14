@@ -12,7 +12,7 @@ use strum::IntoStaticStr;
 
 use glab_core::domain::Issue;
 
-use crate::client::{GitLabClient, document, get_mutation_payload};
+use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload};
 use crate::wire::{GqlNamespaceWorkItems, GqlRootIssues, GqlWorkItem};
 
 /// The selection the root `issues` query uses, deserialized straight into
@@ -91,7 +91,7 @@ impl GitLabClient {
     ) -> Result<Vec<Issue>> {
         let query = document(
             r"
-            query listWorkItems($path: ID!, $state: IssuableState, $updatedAfter: Time, $after: String) {
+            query listWorkItems($path: ID!, $state: IssuableState, $updatedAfter: Time, $after: String, $first: Int) {
                 namespace(fullPath: $path) {
                     workItems(
                         includeDescendants: true
@@ -99,7 +99,7 @@ impl GitLabClient {
                         state: $state
                         updatedAfter: $updatedAfter
                         after: $after
-                        first: 100
+                        first: $first
                         sort: UPDATED_DESC
                     ) {
                         nodes { ...WorkItemFields }
@@ -121,6 +121,7 @@ impl GitLabClient {
                         "state": state_value(state),
                         "updatedAfter": updated_after,
                         "after": after,
+                        "first": PAGE_SIZE,
                     })
                 })
                 .await?;
@@ -143,14 +144,14 @@ impl GitLabClient {
     ) -> Result<Vec<Issue>> {
         let query = document(
             r"
-            query listAssignedIssues($assigneeUsernames: [String!], $state: IssuableState, $types: [IssueType!], $after: String, $updatedAfter: Time) {
+            query listAssignedIssues($assigneeUsernames: [String!], $state: IssuableState, $types: [IssueType!], $after: String, $updatedAfter: Time, $first: Int) {
                 issues(
                     assigneeUsernames: $assigneeUsernames
                     state: $state
                     types: $types
                     after: $after
                     updatedAfter: $updatedAfter
-                    first: 100
+                    first: $first
                     sort: UPDATED_DESC
                 ) {
                     nodes { ...IssueFields }
@@ -172,6 +173,7 @@ impl GitLabClient {
                         "types": ["ISSUE"],
                         "after": after,
                         "updatedAfter": updated_after,
+                        "first": PAGE_SIZE,
                     })
                 })
                 .await?;
