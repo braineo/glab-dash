@@ -109,6 +109,7 @@ mod tests {
 
     fn note(author: &str, body: &str) -> Note {
         Note {
+            id: 1,
             body: body.to_string(),
             author: User {
                 id: "1".into(),

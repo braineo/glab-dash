@@ -107,6 +107,28 @@ impl GitLabClient {
         Self::send(request).await
     }
 
+    /// Rewrite the note `note_id` with `body`.
+    ///
+    /// Addressed through the flat `notes` collection rather than the thread it
+    /// sits in: the note's id is enough, so a reply and a standalone comment
+    /// take the same route.  GitLab refuses a note the token's user may not
+    /// edit, which is what keeps this to the author and the project's
+    /// maintainers.
+    pub async fn update_note(
+        &self,
+        kind: Issuable,
+        project: &str,
+        iid: &str,
+        note_id: u64,
+        body: &str,
+    ) -> Result<Note> {
+        let path = Self::issuable_path(kind, project, iid, &format!("notes/{note_id}"));
+        let request = self
+            .rest(Method::PUT, &path)
+            .json(&serde_json::json!({ "body": body }));
+        Self::send(request).await
+    }
+
     /// Resolve or reopen the merge request thread `discussion_id`.
     ///
     /// Merge requests only: an issue's notes come back with `resolvable: false`

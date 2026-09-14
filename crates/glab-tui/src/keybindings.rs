@@ -51,6 +51,8 @@ pub enum KeyAction {
     ReplyThread,
     /// Open a new top-level thread.
     NewThread,
+    /// Rewrite the comment the cursor is on.
+    EditComment,
     /// Resolve or reopen the thread the cursor is on.
     ResolveThread,
     /// Fold the thread the cursor is on away, or open it back up.

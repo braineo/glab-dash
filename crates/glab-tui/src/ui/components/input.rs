@@ -1,9 +1,20 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use tui_textarea::{TextArea, WrapMode};
+use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use crate::ui::styles;
+
+/// What a draft does to the conversation when it is submitted.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CommentTarget {
+    /// Open a new top-level thread.
+    NewThread,
+    /// Reply into the thread with this discussion id.
+    Reply(String),
+    /// Rewrite the note with this id, which is what the draft started from.
+    Edit(u64),
+}
 
 /// Result of handling a key event in the comment input.
 pub enum InputAction {
@@ -27,16 +38,26 @@ pub struct CommentInput {
 
 impl Default for CommentInput {
     fn default() -> Self {
-        let mut textarea = TextArea::default();
-        apply_style(&mut textarea);
-        Self {
-            textarea,
-            isearch: None,
-        }
+        Self::with_text("")
     }
 }
 
 impl CommentInput {
+    /// A draft that starts from `text`, with the cursor at its end — what an
+    /// edit opens with, so the existing comment is there to change rather than
+    /// retype.
+    pub fn with_text(text: &str) -> Self {
+        let mut input = Self {
+            textarea: TextArea::new(text.lines().map(String::from).collect()),
+            isearch: None,
+        };
+        apply_style(&mut input.textarea);
+        input.textarea.move_cursor(CursorMove::Bottom);
+        input.textarea.move_cursor(CursorMove::End);
+        input.refresh_highlights();
+        input
+    }
+
     /// Handle a key event. Returns the resulting action.
     ///
     /// - **Ctrl+Enter** (or **Ctrl+C**) submits, **Esc** cancels.

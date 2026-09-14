@@ -108,92 +108,74 @@ impl App {
             Overlay::CommentInput {
                 mut input,
                 mut autocomplete,
-                reply_discussion_id,
+                target,
             } => {
-                // Handle autocomplete keys first if active
-                if autocomplete.active {
-                    if key.code == KeyCode::Tab {
-                        if let Some(item) = autocomplete.selected_item().cloned() {
-                            input.replace_before_cursor(
-                                autocomplete.query.chars().count(),
-                                &item.insert,
+                // Handle autocomplete keys first if active; each of these
+                // only steers the popup, leaving the draft open.
+                let steered = autocomplete.active
+                    && match key.code {
+                        KeyCode::Tab => {
+                            if let Some(item) = autocomplete.selected_item().cloned() {
+                                input.replace_before_cursor(
+                                    autocomplete.query.chars().count(),
+                                    &item.insert,
+                                );
+                            }
+                            autocomplete.dismiss();
+                            true
+                        }
+                        KeyCode::Esc => {
+                            autocomplete.dismiss();
+                            true
+                        }
+                        _ if keys::is_nav_up(key) => {
+                            autocomplete.move_up();
+                            true
+                        }
+                        _ if keys::is_nav_down(key) => {
+                            autocomplete.move_down();
+                            true
+                        }
+                        _ => false,
+                    };
+
+                // Cancel and submit are the only two that close the draft, and
+                // the overlay is already `None` for them.
+                if !steered {
+                    match input.handle_key(key) {
+                        input::InputAction::Cancel => return EventResult::Consumed,
+                        input::InputAction::Submit => {
+                            let body = input.text();
+                            let body = body.trim().to_string();
+                            if !body.is_empty() {
+                                self.dispatch_submit_comment(&body, target);
+                            }
+                            return EventResult::Consumed;
+                        }
+                        // No completion popup while isearch is moving the cursor.
+                        input::InputAction::Continue if input.is_searching() => {
+                            autocomplete.dismiss();
+                        }
+                        input::InputAction::Continue => {
+                            let text = input.text();
+                            let cursor = input.cursor_byte_pos();
+                            let members = self.ctx.config.all_members();
+                            autocomplete.update(
+                                &text,
+                                cursor,
+                                &members,
+                                &self.data.team_issues,
+                                &self.data.team_mrs,
                             );
                         }
-                        autocomplete.dismiss();
-                        self.ui.overlay = Overlay::CommentInput {
-                            input,
-                            autocomplete,
-                            reply_discussion_id,
-                        };
-                        return EventResult::Consumed;
-                    }
-                    if key.code == KeyCode::Esc {
-                        autocomplete.dismiss();
-                        self.ui.overlay = Overlay::CommentInput {
-                            input,
-                            autocomplete,
-                            reply_discussion_id,
-                        };
-                        return EventResult::Consumed;
-                    }
-                    if keys::is_nav_up(key) {
-                        autocomplete.move_up();
-                        self.ui.overlay = Overlay::CommentInput {
-                            input,
-                            autocomplete,
-                            reply_discussion_id,
-                        };
-                        return EventResult::Consumed;
-                    }
-                    if keys::is_nav_down(key) {
-                        autocomplete.move_down();
-                        self.ui.overlay = Overlay::CommentInput {
-                            input,
-                            autocomplete,
-                            reply_discussion_id,
-                        };
-                        return EventResult::Consumed;
                     }
                 }
 
-                match input.handle_key(key) {
-                    input::InputAction::Cancel => {
-                        // overlay already None
-                    }
-                    input::InputAction::Submit => {
-                        let body = input.text();
-                        let body = body.trim().to_string();
-                        if !body.is_empty() {
-                            self.dispatch_submit_comment(&body, reply_discussion_id.as_deref());
-                        }
-                    }
-                    input::InputAction::Continue if input.is_searching() => {
-                        // No completion popup while isearch is moving the cursor.
-                        autocomplete.dismiss();
-                        self.ui.overlay = Overlay::CommentInput {
-                            input,
-                            autocomplete,
-                            reply_discussion_id,
-                        };
-                    }
-                    input::InputAction::Continue => {
-                        let text = input.text();
-                        let cursor = input.cursor_byte_pos();
-                        let members = self.ctx.config.all_members();
-                        autocomplete.update(
-                            &text,
-                            cursor,
-                            &members,
-                            &self.data.team_issues,
-                            &self.data.team_mrs,
-                        );
-                        self.ui.overlay = Overlay::CommentInput {
-                            input,
-                            autocomplete,
-                            reply_discussion_id,
-                        };
-                    }
-                }
+                self.ui.overlay = Overlay::CommentInput {
+                    input,
+                    autocomplete,
+                    target,
+                };
                 EventResult::Consumed
             }
 

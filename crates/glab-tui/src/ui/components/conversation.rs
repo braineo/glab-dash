@@ -26,7 +26,7 @@ use glab_core::domain::{Discussion, Note};
 use crate::app::Overlay;
 use crate::cmd::EventResult;
 use crate::keybindings::KeyAction;
-use crate::ui::components::input::CommentInput;
+use crate::ui::components::input::{CommentInput, CommentTarget};
 use crate::ui::components::status_bar::format_span;
 use crate::ui::{markdown, styles};
 
@@ -55,11 +55,15 @@ enum RowKind {
     Chrome,
     /// A row of the item's own description.
     Description,
-    /// A row of the thread at this index into `discussions`.  The row that
-    /// names its author is the thread's `head`, and draws as a filled band —
-    /// which is what divides one thread from the next without spending a blank
-    /// row on it.
-    Thread { thread: usize, head: bool },
+    /// A row of the thread at this index into `discussions`, belonging to its
+    /// `note`th comment.  The row that names the thread's first author is its
+    /// `head`, and draws as a filled band — which is what divides one thread
+    /// from the next without spending a blank row on it.
+    Thread {
+        thread: usize,
+        note: usize,
+        head: bool,
+    },
 }
 
 /// The conversation's state: what was fetched, what the reader has folded away,
@@ -106,6 +110,11 @@ impl Conversation {
             KeyAction::ToggleThread => self.toggle_fold(),
             KeyAction::ReplyThread => *overlay = draft_reply(self),
             KeyAction::NewThread => *overlay = draft_new_thread(),
+            KeyAction::EditComment => {
+                if let Some(draft) = draft_edit(self) {
+                    *overlay = draft;
+                }
+            }
             _ => return EventResult::Bubble,
         }
         EventResult::Consumed
@@ -162,7 +171,7 @@ impl Conversation {
     /// thread counts and this walks thread to thread.
     pub fn move_unresolved(&mut self, down: bool) {
         let open = |row: &usize| {
-            matches!(self.kinds[*row], RowKind::Thread { thread, head: true }
+            matches!(self.kinds[*row], RowKind::Thread { thread, head: true, .. }
                 if !self.discussions[thread].resolved())
         };
         let found = if down {
@@ -209,6 +218,16 @@ impl Conversation {
             RowKind::Thread { thread, .. } => self.discussions.get(*thread),
             RowKind::Chrome | RowKind::Description => None,
         }
+    }
+
+    /// The note the cursor is on — a thread's first comment or one of its
+    /// replies, whether the cursor sits on the row naming its author or
+    /// anywhere in its body.  `None` on the description and on chrome.
+    pub fn note_at_cursor(&self) -> Option<&Note> {
+        let RowKind::Thread { thread, note, .. } = self.kinds.get(self.cursor)? else {
+            return None;
+        };
+        self.discussions.get(*thread)?.comments().nth(*note)
     }
 
     /// Fold the thread under the cursor away, or open it back up.
@@ -337,10 +356,14 @@ impl Conversation {
         }
         let head_kind = RowKind::Thread {
             thread: index,
+            note: 0,
             head: true,
         };
-        let body_kind = RowKind::Thread {
+        // Every row a note owns carries its index, so the key that edits one
+        // knows which note the cursor is in and not merely which thread.
+        let body_kind = |note: usize| RowKind::Thread {
             thread: index,
+            note,
             head: false,
         };
         // Collected rather than pushed straight through `push`, which wants all
@@ -364,17 +387,18 @@ impl Conversation {
             ))
         };
         for line in body(root, 0) {
-            rows.push((body_kind, indented(std::slice::from_ref(&rail), line)));
+            rows.push((body_kind(0), indented(std::slice::from_ref(&rail), line)));
         }
-        for reply in replies {
+        for (i, reply) in replies.iter().enumerate() {
+            let kind = body_kind(i + 1);
             let elbow = Span::styled(REPLY_ELBOW, Style::default().fg(styles::text_dim()));
             rows.push((
-                body_kind,
+                kind,
                 indented(&[rail.clone(), elbow], Line::from(head_spans(reply, false))),
             ));
             let inset = Span::raw(" ".repeat(REPLY_INSET));
             for line in body(reply, REPLY_INSET) {
-                rows.push((body_kind, indented(&[rail.clone(), inset.clone()], line)));
+                rows.push((kind, indented(&[rail.clone(), inset.clone()], line)));
             }
         }
         self.extend(rows);
@@ -413,12 +437,12 @@ impl Conversation {
         let RowKind::Thread { thread, .. } = self.kinds.get(self.cursor)? else {
             return None;
         };
+        let thread = *thread;
         (0..=self.cursor).rev().find(|&r| {
-            self.kinds.get(r)
-                == Some(&RowKind::Thread {
-                    thread: *thread,
-                    head: true,
-                })
+            matches!(
+                self.kinds.get(r),
+                Some(RowKind::Thread { thread: t, head: true, .. }) if *t == thread
+            )
         })
     }
 }
@@ -430,12 +454,30 @@ impl Conversation {
 /// thread entirely, which means on the description, does this fall back to
 /// drafting a new thread.
 pub fn draft_reply(state: &Conversation) -> Overlay {
-    let reply_discussion_id = state.thread_at_cursor().map(|d| d.id.clone());
+    let target = state
+        .thread_at_cursor()
+        .map_or(CommentTarget::NewThread, |d| {
+            CommentTarget::Reply(d.id.clone())
+        });
     Overlay::CommentInput {
         input: CommentInput::default(),
         autocomplete: Box::default(),
-        reply_discussion_id,
+        target,
     }
+}
+
+/// The overlay that rewrites the note under the cursor, opened with its current
+/// text.  `None` with the cursor on the description or on chrome, where there is
+/// no note to edit.  Whether the reader may edit that note is GitLab's call —
+/// a maintainer edits anyone's — so this offers the draft and lets the API
+/// refuse it.
+pub fn draft_edit(state: &Conversation) -> Option<Overlay> {
+    let note = state.note_at_cursor()?;
+    Some(Overlay::CommentInput {
+        input: CommentInput::with_text(&note.body),
+        autocomplete: Box::default(),
+        target: CommentTarget::Edit(note.id),
+    })
 }
 
 /// The overlay that drafts a new top-level thread.
@@ -443,7 +485,7 @@ pub fn draft_new_thread() -> Overlay {
     Overlay::CommentInput {
         input: CommentInput::default(),
         autocomplete: Box::default(),
-        reply_discussion_id: None,
+        target: CommentTarget::NewThread,
     }
 }
 
@@ -602,7 +644,7 @@ mod tests {
     use chrono::Utc;
     use glab_core::domain::{Discussion, Note, User};
 
-    use super::{Conversation, Overlay, RowKind};
+    use super::{CommentTarget, Conversation, Overlay, RowKind};
 
     fn user(name: &str) -> User {
         User {
@@ -613,6 +655,7 @@ mod tests {
 
     fn note(author: &str, body: &str, resolvable: bool, resolved: bool) -> Note {
         Note {
+            id: 1,
             body: body.to_string(),
             author: user(author),
             created_at: Utc::now(),
@@ -638,10 +681,11 @@ mod tests {
     /// new one.
     fn reply_target(state: &Conversation) -> Option<String> {
         match super::draft_reply(state) {
-            Overlay::CommentInput {
-                reply_discussion_id,
-                ..
-            } => reply_discussion_id,
+            Overlay::CommentInput { target, .. } => match target {
+                CommentTarget::Reply(id) => Some(id),
+                CommentTarget::NewThread => None,
+                CommentTarget::Edit(_) => panic!("reply should never edit"),
+            },
             _ => panic!("reply should draft a comment"),
         }
     }
@@ -736,6 +780,56 @@ mod tests {
                 "row {row}: {:?}",
                 rows(&state)[row]
             );
+        }
+    }
+
+    /// Every row a note owns answers with that note — the wrapped tail of a
+    /// body as much as the row naming its author — so `e` edits the comment the
+    /// cursor is in rather than whichever one opened the thread.
+    #[test]
+    fn every_row_of_a_note_answers_with_that_note() {
+        let mut state = Conversation {
+            discussions: vec![thread(
+                "d1",
+                vec![
+                    Note {
+                        id: 10,
+                        ..note(
+                            "alice",
+                            "the root, long enough that it has to wrap onto a second row",
+                            false,
+                            false,
+                        )
+                    },
+                    Note {
+                        id: 11,
+                        ..note("bob", "a reply", false, false)
+                    },
+                ],
+            )],
+            ..Conversation::default()
+        };
+        state.build(None, 36);
+        let rows = rows(&state);
+        let row_with = |needle: &str| {
+            rows.iter()
+                .position(|r| r.contains(needle))
+                .unwrap_or_else(|| panic!("no row holds {needle:?}: {rows:?}"))
+        };
+
+        // The root's wrapped tail names nobody, and still answers with the root.
+        state.cursor = row_with("second row");
+        assert_eq!(state.note_at_cursor().map(|n| n.id), Some(10));
+
+        // And the draft `e` opens on the reply is addressed to the reply,
+        // holding its text rather than the root's.
+        state.cursor = row_with("a reply");
+        match super::draft_edit(&state) {
+            Some(Overlay::CommentInput { input, target, .. }) => {
+                assert_eq!(target, CommentTarget::Edit(11));
+                assert_eq!(input.text(), "a reply");
+            }
+            _ => panic!("the reply should draft an edit"),
         }
     }
 
@@ -957,6 +1051,7 @@ mod tests {
             state.kinds[first_of_second],
             RowKind::Thread {
                 thread: 1,
+                note: 0,
                 head: true
             }
         );
@@ -977,6 +1072,7 @@ mod tests {
             super::band(
                 RowKind::Thread {
                     thread: 1,
+                    note: 0,
                     head: false
                 },
                 false

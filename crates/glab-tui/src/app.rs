@@ -69,7 +69,7 @@ pub enum Overlay {
     CommentInput {
         input: crate::ui::components::input::CommentInput,
         autocomplete: Box<crate::ui::components::autocomplete::AutocompleteState>,
-        reply_discussion_id: Option<String>,
+        target: crate::ui::components::input::CommentTarget,
     },
     FilterEditor(filter_editor::FilterEditorState),
 }

@@ -7,7 +7,9 @@ use glab_api::Issuable;
 
 use crate::cmd::{Cmd, EventResult};
 use crate::keybindings::KeyAction;
-use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
+use crate::ui::components::{
+    chord_popup, conversation::draft_new_thread, input::CommentTarget, label_editor,
+};
 use glab_core::domain::{MergeRequest, ProjectLabel, User};
 
 use super::{AppCtx, AppData, Overlay, UiState, View};
@@ -50,14 +52,8 @@ pub trait MrActions {
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState);
     /// Resolve or reopen the thread the detail view's cursor is on.
     fn resolve_thread(&self, ctx: &AppCtx, ui: &mut UiState);
-    /// Post `body` as a new comment or as a reply to an existing thread.
-    fn submit_comment(
-        &self,
-        body: &str,
-        reply_discussion_id: Option<String>,
-        ctx: &AppCtx,
-        ui: &mut UiState,
-    );
+    /// Post `body` as a new thread, a reply, or a rewrite of an existing note.
+    fn submit_comment(&self, body: &str, target: CommentTarget, ctx: &AppCtx, ui: &mut UiState);
 }
 
 impl MrActions for MergeRequest {
@@ -172,11 +168,7 @@ impl MrActions for MergeRequest {
                 }
             }
             KeyAction::Comment => {
-                ui.overlay = Overlay::CommentInput {
-                    input: CommentInput::default(),
-                    autocomplete: Box::default(),
-                    reply_discussion_id: None,
-                };
+                ui.overlay = draft_new_thread();
             }
             _ => return EventResult::Bubble,
         }
@@ -263,13 +255,7 @@ impl MrActions for MergeRequest {
             let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
         });
     }
-    fn submit_comment(
-        &self,
-        body: &str,
-        reply_discussion_id: Option<String>,
-        ctx: &AppCtx,
-        ui: &mut UiState,
-    ) {
+    fn submit_comment(&self, body: &str, target: CommentTarget, ctx: &AppCtx, ui: &mut UiState) {
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         let body = body.to_string();
@@ -278,13 +264,17 @@ impl MrActions for MergeRequest {
 
         ui.loading = true;
         tokio::spawn(async move {
-            let create_result = match &reply_discussion_id {
-                Some(disc_id) => client
+            let create_result = match &target {
+                CommentTarget::Reply(disc_id) => client
                     .reply_to_discussion(Issuable::MergeRequest, &project, &iid, disc_id, &body)
                     .await
                     .map(|_| ()),
-                None => client
+                CommentTarget::NewThread => client
                     .create_thread(Issuable::MergeRequest, &project, &iid, &body)
+                    .await
+                    .map(|_| ()),
+                CommentTarget::Edit(note_id) => client
+                    .update_note(Issuable::MergeRequest, &project, &iid, *note_id, &body)
                     .await
                     .map(|_| ()),
             };

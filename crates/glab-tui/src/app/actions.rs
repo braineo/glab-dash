@@ -115,13 +115,12 @@ impl App {
     pub(super) fn dispatch_submit_comment(
         &mut self,
         body: &str,
-        reply_discussion_id: Option<&str>,
+        target: crate::ui::components::input::CommentTarget,
     ) {
-        let reply_id = reply_discussion_id.map(String::from);
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { id, .. }) => {
                 if let Some(issue) = self.data.issues.iter().find(|i| i.id == id) {
-                    issue.submit_comment(body, reply_id, &self.ctx, &mut self.ui);
+                    issue.submit_comment(body, target, &self.ctx, &mut self.ui);
                 }
             }
             Some(FocusedItem::Mr { project, iid }) => {
@@ -131,7 +130,7 @@ impl App {
                     .iter()
                     .find(|m| m.iid == iid && m.project_path() == project)
                 {
-                    mr.submit_comment(body, reply_id, &self.ctx, &mut self.ui);
+                    mr.submit_comment(body, target, &self.ctx, &mut self.ui);
                 }
             }
             None => {}

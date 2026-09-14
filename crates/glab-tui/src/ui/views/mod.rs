@@ -23,6 +23,7 @@ binding_group! {
         (ctrl 'u') => PageUp,
         ('c') => ReplyThread | "c" "Reply to this thread",
         ('C') => NewThread | "C" "Start a new thread",
+        ('e') => EditComment | "e" "Edit this comment",
         (' ') => ResolveThread | "Space" "Resolve / unresolve",
         (key Tab) => ToggleThread | "Tab" "Fold thread",
     }

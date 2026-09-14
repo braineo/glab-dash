@@ -5,6 +5,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Widget;
 
 use crate::keybindings;
+use crate::ui::components::input::CommentTarget;
 use crate::ui::components::{chord_popup, confirm_dialog, error_popup, help, label_editor, picker};
 use crate::ui::views::{
     dashboard, filter_editor, issue_detail, issue_list, mr_detail, mr_list, planning,
@@ -183,14 +184,14 @@ impl App {
             Overlay::CommentInput {
                 input,
                 autocomplete,
-                reply_discussion_id,
+                target,
             } => {
                 let popup = centered_rect(60, 40, area);
                 ratatui::widgets::Clear.render(popup, frame.buffer_mut());
-                let title = if reply_discussion_id.is_some() {
-                    "Reply (C-⏎ submit, C-s search)"
-                } else {
-                    "Comment (C-⏎ submit, C-s search)"
+                let title = match target {
+                    CommentTarget::Reply(_) => "Reply (C-⏎ submit, C-s search)",
+                    CommentTarget::Edit(_) => "Edit (C-⏎ submit, C-s search)",
+                    CommentTarget::NewThread => "Comment (C-⏎ submit, C-s search)",
                 };
                 crate::ui::components::input::render(frame, popup, input, title);
                 crate::ui::components::autocomplete::render(frame, popup, autocomplete);
