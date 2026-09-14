@@ -56,7 +56,7 @@ toml = "1"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
-tui-textarea = { package = "tui-textarea-2", version = "0.13" }
+tui-textarea = { package = "tui-textarea-2", version = "0.13", features = ["search"] }
 two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 unicode-segmentation = "1"
 unicode-width = "0.2"

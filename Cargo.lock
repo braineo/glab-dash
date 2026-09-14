@@ -3579,6 +3579,7 @@ dependencies = [
  "portable-atomic",
  "ratatui-core",
  "ratatui-widgets",
+ "regex",
  "unicode-segmentation",
  "unicode-width",
 ]

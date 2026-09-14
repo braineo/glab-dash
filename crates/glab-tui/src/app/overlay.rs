@@ -167,6 +167,15 @@ impl App {
                             self.dispatch_submit_comment(&body, reply_discussion_id.as_deref());
                         }
                     }
+                    input::InputAction::Continue if input.is_searching() => {
+                        // No completion popup while isearch is moving the cursor.
+                        autocomplete.dismiss();
+                        self.ui.overlay = Overlay::CommentInput {
+                            input,
+                            autocomplete,
+                            reply_discussion_id,
+                        };
+                    }
                     input::InputAction::Continue => {
                         let text = input.text();
                         let cursor = input.cursor_byte_pos();
