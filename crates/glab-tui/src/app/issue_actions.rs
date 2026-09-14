@@ -326,7 +326,7 @@ pub fn build_status_chord(
         .collect();
     sorted_indices.sort_by_key(|&i| match statuses[i].category.as_deref() {
         Some("done") => 0,
-        Some("active" | "opened") => 1,
+        Some("to_do" | "in_progress") => 1,
         Some("canceled") => 2,
         _ => 3,
     });
@@ -348,7 +348,7 @@ pub fn build_status_chord(
         let is_close_category = |s: &glab_core::domain::WorkItemStatus| {
             s.category
                 .as_deref()
-                .is_some_and(|c| matches!(c, "done" | "canceled" | "closed"))
+                .is_some_and(|c| matches!(c, "done" | "canceled"))
         };
 
         let mut close_items: Vec<(usize, &str)> = statuses
