@@ -187,6 +187,9 @@ const USER_FIELDS: &str = r"
     }
 ";
 
+/// Page size for every paginated list query.
+pub(crate) const PAGE_SIZE: u32 = 100;
+
 /// `doc` followed by the fragments it spreads: `fields` itself, and the
 /// `UserFields` every one of them spreads in turn.
 pub(crate) fn document(doc: &str, fields: &str) -> String {

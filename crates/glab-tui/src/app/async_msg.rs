@@ -292,6 +292,22 @@ impl App {
             }
         } else {
             let mut new_mrs = mrs;
+            // A full walk lists open merge requests only, so a cached open one
+            // it did not return is no longer open. Carry it over as closed so
+            // the snapshot corrects the stored row; the caller then drops it
+            // from memory with the rest of the closed ones.
+            let returned: std::collections::HashSet<&String> =
+                new_mrs.iter().map(|m| &m.id).collect();
+            let closed: Vec<MergeRequest> = self
+                .data
+                .mrs
+                .iter()
+                .filter(|m| m.state == "opened" && !returned.contains(&m.id))
+                .map(|m| MergeRequest {
+                    state: "closed".to_string(),
+                    ..m.clone()
+                })
+                .collect();
             for new_mr in &mut new_mrs {
                 if let Some(pos) = self.data.mrs.iter().position(|m| m.id == new_mr.id) {
                     let old_mr = &self.data.mrs[pos];
@@ -302,6 +318,7 @@ impl App {
                     }
                 }
             }
+            new_mrs.extend(closed);
             self.data.mrs = new_mrs;
         }
     }
