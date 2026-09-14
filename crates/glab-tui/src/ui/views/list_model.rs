@@ -23,8 +23,8 @@ binding_group! {
         (ctrl 'p') => MoveUp,
         ('g') => Top | "g/G" "Jump to top/bottom",
         ('G') => Bottom,
-        (ctrl 'd') => PageDown | "Ctrl+d/u" "Page down/up",
-        (ctrl 'u') => PageUp,
+        (ctrl 'v') => PageDown | "^v/M-v" "Page down/up",
+        (alt 'v') => PageUp,
         (key Enter) => OpenDetail | "Enter" "Open detail",
     }
 }
