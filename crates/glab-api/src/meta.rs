@@ -14,12 +14,12 @@ impl GitLabClient {
     pub async fn list_project_labels(&self, project: &str) -> Result<Vec<ProjectLabel>> {
         let path = format!("/projects/{}/labels", encode(project));
         let request = self.rest(Method::GET, &path).query(&[("per_page", "100")]);
-        Self::send(request).await
+        Self::fetch(request).await
     }
 
     /// Read the user the token authenticates as.
     pub async fn get_authenticated_user(&self) -> Result<serde_json::Value> {
-        Self::send(self.rest(Method::GET, "/user")).await
+        Self::fetch(self.rest(Method::GET, "/user")).await
     }
 
     /// Search users by name, username or email.
@@ -27,6 +27,6 @@ impl GitLabClient {
         let request = self
             .rest(Method::GET, "/users")
             .query(&[("search", query), ("per_page", "20")]);
-        Self::send(request).await
+        Self::fetch(request).await
     }
 }

@@ -12,7 +12,7 @@ use strum::IntoStaticStr;
 
 use glab_core::domain::Issue;
 
-use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload};
+use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload, join_walks};
 use crate::wire::{GqlNamespaceWorkItems, GqlRootIssues, GqlWorkItem};
 
 /// The selection the root `issues` query uses, deserialized straight into
@@ -111,23 +111,28 @@ impl GitLabClient {
             WORK_ITEM_FIELDS,
         );
 
-        let mut all = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for namespace in namespaces {
-            let issues = self
-                .paginate::<Issue, GqlNamespaceWorkItems>("listWorkItems", &query, |after| {
-                    serde_json::json!({
-                        "path": namespace,
-                        "state": state_value(state),
-                        "updatedAfter": updated_after,
-                        "after": after,
-                        "first": PAGE_SIZE,
+        let mut set = tokio::task::JoinSet::new();
+        for (idx, namespace) in namespaces.iter().enumerate() {
+            let client = self.clone();
+            let query = query.clone();
+            let namespace = namespace.clone();
+            let updated_after = updated_after.map(str::to_string);
+            set.spawn(async move {
+                let issues = client
+                    .paginate::<Issue, GqlNamespaceWorkItems>("listWorkItems", &query, |after| {
+                        serde_json::json!({
+                            "path": namespace,
+                            "state": state_value(state),
+                            "updatedAfter": updated_after,
+                            "after": after,
+                            "first": PAGE_SIZE,
+                        })
                     })
-                })
-                .await?;
-            all.extend(issues.into_iter().filter(|i| seen.insert(i.id.clone())));
+                    .await;
+                (idx, issues)
+            });
         }
-        Ok(all)
+        join_walks(set, |i| &i.id).await
     }
 
     /// List the issues assigned to any of `members`, anywhere on the instance,
@@ -162,24 +167,29 @@ impl GitLabClient {
             ISSUE_FIELDS,
         );
 
-        let mut all = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for member in members {
-            let issues = self
-                .paginate::<Issue, GqlRootIssues>("listAssignedIssues", &query, |after| {
-                    serde_json::json!({
-                        "assigneeUsernames": [member],
-                        "state": state_value(state),
-                        "types": ["ISSUE"],
-                        "after": after,
-                        "updatedAfter": updated_after,
-                        "first": PAGE_SIZE,
+        let mut set = tokio::task::JoinSet::new();
+        for (idx, member) in members.iter().enumerate() {
+            let client = self.clone();
+            let query = query.clone();
+            let member = member.clone();
+            let updated_after = updated_after.map(str::to_string);
+            set.spawn(async move {
+                let issues = client
+                    .paginate::<Issue, GqlRootIssues>("listAssignedIssues", &query, |after| {
+                        serde_json::json!({
+                            "assigneeUsernames": [member],
+                            "state": state_value(state),
+                            "types": ["ISSUE"],
+                            "after": after,
+                            "updatedAfter": updated_after,
+                            "first": PAGE_SIZE,
+                        })
                     })
-                })
-                .await?;
-            all.extend(issues.into_iter().filter(|i| seen.insert(i.id.clone())));
+                    .await;
+                (idx, issues)
+            });
         }
-        Ok(all)
+        join_walks(set, |i| &i.id).await
     }
 
     /// Apply `input` to the work item `gid` through the `workItemUpdate`
@@ -249,7 +259,7 @@ impl GitLabClient {
         } else {
             doc
         };
-        self.graphql(
+        self.graphql_once(
             "workItemUpdate",
             &query,
             serde_json::json!({ "input": input }),
