@@ -3,7 +3,8 @@
 //!
 //! GitLab answers on two APIs and this crate speaks both — GraphQL for the list
 //! queries and work-item mutations, REST v4 for the endpoints GraphQL does not
-//! cover (notes, discussions, approvals, merges, labels, user search). Wire
+//! cover (notes, discussions, related items, approvals, merges, labels, user
+//! search). Wire
 //! shapes stay inside: a caller passes plain arguments and gets
 //! [`glab_core::domain`] types back, so the `Gql*` structs, the query documents
 //! and GitLab's own error envelopes never reach the layers above.
@@ -19,9 +20,9 @@ pub mod issues;
 pub mod merge_requests;
 pub mod meta;
 pub mod planning;
+pub mod related;
 pub mod wire;
 
 pub use client::GitLabClient;
-pub use discussions::Issuable;
 pub use issues::IssueState;
 pub use merge_requests::MrState;

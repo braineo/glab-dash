@@ -6,7 +6,7 @@
 //! tail, an `iid` left as the string GraphQL sends, connections unwrapped, and
 //! the nullable iteration title that auto-generated iterations have.
 
-use glab_core::domain::Issue;
+use glab_core::domain::{Issue, Item, StatusCategory};
 
 const RESPONSE: &str = include_str!("issue_graphql_response.json");
 
@@ -27,7 +27,7 @@ fn deserializes_graphql_response() {
 
     // Nested status, reached through the accessors the UI uses.
     assert_eq!(issue.status_name(), Some("Backlog"));
-    assert_eq!(issue.status_category(), Some("to_do"));
+    assert_eq!(issue.status_category(), Some(StatusCategory::ToDo));
 
     // Auto-generated iterations have no title.
     let iter = issue.iteration.as_ref().expect("iteration");

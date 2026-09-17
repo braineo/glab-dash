@@ -5,28 +5,68 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::Overlay;
-use crate::cmd::EventResult;
+use crate::binding_group;
+use crate::cmd::{Effects, EventResult};
 use crate::keybindings::KeyAction;
 use crate::ui::components::conversation::{self, Conversation};
+use crate::ui::components::detail_body::DetailBody;
+use crate::ui::components::related;
 use crate::ui::styles;
-use glab_core::domain::Issue;
+use crate::ui::views::DetailCtx;
+use glab_core::domain::{Issue, Item};
+use glab_core::domain::{ItemRef, RelatedItem};
+
+binding_group! {
+    /// An issue only, so it sits ahead of the shared conversation group rather
+    /// than inside it.
+    pub ISSUE_LINK_GROUP: "Linked Issues" {
+        ('L') => AddLink | "L" "Link an issue",
+        ('d') => RemoveLink | "d" "Unlink (on a link row)",
+        (key Enter) => OpenLink | "Enter" "Open the linked issue",
+    }
+}
 
 #[derive(Default)]
 pub struct IssueDetailState {
     pub id: String,
     pub project: String,
     pub iid: String,
+    /// The rows and the cursor; the sections only fill them.
+    pub body: DetailBody,
     pub conversation: Conversation,
 }
 
 impl IssueDetailState {
-    pub fn handle_key(&mut self, action: Option<KeyAction>, overlay: &mut Overlay) -> EventResult {
-        self.conversation.handle_key(action, overlay)
+    /// What its keys act on.
+    pub fn item(&self) -> ItemRef {
+        ItemRef::issue(&self.project, &self.iid)
+    }
+
+    /// Offered to the sections in the order they are drawn.
+    pub fn handle_key(
+        &mut self,
+        action: Option<KeyAction>,
+        cx: &DetailCtx<'_>,
+        overlay: &mut Overlay,
+        fx: &mut Effects<'_>,
+    ) -> EventResult {
+        let Some(action) = action else {
+            return EventResult::Bubble;
+        };
+        if self.body.handle_key(action) {
+            return EventResult::Consumed;
+        }
+        if related::handle_key(action, cx, &self.body, overlay, fx).handled() {
+            return EventResult::Consumed;
+        }
+        self.conversation
+            .handle_key(action, &mut self.body, overlay)
     }
 
     pub fn reset(&mut self) {
         self.project.clear();
         self.iid.clear();
+        self.body = DetailBody::default();
         self.conversation.reset();
     }
 
@@ -43,17 +83,21 @@ pub fn render(
     frame: &mut Frame,
     area: Rect,
     item: &Issue,
+    related: &[RelatedItem],
     state: &mut IssueDetailState,
     ctx: &crate::ui::RenderCtx<'_>,
 ) {
     let chunks = Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).split(area);
     render_header(frame, chunks[0], item, ctx);
-    conversation::render(
-        frame,
-        chunks[1],
-        &mut state.conversation,
-        item.description.as_deref(),
-    );
+
+    // What it says, what holds it up, then what was said about it.
+    let width = usize::from(chunks[1].width);
+    state.body.begin();
+    state.body.description(item.description.as_deref(), width);
+    related::push(&mut state.body, related, width);
+    conversation::push(&mut state.body, &state.conversation, width);
+    state.body.render(frame, chunks[1]);
+    conversation::render_sticky_head(frame, chunks[1], &state.conversation, &state.body);
 }
 
 /// The item's identity in two filled rows: what it is, then its state and the

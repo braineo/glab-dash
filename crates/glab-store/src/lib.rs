@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use serde::{Serialize, de::DeserializeOwned};
 
-use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
+use glab_core::domain::{Issue, Item, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
 
 const SCHEMA_VERSION: u32 = 3;
 

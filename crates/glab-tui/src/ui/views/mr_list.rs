@@ -9,7 +9,7 @@ use crate::cmd::{Cmd, Effects, EventResult};
 use crate::keybindings::KeyAction;
 use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
 use crate::ui::{components, styles};
-use glab_core::domain::MergeRequest;
+use glab_core::domain::{Item, MergeRequest};
 use glab_core::filter::matches_mr;
 use glab_core::sort;
 use glab_core::sort::label_order::LabelOrders;

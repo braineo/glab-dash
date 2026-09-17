@@ -1,4 +1,5 @@
 use glab_core::domain::{Issue, Iteration, MergeRequest};
+use glab_core::domain::{ItemRef, Relation};
 
 /// Side-effect descriptors returned from update logic.
 ///
@@ -61,6 +62,17 @@ pub enum Cmd {
         issue_id: String,
         target_gid: Option<String>,
         old_iteration: Option<Iteration>,
+    },
+    /// Read what `item` is related to; the writes below re-read it too.
+    FetchRelated(ItemRef),
+    AddLink {
+        item: ItemRef,
+        target: ItemRef,
+        relation: Relation,
+    },
+    RemoveLink {
+        item: ItemRef,
+        link_id: u64,
     },
     SpawnSetStatus {
         project: String,

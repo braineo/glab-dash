@@ -13,6 +13,9 @@ use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use glab_core::domain::ItemKind;
+use urlencoding::encode;
+
 use crate::wire::{GqlPage, GqlResponse, Paged};
 
 /// An authenticated connection to one GitLab instance.
@@ -200,6 +203,17 @@ fn join_messages(errors: &[Value], field: Option<&str>) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The REST route for `tail` under the item `iid` in `project`.  Both kinds
+/// hang their sub-collections off the same shape, under the segment naming the
+/// kind — which is the whole of what a REST route needs to know about it.
+pub(crate) fn item_path(kind: ItemKind, project: &str, iid: &str, tail: &str) -> String {
+    let segment = match kind {
+        ItemKind::Issue => "issues",
+        ItemKind::MergeRequest => "merge_requests",
+    };
+    format!("/projects/{}/{segment}/{iid}/{tail}", encode(project))
 }
 
 /// The user selection every other fragment spreads in turn.

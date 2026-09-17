@@ -1,33 +1,16 @@
 //! Notes and discussions, over REST.
 //!
 //! GitLab routes an issue's and a merge request's notes through the same
-//! endpoints under a different collection segment, so [`Issuable`] names which
+//! endpoints under a different collection segment, so [`ItemKind`] names which
 //! and the three operations are written once.
 
 use anyhow::Result;
 use reqwest::Method;
 
+use glab_core::domain::ItemKind;
 use glab_core::domain::{Discussion, Note};
-use urlencoding::encode;
 
-use crate::client::GitLabClient;
-
-/// The two issuable kinds that carry notes and discussions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Issuable {
-    Issue,
-    MergeRequest,
-}
-
-impl Issuable {
-    /// The collection segment naming this kind in a REST route.
-    fn segment(self) -> &'static str {
-        match self {
-            Issuable::Issue => "issues",
-            Issuable::MergeRequest => "merge_requests",
-        }
-    }
-}
+use crate::client::{GitLabClient, item_path};
 
 impl GitLabClient {
     /// List the discussion threads on the issuable `iid` in `project`, oldest
@@ -37,12 +20,12 @@ impl GitLabClient {
     /// threads, and stopping at the first drops the rest of the conversation.
     pub async fn list_discussions(
         &self,
-        kind: Issuable,
+        kind: ItemKind,
         project: &str,
         iid: &str,
     ) -> Result<Vec<Discussion>> {
         const PER_PAGE: usize = 100;
-        let path = Self::issuable_path(kind, project, iid, "discussions");
+        let path = item_path(kind, project, iid, "discussions");
         let mut all: Vec<Discussion> = Vec::new();
         for page in 1.. {
             let request = self.rest(Method::GET, &path).query(&[
@@ -69,16 +52,13 @@ impl GitLabClient {
     /// replies and resolves from the moment it exists.
     pub async fn create_thread(
         &self,
-        kind: Issuable,
+        kind: ItemKind,
         project: &str,
         iid: &str,
         body: &str,
     ) -> Result<Discussion> {
         let request = self
-            .rest(
-                Method::POST,
-                &Self::issuable_path(kind, project, iid, "discussions"),
-            )
+            .rest(Method::POST, &item_path(kind, project, iid, "discussions"))
             .json(&serde_json::json!({ "body": body }));
         Self::send(request).await
     }
@@ -89,13 +69,13 @@ impl GitLabClient {
     /// thread when the first reply lands on it.
     pub async fn reply_to_discussion(
         &self,
-        kind: Issuable,
+        kind: ItemKind,
         project: &str,
         iid: &str,
         discussion_id: &str,
         body: &str,
     ) -> Result<Note> {
-        let path = Self::issuable_path(
+        let path = item_path(
             kind,
             project,
             iid,
@@ -116,13 +96,13 @@ impl GitLabClient {
     /// maintainers.
     pub async fn update_note(
         &self,
-        kind: Issuable,
+        kind: ItemKind,
         project: &str,
         iid: &str,
         note_id: u64,
         body: &str,
     ) -> Result<Note> {
-        let path = Self::issuable_path(kind, project, iid, &format!("notes/{note_id}"));
+        let path = item_path(kind, project, iid, &format!("notes/{note_id}"));
         let request = self
             .rest(Method::PUT, &path)
             .json(&serde_json::json!({ "body": body }));
@@ -140,8 +120,8 @@ impl GitLabClient {
         discussion_id: &str,
         resolved: bool,
     ) -> Result<Discussion> {
-        let path = Self::issuable_path(
-            Issuable::MergeRequest,
+        let path = item_path(
+            ItemKind::MergeRequest,
             project,
             iid,
             &format!("discussions/{discussion_id}"),
@@ -150,14 +130,5 @@ impl GitLabClient {
             .rest(Method::PUT, &path)
             .json(&serde_json::json!({ "resolved": resolved }));
         Self::send(request).await
-    }
-
-    /// The REST route for `tail` under the issuable `iid` in `project`.
-    fn issuable_path(kind: Issuable, project: &str, iid: &str, tail: &str) -> String {
-        format!(
-            "/projects/{}/{}/{iid}/{tail}",
-            encode(project),
-            kind.segment(),
-        )
     }
 }

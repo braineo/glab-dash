@@ -72,10 +72,16 @@ impl App {
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
+                    let related = self
+                        .data
+                        .related_by_item
+                        .get(&self.ui.views.issue_detail.item())
+                        .map_or(&[][..], Vec::as_slice);
                     issue_detail::render(
                         frame,
                         chunks[1],
                         &item,
+                        related,
                         &mut self.ui.views.issue_detail,
                         &ctx,
                     );

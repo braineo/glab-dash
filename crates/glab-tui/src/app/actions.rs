@@ -1,8 +1,12 @@
 //! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
-use glab_core::domain::{Issue, MergeRequest, StatusValue};
+use glab_core::domain::ItemRef;
+use glab_core::domain::{Issue, Item, MergeRequest, StatusValue};
+
+use crate::ui::components::related;
 
 use super::issue_actions::IssueActions;
+use super::item_actions;
 use super::mr_actions::MrActions;
 use super::{App, FocusedItem, Overlay, View};
 
@@ -111,29 +115,20 @@ impl App {
         }
     }
 
-    /// Dispatch comment submit to the focused issue or MR.
+    /// Both kinds take the same path; this only says which item.
     pub(super) fn dispatch_submit_comment(
         &mut self,
         body: &str,
         target: crate::ui::components::input::CommentTarget,
     ) {
-        match self.ui.focused.clone() {
-            Some(FocusedItem::Issue { id, .. }) => {
-                if let Some(issue) = self.data.issues.iter().find(|i| i.id == id) {
-                    issue.submit_comment(body, target, &self.ctx, &mut self.ui);
-                }
-            }
-            Some(FocusedItem::Mr { project, iid }) => {
-                if let Some(mr) = self
-                    .data
-                    .mrs
-                    .iter()
-                    .find(|m| m.iid == iid && m.project_path() == project)
-                {
-                    mr.submit_comment(body, target, &self.ctx, &mut self.ui);
-                }
-            }
-            None => {}
+        if let Some(focused) = self.ui.focused.clone() {
+            item_actions::submit_comment(
+                &focused.item_ref(),
+                body,
+                target,
+                &self.ctx,
+                &mut self.ui,
+            );
         }
     }
 
@@ -157,8 +152,7 @@ impl App {
     pub(super) fn action_open_detail(&mut self) {
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { id, project, iid }) => {
-                self.ui.views.issue_detail.open(&id, &project, &iid);
-                self.fetch_notes_for_issue(&project, &iid);
+                self.open_issue_detail(&id, &project, &iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::IssueDetail;
             }
@@ -171,6 +165,45 @@ impl App {
             None => {}
         }
         self.ui.dirty.selection = true;
+    }
+
+    /// Does not switch the view: the caller decides what to stack.
+    pub(super) fn open_issue_detail(&mut self, id: &str, project: &str, iid: &str) {
+        self.ui.views.issue_detail.open(id, project, iid);
+        self.fetch_notes_for_issue(project, iid);
+        self.ui
+            .pending_cmds
+            .push(crate::cmd::Cmd::FetchRelated(ItemRef::issue(project, iid)));
+        self.ui.dirty.selection = true;
+    }
+
+    /// A fetched item opens in the detail view; one outside the team's scope
+    /// has no local copy to render, so it opens in the browser.
+    ///
+    /// ponytail: a chain of blockers cannot be walked back item by item; give
+    /// the detail view its own stack if that bites.
+    pub(super) fn action_open_related(&mut self) {
+        let detail = &self.ui.views.issue_detail;
+        let Some(target) = self
+            .data
+            .related_by_item
+            .get(&detail.item())
+            .and_then(|related| related::at_cursor(related, &detail.body))
+            .cloned()
+        else {
+            return;
+        };
+        let reference = target.item.reference();
+        let Some(issue) = self.data.issues.iter().find(|i| i.reference == reference) else {
+            let _ = open::that_detached(&target.web_url);
+            return;
+        };
+        let (id, project, iid) = (
+            issue.id.clone(),
+            issue.project_path().to_string(),
+            issue.iid.clone(),
+        );
+        self.open_issue_detail(&id, &project, &iid);
     }
 
     pub(super) fn apply_iteration_move(

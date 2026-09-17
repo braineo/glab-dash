@@ -1,6 +1,16 @@
+use glab_core::domain::Issue;
+use glab_core::domain::{ItemRef, RelatedItem};
+
 use crate::app::View;
 use crate::binding_group;
 use crate::keybindings::BindingGroup;
+
+/// What a detail view needs from `AppData` to answer a key.
+pub struct DetailCtx<'a> {
+    pub item: ItemRef,
+    pub related: &'a [RelatedItem],
+    pub issues: &'a [Issue],
+}
 
 binding_group! {
     /// Walking a detail view's conversation and acting on the thread under the
@@ -74,6 +84,9 @@ static PLANNING_CHAIN: &[&BindingGroup] = &[
 /// A detail view scrolls and replies; it has no list and nothing to filter.
 static DETAIL_CHAIN: &[&BindingGroup] = &[&DETAIL_NAV_GROUP];
 
+/// An issue's detail adds its linked items ahead of the shared group.
+static ISSUE_DETAIL_CHAIN: &[&BindingGroup] = &[&issue_detail::ISSUE_LINK_GROUP, &DETAIL_NAV_GROUP];
+
 impl Views {
     /// The groups `view` composes, innermost first.  The view→groups map lives
     /// here, with the container that already knows every view state, so the
@@ -82,7 +95,8 @@ impl Views {
         match view {
             View::Dashboard => BOARD_CHAIN,
             View::IssueList | View::MrList => LIST_CHAIN,
-            View::IssueDetail | View::MrDetail => DETAIL_CHAIN,
+            View::IssueDetail => ISSUE_DETAIL_CHAIN,
+            View::MrDetail => DETAIL_CHAIN,
             View::Planning => PLANNING_CHAIN,
         }
     }
