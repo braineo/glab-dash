@@ -1334,10 +1334,13 @@ pub fn compute_health(
     });
     shadow_work.clamp_selection();
 
-    // At risk: iteration issues with "active" category status, not updated in 5+ days (indices into `issues`)
+    // At risk: unfinished iteration issues not updated in 5+ days (indices into `issues`).
+    // GitLab status categories are: triage, to_do, in_progress, done, canceled.
     let stale_threshold = Utc::now() - chrono::Duration::days(5);
-    let is_active_status =
-        |ti: &Issue| -> bool { ti.status_category().is_some_and(|cat| cat == "active") };
+    let is_active_status = |ti: &Issue| -> bool {
+        ti.status_category()
+            .is_some_and(|cat| matches!(cat, "to_do" | "in_progress"))
+    };
 
     let mut at_risk = ItemList::<Issue>::default();
     for (i, item) in issues.iter().enumerate() {
@@ -1359,9 +1362,9 @@ pub fn compute_health(
 
     // Preserve tab + selection state from previous health
     let active_tab = prev_health.map_or(HealthTab::default(), |h| {
-        unplanned_work.table_state = h.unplanned_work.table_state.clone();
-        shadow_work.table_state = h.shadow_work.table_state.clone();
-        at_risk.table_state = h.at_risk.table_state.clone();
+        unplanned_work.table_state = h.unplanned_work.table_state;
+        shadow_work.table_state = h.shadow_work.table_state;
+        at_risk.table_state = h.at_risk.table_state;
         unplanned_work.clamp_selection();
         shadow_work.clamp_selection();
         at_risk.clamp_selection();

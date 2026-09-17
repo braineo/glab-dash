@@ -12,7 +12,9 @@ use glab_api::Issuable;
 
 use crate::cmd::{Cmd, EventResult};
 use crate::keybindings::KeyAction;
-use crate::ui::components::{chord_popup, input::CommentInput, label_editor};
+use crate::ui::components::{
+    chord_popup, conversation::draft_new_thread, input::CommentTarget, label_editor,
+};
 use glab_core::domain::{Issue, Iteration, ProjectLabel, User};
 
 use super::{AppCtx, AppData, Overlay, UiState, View};
@@ -53,14 +55,8 @@ pub trait IssueActions {
     );
     /// Assign the issue to `username`, optimistically updating in place.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState);
-    /// Post `body` as a new comment or as a reply to an existing thread.
-    fn submit_comment(
-        &self,
-        body: &str,
-        reply_discussion_id: Option<String>,
-        ctx: &AppCtx,
-        ui: &mut UiState,
-    );
+    /// Post `body` as a new thread, a reply, or a rewrite of an existing note.
+    fn submit_comment(&self, body: &str, target: CommentTarget, ctx: &AppCtx, ui: &mut UiState);
 }
 
 impl IssueActions for Issue {
@@ -140,11 +136,7 @@ impl IssueActions for Issue {
                 }
             }
             KeyAction::Comment => {
-                ui.overlay = Overlay::CommentInput {
-                    input: CommentInput::default(),
-                    autocomplete: Box::default(),
-                    reply_discussion_id: None,
-                };
+                ui.overlay = draft_new_thread();
             }
             KeyAction::MoveIteration => {
                 show_iteration_chord(&self.id, data, ui);
@@ -237,14 +229,8 @@ impl IssueActions for Issue {
         ui.dirty.issues = true;
     }
 
-    /// Submit a comment or reply.
-    fn submit_comment(
-        &self,
-        body: &str,
-        reply_discussion_id: Option<String>,
-        ctx: &AppCtx,
-        ui: &mut UiState,
-    ) {
+    /// Submit a comment, a reply, or an edit.
+    fn submit_comment(&self, body: &str, target: CommentTarget, ctx: &AppCtx, ui: &mut UiState) {
         let client = ctx.client.clone();
         let tx = ctx.async_tx.clone();
         let body = body.to_string();
@@ -253,13 +239,17 @@ impl IssueActions for Issue {
 
         ui.loading = true;
         tokio::spawn(async move {
-            let create_result = match &reply_discussion_id {
-                Some(disc_id) => client
+            let create_result = match &target {
+                CommentTarget::Reply(disc_id) => client
                     .reply_to_discussion(Issuable::Issue, &project, &iid, disc_id, &body)
                     .await
                     .map(|_| ()),
-                None => client
+                CommentTarget::NewThread => client
                     .create_thread(Issuable::Issue, &project, &iid, &body)
+                    .await
+                    .map(|_| ()),
+                CommentTarget::Edit(note_id) => client
+                    .update_note(Issuable::Issue, &project, &iid, *note_id, &body)
                     .await
                     .map(|_| ()),
             };
@@ -326,7 +316,7 @@ pub fn build_status_chord(
         .collect();
     sorted_indices.sort_by_key(|&i| match statuses[i].category.as_deref() {
         Some("done") => 0,
-        Some("active" | "opened") => 1,
+        Some("to_do" | "in_progress") => 1,
         Some("canceled") => 2,
         _ => 3,
     });
@@ -348,7 +338,7 @@ pub fn build_status_chord(
         let is_close_category = |s: &glab_core::domain::WorkItemStatus| {
             s.category
                 .as_deref()
-                .is_some_and(|c| matches!(c, "done" | "canceled" | "closed"))
+                .is_some_and(|c| matches!(c, "done" | "canceled"))
         };
 
         let mut close_items: Vec<(usize, &str)> = statuses

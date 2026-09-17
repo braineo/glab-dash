@@ -152,11 +152,6 @@ impl AutocompleteState {
         let idx = *self.filtered.get(self.selected)?;
         self.items.get(idx)
     }
-
-    /// Returns the trigger character length (always 1 byte for @, #, !).
-    pub fn trigger_char_len() -> usize {
-        1
-    }
 }
 
 pub fn render(frame: &mut Frame, input_area: Rect, state: &AutocompleteState) {

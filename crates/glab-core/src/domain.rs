@@ -185,6 +185,8 @@ impl MergeRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
+    /// GitLab's own id for the note, which is what an edit addresses.
+    pub id: u64,
     pub body: String,
     pub author: User,
     pub created_at: DateTime<Utc>,

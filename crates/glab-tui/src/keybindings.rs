@@ -51,6 +51,8 @@ pub enum KeyAction {
     ReplyThread,
     /// Open a new top-level thread.
     NewThread,
+    /// Rewrite the comment the cursor is on.
+    EditComment,
     /// Resolve or reopen the thread the cursor is on.
     ResolveThread,
     /// Fold the thread the cursor is on away, or open it back up.
@@ -83,6 +85,8 @@ pub enum KeyMatcher {
     Char(char),
     /// Character key with Control: KeyCode::Char(c), mods contains CONTROL.
     Ctrl(char),
+    /// Character key with Alt (emacs' Meta): KeyCode::Char(c), mods contains ALT.
+    Alt(char),
     /// Non-character key with no modifiers.
     Key(KeyCode),
 }
@@ -97,6 +101,9 @@ impl KeyMatcher {
             }
             Self::Ctrl(c) => {
                 key.code == KeyCode::Char(c) && key.modifiers.contains(KeyModifiers::CONTROL)
+            }
+            Self::Alt(c) => {
+                key.code == KeyCode::Char(c) && key.modifiers.contains(KeyModifiers::ALT)
             }
             Self::Key(code) => key.code == code && key.modifiers == KeyModifiers::NONE,
         }
@@ -183,6 +190,9 @@ macro_rules! binding_key {
     };
     (ctrl $c:literal) => {
         $crate::keybindings::KeyMatcher::Ctrl($c)
+    };
+    (alt $c:literal) => {
+        $crate::keybindings::KeyMatcher::Alt($c)
     };
     (key $code:ident) => {
         $crate::keybindings::KeyMatcher::Key(::crossterm::event::KeyCode::$code)

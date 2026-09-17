@@ -14,14 +14,9 @@ use crossterm::{
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-        supports_keyboard_enhancement,
-    },
+    terminal::supports_keyboard_enhancement,
 };
 use futures::StreamExt;
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 
 use crate::app::{App, AsyncMsg};
@@ -31,19 +26,22 @@ use crate::app::{App, AsyncMsg};
 /// is put into raw mode on an alternate screen for the duration and restored
 /// before returning.
 pub async fn run(mut app: App, mut async_rx: mpsc::UnboundedReceiver<AsyncMsg>) -> Result<()> {
-    // Setup terminal
-    enable_raw_mode()?;
+    // Setup terminal.  `try_init` gives raw mode, the alternate screen and a
+    // panic hook that undoes both — without it a panic or any `?` below leaves
+    // the user in a wrecked shell.  Mouse capture and the keyboard flags are
+    // ours to set, and ours to unset.
+    // ponytail: the panic hook does not know about those two, so a panic leaves
+    // mouse capture on.  Wrap them in the hook if that ever bites.
+    let mut terminal = ratatui::try_init()?;
     let mut stdout = io::stdout();
     let has_keyboard_enhancement = supports_keyboard_enhancement().unwrap_or(false);
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnableMouseCapture)?;
     if has_keyboard_enhancement {
         execute!(
             stdout,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )?;
     }
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
 
     // Crossterm event stream — native tokio integration, no polling thread
     let mut event_stream = EventStream::new();
@@ -112,17 +110,14 @@ pub async fn run(mut app: App, mut async_rx: mpsc::UnboundedReceiver<AsyncMsg>) 
         }
     }
 
-    // Restore terminal
-    disable_raw_mode()?;
+    // Restore terminal: undo what we set up ourselves, then let ratatui unwind
+    // the raw mode and alternate screen it entered.
     if has_keyboard_enhancement {
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), DisableMouseCapture)?;
     terminal.show_cursor()?;
+    ratatui::try_restore()?;
 
     Ok(())
 }

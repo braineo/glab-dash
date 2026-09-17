@@ -186,7 +186,7 @@ impl Db {
                 tx.prepare_cached("INSERT OR REPLACE INTO labels (id, data) VALUES (?1, ?2)")?;
             for label in labels {
                 let data = serde_json::to_string(label).context("serialize ProjectLabel")?;
-                stmt.execute(params![label.id, data])?;
+                stmt.execute(params![i64::try_from(label.id)?, data])?;
             }
         }
         tx.commit()?;

@@ -276,6 +276,7 @@ mod tests {
             match self {
                 Self::Char(c) => KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
                 Self::Ctrl(c) => KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
+                Self::Alt(c) => KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT),
                 Self::Key(code) => KeyEvent::new(code, KeyModifiers::NONE),
             }
         }

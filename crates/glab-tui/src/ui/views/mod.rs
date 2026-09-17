@@ -19,10 +19,11 @@ binding_group! {
         ('K') => PrevUnresolved,
         ('g') => Top | "g/G" "First / last row",
         ('G') => Bottom,
-        (ctrl 'd') => PageDown | "^d/^u" "Page down/up",
-        (ctrl 'u') => PageUp,
+        (ctrl 'v') => PageDown | "^v/M-v" "Page down/up",
+        (alt 'u') => PageUp,
         ('c') => ReplyThread | "c" "Reply to this thread",
         ('C') => NewThread | "C" "Start a new thread",
+        ('e') => EditComment | "e" "Edit this comment",
         (' ') => ResolveThread | "Space" "Resolve / unresolve",
         (key Tab) => ToggleThread | "Tab" "Fold thread",
     }
