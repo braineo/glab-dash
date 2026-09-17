@@ -5,7 +5,7 @@
 //! domain's answers; this spends them on icons, colors and keys.
 
 use glab_core::domain::Issue;
-use glab_core::domain::{ItemRef, RelatedItem, Relation};
+use glab_core::domain::{ItemKind, ItemRef, RelatedItem, Relation};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
@@ -71,17 +71,39 @@ pub fn push(body: &mut DetailBody, related: &[RelatedItem], width: usize) {
     };
     body.section("LINKED", Some(tally), width);
 
+    // References run from `app!33` to a four-segment path, so the title column
+    // is set by the widest one here rather than by a constant.  Capped, so one
+    // long path cannot shove every title off the row.
+    let refs: Vec<String> = related.iter().map(reference).collect();
+    let ref_width = refs
+        .iter()
+        .map(|r| wrap::width(r))
+        .max()
+        .unwrap_or(0)
+        .min(width / 3);
+
     let rows: Vec<(Row, Line<'static>)> = related
         .iter()
+        .zip(refs)
         .enumerate()
-        .map(|(i, item)| (Row::Related(i), row(item, width)))
+        .map(|(i, (item, reference))| (Row::Related(i), row(item, &reference, ref_width, width)))
         .collect();
     body.extend(rows);
 }
 
+/// The kind icon the tab bar uses, then the full reference: the sigil alone,
+/// buried at the end of a long project path, is not what the eye lands on.
+fn reference(related: &RelatedItem) -> String {
+    let kind = match related.item.kind {
+        ItemKind::Issue => styles::ICON_ISSUES,
+        ItemKind::MergeRequest => styles::ICON_MRS,
+    };
+    format!("{kind} {}", related.item.reference())
+}
+
 /// The relation carries the color — an open blocker is what the reader scans
 /// for.  A settled one keeps its shape and loses its color.
-fn row(related: &RelatedItem, width: usize) -> Line<'static> {
+fn row(related: &RelatedItem, reference: &str, ref_width: usize, width: usize) -> Line<'static> {
     let (icon, tint) = match related.relation {
         Relation::BlockedBy => (styles::ICON_BLOCKED, styles::red()),
         Relation::Blocks => (styles::ICON_BLOCKED, styles::yellow()),
@@ -94,7 +116,9 @@ fn row(related: &RelatedItem, width: usize) -> Line<'static> {
         (styles::text_dim(), styles::text_dim())
     };
     let relation = format!("{icon} {:<RELATION_WIDTH$}", related.relation.label());
-    let reference = format!("{}  ", related.item.reference());
+    // Padded by display width: a reference is not all single-column glyphs.
+    let pad = " ".repeat(ref_width.saturating_sub(wrap::width(reference)));
+    let reference = format!("{reference}{pad}  ");
     let used = wrap::width(&relation) + wrap::width(&reference) + detail_body::LEAD;
     let title = wrap::truncate(&related.title, width.saturating_sub(used));
 

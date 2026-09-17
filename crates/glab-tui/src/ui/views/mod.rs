@@ -30,7 +30,7 @@ binding_group! {
         ('g') => Top | "g/G" "First / last row",
         ('G') => Bottom,
         (ctrl 'v') => PageDown | "^v/M-v" "Page down/up",
-        (alt 'u') => PageUp,
+        (alt 'v') => PageUp,
         ('c') => ReplyThread | "c" "Reply to this thread",
         ('C') => NewThread | "C" "Start a new thread",
         ('e') => EditComment | "e" "Edit this comment",

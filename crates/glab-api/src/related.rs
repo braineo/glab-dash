@@ -1,7 +1,7 @@
 //! What an item is related to, over REST.
 //!
 //! GitLab keeps each kind of relation on its own sub-collection — `links`,
-//! `related_merge_requests`, `closes_issues` — and reports each in its own
+//! `related_merge_requests`, `closed_by` — and reports each in its own
 //! shape.  `list_related` walks the ones the item's kind has and folds them
 //! into one list, so a new collection is one more leg here.
 
@@ -18,7 +18,12 @@ impl GitLabClient {
     /// Everything `item` is related to, unsorted.
     pub async fn list_related(&self, item: &ItemRef) -> Result<Vec<RelatedItem>> {
         match item.kind {
-            ItemKind::Issue => self.issue_links(item).await,
+            ItemKind::Issue => {
+                let (mut links, mrs) =
+                    tokio::try_join!(self.issue_links(item), self.issue_merge_requests(item))?;
+                links.extend(mrs);
+                Ok(links)
+            }
             // ponytail: a merge request's collections are a leg each, like
             // `issue_links`, when that view grows the section.
             ItemKind::MergeRequest => Ok(Vec::new()),
@@ -58,6 +63,36 @@ impl GitLabClient {
             .filter_map(WireLink::into_related)
             .collect())
     }
+
+    /// The merge requests an issue names.  `closed_by` is the subset that will
+    /// close it, which is the relation worth showing, so it classifies first
+    /// and the wider collection fills in what it left.
+    async fn issue_merge_requests(&self, item: &ItemRef) -> Result<Vec<RelatedItem>> {
+        let path = |tail: &str| item_path(item.kind, &item.project, &item.iid, tail);
+        let (closing, mentioning): (Vec<WireMr>, Vec<WireMr>) = tokio::try_join!(
+            Self::fetch(self.rest(Method::GET, &path("closed_by"))),
+            Self::fetch(self.rest(Method::GET, &path("related_merge_requests"))),
+        )?;
+        Ok(fold_merge_requests(closing, mentioning))
+    }
+}
+
+/// `closing` classifies first and wins the overlap: a merge request that will
+/// close the issue also shows up as merely related.
+fn fold_merge_requests(closing: Vec<WireMr>, mentioning: Vec<WireMr>) -> Vec<RelatedItem> {
+    let mut related: Vec<RelatedItem> = closing
+        .into_iter()
+        .filter_map(|mr| mr.into_related(Relation::ClosedBy))
+        .collect();
+    let closing_items: std::collections::HashSet<ItemRef> =
+        related.iter().map(|r| r.item.clone()).collect();
+    related.extend(
+        mentioning
+            .into_iter()
+            .filter_map(|mr| mr.into_related(Relation::RelatesTo))
+            .filter(|r| !closing_items.contains(&r.item)),
+    );
+    related
 }
 
 /// The route for an issue's links, or the one link `tail` names.
@@ -81,6 +116,29 @@ struct WireLink {
     references: WireReferences,
 }
 
+/// One row of `GET /issues/:iid/closed_by` or `/related_merge_requests`.
+/// GitLab stores neither as a link, so neither has an id to delete.
+#[derive(Deserialize)]
+struct WireMr {
+    title: String,
+    state: String,
+    web_url: String,
+    references: WireReferences,
+}
+
+impl WireMr {
+    fn into_related(self, relation: Relation) -> Option<RelatedItem> {
+        Some(RelatedItem {
+            relation,
+            link_id: None,
+            item: ItemRef::parse(&self.references.full)?,
+            title: self.title,
+            state: self.state,
+            web_url: self.web_url,
+        })
+    }
+}
+
 #[derive(Deserialize)]
 struct WireReferences {
     full: String,
@@ -102,8 +160,44 @@ impl WireLink {
 
 #[cfg(test)]
 mod tests {
-    use super::WireLink;
+    use super::{WireLink, WireMr, fold_merge_requests};
     use glab_core::domain::{ItemKind, Relation};
+
+    #[test]
+    fn a_closing_merge_request_outranks_the_same_one_merely_related() {
+        let mr = |iid: u32, state: &str| -> WireMr {
+            serde_json::from_str(&format!(
+                r#"{{
+                    "iid": {iid},
+                    "title": "Fix the fetch loop",
+                    "state": "{state}",
+                    "web_url": "https://gitlab.example.com/team/infra/-/merge_requests/{iid}",
+                    "references": {{ "full": "team/infra!{iid}" }}
+                }}"#
+            ))
+            .expect("the documented shape deserializes")
+        };
+
+        let folded = fold_merge_requests(
+            vec![mr(5, "merged")],
+            vec![mr(5, "merged"), mr(9, "opened")],
+        );
+        let rows: Vec<(Relation, &str, ItemKind)> = folded
+            .iter()
+            .map(|r| (r.relation, r.item.iid.as_str(), r.item.kind))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (Relation::ClosedBy, "5", ItemKind::MergeRequest),
+                (Relation::RelatesTo, "9", ItemKind::MergeRequest),
+            ]
+        );
+        assert!(
+            folded.iter().all(|r| r.link_id.is_none()),
+            "neither collection is a stored link"
+        );
+    }
 
     #[test]
     fn a_link_row_folds_into_a_related_item() {

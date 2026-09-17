@@ -1,7 +1,7 @@
 //! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
-use glab_core::domain::ItemRef;
 use glab_core::domain::{Issue, Item, MergeRequest, StatusValue};
+use glab_core::domain::{ItemKind, ItemRef};
 
 use crate::ui::components::related;
 
@@ -194,16 +194,33 @@ impl App {
             return;
         };
         let reference = target.item.reference();
-        let Some(issue) = self.data.issues.iter().find(|i| i.reference == reference) else {
-            let _ = open::that_detached(&target.web_url);
-            return;
-        };
-        let (id, project, iid) = (
-            issue.id.clone(),
-            issue.project_path().to_string(),
-            issue.iid.clone(),
-        );
-        self.open_issue_detail(&id, &project, &iid);
+        match target.item.kind {
+            ItemKind::Issue => {
+                let Some(issue) = self.data.issues.iter().find(|i| i.reference == reference) else {
+                    let _ = open::that_detached(&target.web_url);
+                    return;
+                };
+                let (id, project, iid) = (
+                    issue.id.clone(),
+                    issue.project_path().to_string(),
+                    issue.iid.clone(),
+                );
+                self.open_issue_detail(&id, &project, &iid);
+            }
+            // The issue stays on the stack, so Esc comes back to it.
+            ItemKind::MergeRequest => {
+                let Some(mr) = self.data.mrs.iter().find(|m| m.reference == reference) else {
+                    let _ = open::that_detached(&target.web_url);
+                    return;
+                };
+                let (project, iid) = (mr.project_path().to_string(), mr.iid.clone());
+                self.ui.views.mr_detail.open(&project, &iid);
+                self.fetch_notes_for_mr(&project, &iid);
+                self.ui.view_stack.push(self.ui.view);
+                self.ui.view = View::MrDetail;
+                self.ui.dirty.selection = true;
+            }
+        }
     }
 
     pub(super) fn apply_iteration_move(

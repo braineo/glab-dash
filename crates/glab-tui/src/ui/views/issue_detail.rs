@@ -22,7 +22,7 @@ binding_group! {
     pub ISSUE_LINK_GROUP: "Linked Issues" {
         ('L') => AddLink | "L" "Link an issue",
         ('d') => RemoveLink | "d" "Unlink (on a link row)",
-        (key Enter) => OpenLink | "Enter" "Open the linked issue",
+        (key Enter) => OpenLink | "Enter" "Open the linked item",
     }
 }
 
