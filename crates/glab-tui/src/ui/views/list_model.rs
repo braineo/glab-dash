@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, BorderType, Borders, TableState};
 use crate::keybindings::KeyAction;
 use crate::ui::keys;
 use crate::ui::styles;
+use glab_core::domain::Item;
 use glab_core::filter::FilterCondition;
 use glab_core::sort::SortSpec;
 
@@ -153,6 +154,30 @@ impl<T> ItemList<T> {
         {
             self.table_state.select(Some(self.indices.len() - 1));
         }
+    }
+}
+
+impl<T: Item> ItemList<T> {
+    /// Name the item under the cursor, before a rebuild invalidates `indices`.
+    pub fn anchor(&self, items: &[T]) -> Option<String> {
+        self.selected_item(items)
+            .map(|item| item.reference().to_string())
+    }
+
+    /// Put the cursor back on `anchor` after a rebuild.  An item that filtered
+    /// out takes the cursor to the top rather than leaving it on whatever row
+    /// inherited its index.
+    pub fn restore(&mut self, items: &[T], anchor: Option<&str>) {
+        if self.indices.is_empty() {
+            self.table_state.select(None);
+            return;
+        }
+        let pos = anchor.and_then(|reference| {
+            self.indices
+                .iter()
+                .position(|&i| items[i].reference() == reference)
+        });
+        self.table_state.select(Some(pos.unwrap_or(0)));
     }
 }
 

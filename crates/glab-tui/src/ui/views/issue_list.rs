@@ -83,6 +83,7 @@ impl IssueListState {
     // ── Filtering ───────────────────────────────────────────────────
 
     pub fn apply_filters(&mut self, issues: &[Issue], me: &str, label_orders: &LabelOrders) {
+        let anchor = self.list.anchor(issues);
         self.list.indices = issues
             .iter()
             .enumerate()
@@ -109,7 +110,7 @@ impl IssueListState {
             label_orders,
         );
 
-        self.list.clamp_selection();
+        self.list.restore(issues, anchor.as_deref());
     }
 
     pub fn selected_issue<'a>(&self, issues: &'a [Issue]) -> Option<&'a Issue> {

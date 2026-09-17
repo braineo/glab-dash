@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
 use super::*;
+use glab_core::domain::{ItemKind, User};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent {
@@ -277,4 +278,81 @@ fn the_filter_bar_releases_focus_on_esc_tab_and_the_last_delete() {
     f.handle_bar_key(&key(KeyCode::Char('d')));
     assert!(f.conditions.is_empty());
     assert!(!f.bar_focused);
+}
+
+// ── Cursor reconciliation ──
+
+/// All `restore` looks at is the reference, so an item is one here.
+struct Row(&'static str);
+
+impl Item for Row {
+    fn kind(&self) -> ItemKind {
+        ItemKind::Issue
+    }
+    fn gid(&self) -> &str {
+        self.0
+    }
+    fn iid(&self) -> &str {
+        self.0
+    }
+    fn reference(&self) -> &str {
+        self.0
+    }
+    fn title(&self) -> &str {
+        self.0
+    }
+    fn state(&self) -> &'static str {
+        "opened"
+    }
+    fn web_url(&self) -> Option<&str> {
+        None
+    }
+    fn labels(&self) -> &[String] {
+        &[]
+    }
+    fn assignees(&self) -> &[User] {
+        &[]
+    }
+}
+
+#[test]
+fn a_rebuild_keeps_the_cursor_on_its_item_wherever_it_lands() {
+    let items = [Row("p#1"), Row("p#2"), Row("p#3")];
+    let mut list: ItemList<Row> = ItemList {
+        indices: vec![0, 1, 2],
+        ..Default::default()
+    };
+    list.table_state.select(Some(1));
+
+    let anchor = list.anchor(&items);
+    assert_eq!(anchor.as_deref(), Some("p#2"));
+
+    // A sort moved it to the end; the cursor follows the item, not the row.
+    list.indices = vec![2, 0, 1];
+    list.restore(&items, anchor.as_deref());
+    assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#2"));
+
+    // Filtered out: the cursor goes to the top instead of to whoever
+    // inherited row 2.
+    list.indices = vec![0, 2];
+    list.restore(&items, anchor.as_deref());
+    assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#1"));
+
+    // Nothing left to point at.
+    list.indices.clear();
+    list.restore(&items, anchor.as_deref());
+    assert_eq!(list.table_state.selected(), None);
+}
+
+#[test]
+fn a_list_with_no_cursor_yet_starts_at_the_top() {
+    let items = [Row("p#1"), Row("p#2")];
+    let mut list: ItemList<Row> = ItemList {
+        indices: vec![0, 1],
+        ..Default::default()
+    };
+
+    assert_eq!(list.anchor(&items), None);
+    list.restore(&items, None);
+    assert_eq!(list.table_state.selected(), Some(0));
 }

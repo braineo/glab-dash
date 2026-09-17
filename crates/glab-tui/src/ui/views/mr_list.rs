@@ -76,6 +76,7 @@ impl MrListState {
     // ── Filtering ───────────────────────────────────────────────────
 
     pub fn apply_filters(&mut self, mrs: &[MergeRequest], me: &str, label_orders: &LabelOrders) {
+        let anchor = self.list.anchor(mrs);
         self.list.indices = mrs
             .iter()
             .enumerate()
@@ -102,7 +103,7 @@ impl MrListState {
             label_orders,
         );
 
-        self.list.clamp_selection();
+        self.list.restore(mrs, anchor.as_deref());
     }
 
     pub fn selected_mr<'a>(&self, mrs: &'a [MergeRequest]) -> Option<&'a MergeRequest> {

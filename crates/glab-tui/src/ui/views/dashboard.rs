@@ -295,6 +295,11 @@ impl IterationBoardState {
         label_orders: &LabelOrders,
         me: &str,
     ) {
+        let anchors: Vec<_> = self
+            .columns
+            .iter()
+            .map(|col| col.list.anchor(issues))
+            .collect();
         for col in &mut self.columns {
             col.list.indices.clear();
         }
@@ -322,7 +327,7 @@ impl IterationBoardState {
         }
 
         // Apply shared filter conditions, fuzzy filter, and sort to each column
-        for col in &mut self.columns {
+        for (col, anchor) in self.columns.iter_mut().zip(&anchors) {
             col.list.indices.retain(|&i| {
                 let item = &issues[i];
                 if !glab_core::filter::condition::matches_issue(item, &self.filter.conditions, me) {
@@ -345,7 +350,7 @@ impl IterationBoardState {
                 &self.filter.sort_specs,
                 label_orders,
             );
-            col.list.clamp_selection();
+            col.list.restore(issues, anchor.as_deref());
         }
     }
 
