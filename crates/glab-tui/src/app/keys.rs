@@ -420,7 +420,8 @@ mod tests {
                     "{view:?} / {c}"
                 );
             }
-            let expected = (view == View::IssueDetail).then_some(KeyAction::OpenLink);
+            let expected =
+                matches!(view, View::IssueDetail | View::MrDetail).then_some(KeyAction::OpenLink);
             assert_eq!(
                 keybindings::resolve(&groups, &code(KeyCode::Enter)),
                 expected,

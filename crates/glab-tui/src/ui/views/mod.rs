@@ -81,11 +81,12 @@ static PLANNING_CHAIN: &[&BindingGroup] = &[
     &list_model::FILTER_GROUP,
 ];
 
-/// A detail view scrolls and replies; it has no list and nothing to filter.
-static DETAIL_CHAIN: &[&BindingGroup] = &[&DETAIL_NAV_GROUP];
-
-/// An issue's detail adds its linked items ahead of the shared group.
+/// A detail view scrolls and replies; it has no list and nothing to filter, so
+/// each kind adds only its own linked-item keys ahead of the shared group.
 static ISSUE_DETAIL_CHAIN: &[&BindingGroup] = &[&issue_detail::ISSUE_LINK_GROUP, &DETAIL_NAV_GROUP];
+
+/// A merge request's detail adds only the key that opens a linked issue.
+static MR_DETAIL_CHAIN: &[&BindingGroup] = &[&mr_detail::MR_LINK_GROUP, &DETAIL_NAV_GROUP];
 
 impl Views {
     /// The groups `view` composes, innermost first.  The view→groups map lives
@@ -96,7 +97,7 @@ impl Views {
             View::Dashboard => BOARD_CHAIN,
             View::IssueList | View::MrList => LIST_CHAIN,
             View::IssueDetail => ISSUE_DETAIL_CHAIN,
-            View::MrDetail => DETAIL_CHAIN,
+            View::MrDetail => MR_DETAIL_CHAIN,
             View::Planning => PLANNING_CHAIN,
         }
     }

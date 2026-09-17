@@ -1,9 +1,11 @@
 //! What an item is related to, over REST.
 //!
 //! GitLab keeps each kind of relation on its own sub-collection — `links`,
-//! `related_merge_requests`, `closed_by` — and reports each in its own
-//! shape.  `list_related` walks the ones the item's kind has and folds them
-//! into one list, so a new collection is one more leg here.
+//! `related_merge_requests`, `closed_by`, `closes_issues` — and reports each in
+//! its own shape.  `list_related` walks the ones the item's kind has and folds
+//! them into one list, so a new collection is one more leg here.
+
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use reqwest::Method;
@@ -24,9 +26,7 @@ impl GitLabClient {
                 links.extend(mrs);
                 Ok(links)
             }
-            // ponytail: a merge request's collections are a leg each, like
-            // `issue_links`, when that view grows the section.
-            ItemKind::MergeRequest => Ok(Vec::new()),
+            ItemKind::MergeRequest => self.mr_issues(item).await,
         }
     }
 
@@ -69,29 +69,83 @@ impl GitLabClient {
     /// and the wider collection fills in what it left.
     async fn issue_merge_requests(&self, item: &ItemRef) -> Result<Vec<RelatedItem>> {
         let path = |tail: &str| item_path(item.kind, &item.project, &item.iid, tail);
-        let (closing, mentioning): (Vec<WireMr>, Vec<WireMr>) = tokio::try_join!(
+        let (closing, mentioning): (Vec<WireItem>, Vec<WireItem>) = tokio::try_join!(
             Self::fetch(self.rest(Method::GET, &path("closed_by"))),
             Self::fetch(self.rest(Method::GET, &path("related_merge_requests"))),
         )?;
-        Ok(fold_merge_requests(closing, mentioning))
+        Ok(fold(
+            related(closing, Relation::ClosedBy),
+            related(mentioning, Relation::RelatesTo),
+        ))
+    }
+
+    /// The issues a merge request names.  `closes_issues` is the subset it will
+    /// close, and the mirror of an issue's `closed_by`.  Neither row carries a
+    /// reference, only a numeric project id, so the ids resolve to paths first.
+    async fn mr_issues(&self, item: &ItemRef) -> Result<Vec<RelatedItem>> {
+        let path = |tail: &str| item_path(item.kind, &item.project, &item.iid, tail);
+        let (closing, mentioning): (Vec<WireIssue>, Vec<WireIssue>) = tokio::try_join!(
+            Self::fetch(self.rest(Method::GET, &path("closes_issues"))),
+            Self::fetch(self.rest(Method::GET, &path("related_issues"))),
+        )?;
+        let paths = self
+            .project_paths(closing.iter().chain(&mentioning))
+            .await?;
+        Ok(fold(
+            related_issues(closing, Relation::Closes, &paths),
+            related_issues(mentioning, Relation::RelatesTo, &paths),
+        ))
+    }
+
+    /// `path_with_namespace` for every project the rows name — one lookup per
+    /// distinct id, which is almost always the merge request's own project.
+    ///
+    /// ponytail: not cached across calls; give the client a map if a detail
+    /// view that reopens often makes the extra read show.
+    async fn project_paths<'a>(
+        &self,
+        rows: impl Iterator<Item = &'a WireIssue>,
+    ) -> Result<HashMap<u64, String>> {
+        let ids: HashSet<u64> = rows.map(|row| row.project_id).collect();
+        let mut paths = HashMap::with_capacity(ids.len());
+        for id in ids {
+            let project: WireProject =
+                Self::fetch(self.rest(Method::GET, &format!("/projects/{id}"))).await?;
+            paths.insert(id, project.path_with_namespace);
+        }
+        Ok(paths)
     }
 }
 
-/// `closing` classifies first and wins the overlap: a merge request that will
-/// close the issue also shows up as merely related.
-fn fold_merge_requests(closing: Vec<WireMr>, mentioning: Vec<WireMr>) -> Vec<RelatedItem> {
-    let mut related: Vec<RelatedItem> = closing
+/// Every row that names an item, under one relation.
+fn related(rows: Vec<WireItem>, relation: Relation) -> Vec<RelatedItem> {
+    rows.into_iter()
+        .filter_map(|row| row.into_related(relation))
+        .collect()
+}
+
+/// The same, for rows that name their project by id.  A row whose project did
+/// not resolve is dropped: nothing can address it.
+fn related_issues(
+    rows: Vec<WireIssue>,
+    relation: Relation,
+    paths: &HashMap<u64, String>,
+) -> Vec<RelatedItem> {
+    rows.into_iter()
+        .filter_map(|row| row.into_related(relation, paths))
+        .collect()
+}
+
+/// `closing` wins the overlap: an item that settles the other also shows up in
+/// the wider collection as merely related.
+fn fold(closing: Vec<RelatedItem>, mentioning: Vec<RelatedItem>) -> Vec<RelatedItem> {
+    let closing_items: HashSet<&ItemRef> = closing.iter().map(|r| &r.item).collect();
+    let kept: Vec<RelatedItem> = mentioning
         .into_iter()
-        .filter_map(|mr| mr.into_related(Relation::ClosedBy))
+        .filter(|r| !closing_items.contains(&r.item))
         .collect();
-    let closing_items: std::collections::HashSet<ItemRef> =
-        related.iter().map(|r| r.item.clone()).collect();
-    related.extend(
-        mentioning
-            .into_iter()
-            .filter_map(|mr| mr.into_related(Relation::RelatesTo))
-            .filter(|r| !closing_items.contains(&r.item)),
-    );
+    let mut related = closing;
+    related.extend(kept);
     related
 }
 
@@ -116,17 +170,17 @@ struct WireLink {
     references: WireReferences,
 }
 
-/// One row of `GET /issues/:iid/closed_by` or `/related_merge_requests`.
-/// GitLab stores neither as a link, so neither has an id to delete.
+/// One row of an issue's `closed_by` or `related_merge_requests`.  GitLab
+/// stores neither as a link, so neither has an id to delete.
 #[derive(Deserialize)]
-struct WireMr {
+struct WireItem {
     title: String,
     state: String,
     web_url: String,
     references: WireReferences,
 }
 
-impl WireMr {
+impl WireItem {
     fn into_related(self, relation: Relation) -> Option<RelatedItem> {
         Some(RelatedItem {
             relation,
@@ -137,6 +191,37 @@ impl WireMr {
             web_url: self.web_url,
         })
     }
+}
+
+/// One row of a merge request's `closes_issues` or `related_issues`.  These two
+/// report a numeric `project_id` and no `references`, unlike every other
+/// collection here.
+#[derive(Deserialize)]
+struct WireIssue {
+    iid: u64,
+    project_id: u64,
+    title: String,
+    state: String,
+    web_url: String,
+}
+
+impl WireIssue {
+    fn into_related(self, relation: Relation, paths: &HashMap<u64, String>) -> Option<RelatedItem> {
+        Some(RelatedItem {
+            relation,
+            link_id: None,
+            item: ItemRef::issue(paths.get(&self.project_id)?, &self.iid.to_string()),
+            title: self.title,
+            state: self.state,
+            web_url: self.web_url,
+        })
+    }
+}
+
+/// The one field of `GET /projects/:id` that names the project.
+#[derive(Deserialize)]
+struct WireProject {
+    path_with_namespace: String,
 }
 
 #[derive(Deserialize)]
@@ -160,15 +245,16 @@ impl WireLink {
 
 #[cfg(test)]
 mod tests {
-    use super::{WireLink, WireMr, fold_merge_requests};
+    use std::collections::HashMap;
+
+    use super::{WireIssue, WireItem, WireLink, fold, related, related_issues};
     use glab_core::domain::{ItemKind, Relation};
 
     #[test]
     fn a_closing_merge_request_outranks_the_same_one_merely_related() {
-        let mr = |iid: u32, state: &str| -> WireMr {
+        let mr = |iid: u32, state: &str| -> WireItem {
             serde_json::from_str(&format!(
                 r#"{{
-                    "iid": {iid},
                     "title": "Fix the fetch loop",
                     "state": "{state}",
                     "web_url": "https://gitlab.example.com/team/infra/-/merge_requests/{iid}",
@@ -178,9 +264,9 @@ mod tests {
             .expect("the documented shape deserializes")
         };
 
-        let folded = fold_merge_requests(
-            vec![mr(5, "merged")],
-            vec![mr(5, "merged"), mr(9, "opened")],
+        let folded = fold(
+            related(vec![mr(5, "merged")], Relation::ClosedBy),
+            related(vec![mr(5, "merged"), mr(9, "opened")], Relation::RelatesTo),
         );
         let rows: Vec<(Relation, &str, ItemKind)> = folded
             .iter()
@@ -196,6 +282,54 @@ mod tests {
         assert!(
             folded.iter().all(|r| r.link_id.is_none()),
             "neither collection is a stored link"
+        );
+    }
+
+    /// The merge request side names its project by id, so an id the lookup did
+    /// not resolve leaves nothing to address.
+    #[test]
+    fn a_merge_requests_issues_take_their_project_from_the_resolved_id() {
+        let issue = |iid: u32, project_id: u64| -> WireIssue {
+            serde_json::from_str(&format!(
+                r#"{{
+                    "iid": {iid},
+                    "project_id": {project_id},
+                    "title": "The fetch loop stalls",
+                    "state": "opened",
+                    "web_url": "https://gitlab.example.com/team/infra/-/issues/{iid}"
+                }}"#
+            ))
+            .expect("the documented shape deserializes")
+        };
+        let paths: HashMap<u64, String> = [(7, "team/infra".to_string())].into_iter().collect();
+
+        let folded = fold(
+            related_issues(vec![issue(5, 7)], Relation::Closes, &paths),
+            related_issues(
+                vec![issue(5, 7), issue(9, 7), issue(11, 8)],
+                Relation::RelatesTo,
+                &paths,
+            ),
+        );
+        let rows: Vec<(Relation, String, ItemKind)> = folded
+            .iter()
+            .map(|r| (r.relation, r.item.reference(), r.item.kind))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    Relation::Closes,
+                    "team/infra#5".to_string(),
+                    ItemKind::Issue
+                ),
+                (
+                    Relation::RelatesTo,
+                    "team/infra#9".to_string(),
+                    ItemKind::Issue
+                ),
+            ],
+            "an unresolved project id is dropped"
         );
     }
 

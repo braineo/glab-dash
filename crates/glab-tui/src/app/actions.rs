@@ -157,8 +157,7 @@ impl App {
                 self.ui.view = View::IssueDetail;
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                self.ui.views.mr_detail.open(&project, &iid);
-                self.fetch_notes_for_mr(&project, &iid);
+                self.open_mr_detail(&project, &iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::MrDetail;
             }
@@ -177,20 +176,25 @@ impl App {
         self.ui.dirty.selection = true;
     }
 
+    /// Does not switch the view: the caller decides what to stack.
+    pub(super) fn open_mr_detail(&mut self, project: &str, iid: &str) {
+        self.ui.views.mr_detail.open(project, iid);
+        self.fetch_notes_for_mr(project, iid);
+        self.ui
+            .pending_cmds
+            .push(crate::cmd::Cmd::FetchRelated(ItemRef::merge_request(
+                project, iid,
+            )));
+        self.ui.dirty.selection = true;
+    }
+
     /// A fetched item opens in the detail view; one outside the team's scope
     /// has no local copy to render, so it opens in the browser.
     ///
     /// ponytail: a chain of blockers cannot be walked back item by item; give
     /// the detail view its own stack if that bites.
     pub(super) fn action_open_related(&mut self) {
-        let detail = &self.ui.views.issue_detail;
-        let Some(target) = self
-            .data
-            .related_by_item
-            .get(&detail.item())
-            .and_then(|related| related::at_cursor(related, &detail.body))
-            .cloned()
-        else {
+        let Some(target) = self.related_at_cursor() else {
             return;
         };
         let reference = target.item.reference();
@@ -206,21 +210,44 @@ impl App {
                     issue.iid.clone(),
                 );
                 self.open_issue_detail(&id, &project, &iid);
+                self.enter_detail(View::IssueDetail);
             }
-            // The issue stays on the stack, so Esc comes back to it.
             ItemKind::MergeRequest => {
                 let Some(mr) = self.data.mrs.iter().find(|m| m.reference == reference) else {
                     let _ = open::that_detached(&target.web_url);
                     return;
                 };
                 let (project, iid) = (mr.project_path().to_string(), mr.iid.clone());
-                self.ui.views.mr_detail.open(&project, &iid);
-                self.fetch_notes_for_mr(&project, &iid);
-                self.ui.view_stack.push(self.ui.view);
-                self.ui.view = View::MrDetail;
-                self.ui.dirty.selection = true;
+                self.open_mr_detail(&project, &iid);
+                self.enter_detail(View::MrDetail);
             }
         }
+    }
+
+    /// Whichever detail view is open, the relation its cursor sits on.
+    fn related_at_cursor(&self) -> Option<glab_core::domain::RelatedItem> {
+        let (item, body) = match self.ui.view {
+            View::IssueDetail => {
+                let d = &self.ui.views.issue_detail;
+                (d.item(), &d.body)
+            }
+            View::MrDetail => {
+                let d = &self.ui.views.mr_detail;
+                (d.item(), &d.body)
+            }
+            _ => return None,
+        };
+        related::at_cursor(self.data.related_by_item.get(&item)?, body).cloned()
+    }
+
+    /// Crossing from one kind of detail to the other stacks what it left, so
+    /// Esc comes back to it; following a link within one kind replaces it.
+    fn enter_detail(&mut self, view: View) {
+        if self.ui.view != view {
+            self.ui.view_stack.push(self.ui.view);
+            self.ui.view = view;
+        }
+        self.ui.dirty.selection = true;
     }
 
     pub(super) fn apply_iteration_move(

@@ -5,12 +5,22 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::Overlay;
+use crate::binding_group;
 use crate::cmd::EventResult;
 use crate::keybindings::KeyAction;
 use crate::ui::components::conversation::{self, Conversation};
 use crate::ui::components::detail_body::DetailBody;
+use crate::ui::components::related;
 use crate::ui::styles;
-use glab_core::domain::MergeRequest;
+use glab_core::domain::{ItemRef, MergeRequest, RelatedItem};
+
+binding_group! {
+    /// GitLab derives every relation a merge request has — from its branch and
+    /// its description — so there is nothing here to add or drop, only open.
+    pub MR_LINK_GROUP: "Linked Issues" {
+        (key Enter) => OpenLink | "Enter" "Open the linked item",
+    }
+}
 
 #[derive(Default)]
 pub struct MrDetailState {
@@ -22,6 +32,11 @@ pub struct MrDetailState {
 }
 
 impl MrDetailState {
+    /// What its keys act on.
+    pub fn item(&self) -> ItemRef {
+        ItemRef::merge_request(&self.project, &self.iid)
+    }
+
     pub fn handle_key(&mut self, action: Option<KeyAction>, overlay: &mut Overlay) -> EventResult {
         let Some(action) = action else {
             return EventResult::Bubble;
@@ -52,17 +67,18 @@ pub fn render(
     frame: &mut Frame,
     area: Rect,
     item: &MergeRequest,
+    related: &[RelatedItem],
     state: &mut MrDetailState,
     ctx: &crate::ui::RenderCtx<'_>,
 ) {
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).split(area);
     render_header(frame, chunks[0], item, ctx);
 
-    // ponytail: no related section yet — a leg in `list_related` and a
-    // `related::push` here, like an issue's links.
+    // What it says, what it settles, then what was said about it.
     let width = usize::from(chunks[1].width);
     state.body.begin();
     state.body.description(item.description.as_deref(), width);
+    related::push(&mut state.body, related, width);
     conversation::push(&mut state.body, &state.conversation, width);
     state.body.render(frame, chunks[1]);
     conversation::render_sticky_head(frame, chunks[1], &state.conversation, &state.body);
