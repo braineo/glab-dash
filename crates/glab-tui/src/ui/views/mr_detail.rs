@@ -6,18 +6,20 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::Overlay;
 use crate::binding_group;
-use crate::cmd::EventResult;
+use crate::cmd::{Effects, EventResult};
 use crate::keybindings::KeyAction;
 use crate::ui::components::conversation::{self, Conversation};
 use crate::ui::components::detail_body::DetailBody;
 use crate::ui::components::related;
 use crate::ui::styles;
+use crate::ui::views::DetailCtx;
 use glab_core::domain::{ItemRef, MergeRequest, RelatedItem};
 
 binding_group! {
-    /// GitLab derives every relation a merge request has — from its branch and
-    /// its description — so there is nothing here to add or drop, only open.
+    /// A merge request's relations live in its description, so `L` writes one
+    /// there rather than storing a link — and nothing here drops one.
     pub MR_LINK_GROUP: "Linked Issues" {
+        ('L') => AddLink | "L" "Name an issue this closes",
         (key Enter) => OpenLink | "Enter" "Open the linked item",
     }
 }
@@ -37,11 +39,21 @@ impl MrDetailState {
         ItemRef::merge_request(&self.project, &self.iid)
     }
 
-    pub fn handle_key(&mut self, action: Option<KeyAction>, overlay: &mut Overlay) -> EventResult {
+    /// Offered to the sections in the order they are drawn.
+    pub fn handle_key(
+        &mut self,
+        action: Option<KeyAction>,
+        cx: &DetailCtx<'_>,
+        overlay: &mut Overlay,
+        fx: &mut Effects<'_>,
+    ) -> EventResult {
         let Some(action) = action else {
             return EventResult::Bubble;
         };
         if self.body.handle_key(action) {
+            return EventResult::Consumed;
+        }
+        if related::handle_key(action, cx, &self.body, overlay, fx).handled() {
             return EventResult::Consumed;
         }
         self.conversation

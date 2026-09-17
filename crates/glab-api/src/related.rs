@@ -15,6 +15,7 @@ use serde_json::Value;
 use glab_core::domain::{ItemKind, ItemRef, RelatedItem, Relation};
 
 use crate::client::{GitLabClient, item_path};
+use urlencoding::encode;
 
 impl GitLabClient {
     /// Everything `item` is related to, unsorted.
@@ -45,6 +46,38 @@ impl GitLabClient {
                 "target_issue_iid": target.iid,
                 "link_type": relation,
             }));
+        Self::send::<Value>(request).await.map(|_| ())
+    }
+
+    /// Record `target` as related to — or closed by — the merge request `mr`,
+    /// which GitLab reads from the description rather than storing as a link.
+    /// Read-modify-write: there is no append, and a line already present is
+    /// left alone rather than repeated.
+    pub async fn mention_in_mr(
+        &self,
+        mr: &ItemRef,
+        target: &ItemRef,
+        relation: Relation,
+    ) -> Result<()> {
+        let path = format!(
+            "/projects/{}/merge_requests/{}",
+            encode(&mr.project),
+            mr.iid
+        );
+        let line = mention_line(target, relation);
+        let current: WireDescription = Self::fetch(self.rest(Method::GET, &path)).await?;
+        let description = current.description.unwrap_or_default();
+        if description.contains(&line) {
+            return Ok(());
+        }
+        let description = if description.trim().is_empty() {
+            line
+        } else {
+            format!("{}\n\n{line}", description.trim_end())
+        };
+        let request = self
+            .rest(Method::PUT, &path)
+            .json(&serde_json::json!({ "description": description }));
         Self::send::<Value>(request).await.map(|_| ())
     }
 
@@ -149,6 +182,23 @@ fn fold(closing: Vec<RelatedItem>, mentioning: Vec<RelatedItem>) -> Vec<RelatedI
     related
 }
 
+/// The line a merge request's description carries to name `target`.  GitLab
+/// acts on `Closes`; every other relation is the mention itself, so the words
+/// around it are for the reader.
+fn mention_line(target: &ItemRef, relation: Relation) -> String {
+    let keyword = match relation {
+        Relation::Closes => "Closes",
+        _ => "Related to",
+    };
+    format!("{keyword} {}", target.reference())
+}
+
+/// What `mention_in_mr` reads back before it writes.
+#[derive(Deserialize)]
+struct WireDescription {
+    description: Option<String>,
+}
+
 /// The route for an issue's links, or the one link `tail` names.
 fn links_path(item: &ItemRef, tail: &str) -> String {
     item_path(
@@ -248,7 +298,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{WireIssue, WireItem, WireLink, fold, related, related_issues};
-    use glab_core::domain::{ItemKind, Relation};
+    use glab_core::domain::{ItemKind, ItemRef, Relation};
 
     #[test]
     fn a_closing_merge_request_outranks_the_same_one_merely_related() {
@@ -330,6 +380,19 @@ mod tests {
                 ),
             ],
             "an unresolved project id is dropped"
+        );
+    }
+
+    #[test]
+    fn only_a_closing_relation_gets_the_keyword_gitlab_acts_on() {
+        let issue = ItemRef::issue("team/infra", "42");
+        assert_eq!(
+            super::mention_line(&issue, Relation::Closes),
+            "Closes team/infra#42"
+        );
+        assert_eq!(
+            super::mention_line(&issue, Relation::RelatesTo),
+            "Related to team/infra#42"
         );
     }
 

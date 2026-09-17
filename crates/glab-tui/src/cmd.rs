@@ -74,6 +74,15 @@ pub enum Cmd {
         item: ItemRef,
         link_id: u64,
     },
+    /// Name `target` in `mr`'s description, which is how GitLab records an
+    /// issue as related to or closed by a merge request.  `item` is the detail
+    /// view that re-reads once it is written — either side of the pair.
+    MentionInMr {
+        item: ItemRef,
+        mr: ItemRef,
+        target: ItemRef,
+        relation: Relation,
+    },
     SpawnSetStatus {
         project: String,
         issue_id: String,

@@ -150,13 +150,21 @@ impl App {
                 let cx = DetailCtx {
                     related: data.related_by_item.get(&item).map_or(&[], Vec::as_slice),
                     item,
-                    issues: &data.issues,
                 };
                 ui.views
                     .issue_detail
                     .handle_key(action, &cx, &mut ui.overlay, &mut fx)
             }
-            View::MrDetail => ui.views.mr_detail.handle_key(action, &mut ui.overlay),
+            View::MrDetail => {
+                let item = ui.views.mr_detail.item();
+                let cx = DetailCtx {
+                    related: data.related_by_item.get(&item).map_or(&[], Vec::as_slice),
+                    item,
+                };
+                ui.views
+                    .mr_detail
+                    .handle_key(action, &cx, &mut ui.overlay, &mut fx)
+            }
             View::Dashboard => {
                 ui.views
                     .board

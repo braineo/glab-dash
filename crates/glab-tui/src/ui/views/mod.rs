@@ -1,4 +1,3 @@
-use glab_core::domain::Issue;
 use glab_core::domain::{ItemRef, RelatedItem};
 
 use crate::app::View;
@@ -9,7 +8,6 @@ use crate::keybindings::BindingGroup;
 pub struct DetailCtx<'a> {
     pub item: ItemRef,
     pub related: &'a [RelatedItem],
-    pub issues: &'a [Issue],
 }
 
 binding_group! {

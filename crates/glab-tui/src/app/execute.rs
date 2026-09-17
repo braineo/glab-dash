@@ -171,6 +171,16 @@ impl App {
                     client.add_link(&item, &target, relation).await
                 });
             }
+            Cmd::MentionInMr {
+                item,
+                mr,
+                target,
+                relation,
+            } => {
+                self.refresh_related(item, move |client, _| async move {
+                    client.mention_in_mr(&mr, &target, relation).await
+                });
+            }
             Cmd::RemoveLink { item, link_id } => {
                 self.refresh_related(item, move |client, item| async move {
                     client.remove_link(&item, link_id).await

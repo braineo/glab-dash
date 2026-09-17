@@ -4,7 +4,7 @@
 //! What a relation means, how it sorts and whether it can be dropped are the
 //! domain's answers; this spends them on icons, colors and keys.
 
-use glab_core::domain::Issue;
+use glab_core::domain::{Issue, Item, MergeRequest};
 use glab_core::domain::{ItemKind, ItemRef, RelatedItem, Relation};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -133,45 +133,104 @@ fn row(related: &RelatedItem, reference: &str, ref_width: usize, width: usize) -
     )
 }
 
-/// `L`, first half: which relation.
+/// What picking a target does with it.
+#[derive(Clone, Copy)]
+enum Choice {
+    /// A stored issue link, which only an issue holds.
+    Link(Relation),
+    /// A line in a merge request's description, which is the only way GitLab
+    /// relates an issue to a merge request.  Named from the merge request's
+    /// side, since that is where the line lives.
+    Mention(Relation),
+}
+
+/// What `L` offers on an item of `kind`, labelled from that item's side.
+fn choices(kind: ItemKind) -> Vec<(&'static str, Choice)> {
+    match kind {
+        ItemKind::Issue => vec![
+            ("blocked by", Choice::Link(Relation::BlockedBy)),
+            ("blocks", Choice::Link(Relation::Blocks)),
+            ("relates to", Choice::Link(Relation::RelatesTo)),
+            ("closed by MR", Choice::Mention(Relation::Closes)),
+            ("related MR", Choice::Mention(Relation::RelatesTo)),
+        ],
+        ItemKind::MergeRequest => vec![
+            ("closes", Choice::Mention(Relation::Closes)),
+            ("relates to", Choice::Mention(Relation::RelatesTo)),
+        ],
+    }
+}
+
+/// `L`, first half: which relation, which also decides what is picked from.
 fn pick_relation(item: ItemRef) -> Overlay {
-    let labels = Relation::LINKABLE.iter().map(|r| r.label().to_string());
+    let choices = choices(item.kind);
+    let labels: Vec<String> = choices
+        .iter()
+        .map(|(label, _)| (*label).to_string())
+        .collect();
     Overlay::Chord {
-        state: ChordState::new_for_names("Link Type", labels.collect()),
-        on_complete: Box::new(move |label, app| {
-            let Some(relation) = Relation::LINKABLE.into_iter().find(|r| r.label() == label) else {
+        state: ChordState::new_for_names("Link Type", labels),
+        on_complete: Box::new(move |picked, app| {
+            let Some(&(label, choice)) = choices.iter().find(|(l, _)| *l == picked) else {
                 return;
             };
-            app.ui.overlay = pick_target(&item, relation, &app.data.issues);
+            let item = item.clone();
+            app.ui.overlay = match choice {
+                Choice::Link(relation) => pick_target(
+                    label,
+                    issue_rows(&app.data.issues, &item),
+                    move |item, target| Cmd::AddLink {
+                        item,
+                        target,
+                        relation,
+                    },
+                    item,
+                ),
+                // Whichever side is the merge request holds the line, so an
+                // issue picks a merge request and a merge request an issue.
+                Choice::Mention(relation) => {
+                    let rows = match item.kind {
+                        ItemKind::Issue => mr_rows(&app.data.mrs, &item),
+                        ItemKind::MergeRequest => issue_rows(&app.data.issues, &item),
+                    };
+                    pick_target(
+                        label,
+                        rows,
+                        move |item, picked| mention(item, picked, relation),
+                        item,
+                    )
+                }
+            };
         }),
+    }
+}
+
+/// Whichever side is the merge request holds the line; the other is what it
+/// names.  `item` is the view that asked, and so the one that re-reads.
+fn mention(item: ItemRef, picked: ItemRef, relation: Relation) -> Cmd {
+    let (mr, target) = if item.kind == ItemKind::MergeRequest {
+        (item.clone(), picked)
+    } else {
+        (picked, item.clone())
+    };
+    Cmd::MentionInMr {
+        item,
+        mr,
+        target,
+        relation,
     }
 }
 
 /// `L`, second half: which item.  The reference leads each row, so the pick
 /// alone says which item it was.
-///
-/// ponytail: offers only what has been fetched; linking outside the team's
-/// scope needs free text in the picker.
-fn pick_target(item: &ItemRef, relation: Relation, issues: &[Issue]) -> Overlay {
-    let self_reference = item.reference();
-    let (items, subtitles): (Vec<String>, Vec<String>) = issues
-        .iter()
-        .filter(|i| i.reference != self_reference)
-        .map(|i| {
-            let state = i.status_name().unwrap_or(&i.state).to_string();
-            let assignees: Vec<&str> = i.assignees.iter().map(|a| a.username.as_str()).collect();
-            let who = if assignees.is_empty() {
-                String::new()
-            } else {
-                format!("  @{}", assignees.join(" @"))
-            };
-            (format!("{}  {}", i.reference, i.title), state + &who)
-        })
-        .unzip();
-
-    let item = item.clone();
+fn pick_target(
+    label: &str,
+    (items, subtitles): (Vec<String>, Vec<String>),
+    cmd: impl Fn(ItemRef, ItemRef) -> Cmd + 'static,
+    item: ItemRef,
+) -> Overlay {
     Overlay::Picker {
-        state: PickerState::new(&format!("Link \u{2014} {}", relation.label()), items, false)
+        state: PickerState::new(&format!("Link \u{2014} {label}"), items, false)
             .with_subtitles(subtitles),
         on_complete: Box::new(move |values, app| {
             let target = values
@@ -181,25 +240,59 @@ fn pick_target(item: &ItemRef, relation: Relation, issues: &[Issue]) -> Overlay 
             let Some(target) = target else {
                 return;
             };
-            app.ui.pending_cmds.push(Cmd::AddLink {
-                item,
-                target,
-                relation,
-            });
+            app.ui.pending_cmds.push(cmd(item.clone(), target));
         }),
     }
+}
+
+/// An issue's own name for its state beats the raw one, which is what the rest
+/// of the app shows.
+fn issue_rows(issues: &[Issue], self_ref: &ItemRef) -> (Vec<String>, Vec<String>) {
+    rows(issues, self_ref, |i| {
+        i.status_name().unwrap_or(&i.state).to_string()
+    })
+}
+
+fn mr_rows(mrs: &[MergeRequest], self_ref: &ItemRef) -> (Vec<String>, Vec<String>) {
+    rows(mrs, self_ref, |m| m.state.clone())
+}
+
+/// One row per item, the item itself left out: nothing relates to itself.
+///
+/// ponytail: offers only what has been fetched; naming something outside the
+/// team's scope needs free text in the picker.
+fn rows<T: Item>(
+    items: &[T],
+    self_ref: &ItemRef,
+    state: impl Fn(&T) -> String,
+) -> (Vec<String>, Vec<String>) {
+    let self_reference = self_ref.reference();
+    items
+        .iter()
+        .filter(|i| i.reference() != self_reference)
+        .map(|i| {
+            let assignees: Vec<&str> = i.assignees().iter().map(|a| a.username.as_str()).collect();
+            let who = if assignees.is_empty() {
+                String::new()
+            } else {
+                format!("  @{}", assignees.join(" @"))
+            };
+            (format!("{}  {}", i.reference(), i.title()), state(i) + &who)
+        })
+        .unzip()
 }
 
 #[cfg(test)]
 mod tests {
     use glab_core::domain::{ItemRef, RelatedItem, Relation};
 
-    use super::{at_cursor, handle_key, push};
+    use super::{Choice, at_cursor, choices, handle_key, mention, push};
     use crate::app::Overlay;
     use crate::cmd::{Cmd, Dirty, Effects};
     use crate::keybindings::KeyAction;
     use crate::ui::components::detail_body::{DetailBody, Row};
     use crate::ui::views::DetailCtx;
+    use glab_core::domain::ItemKind;
 
     fn related(relation: Relation, link_id: Option<u64>, iid: &str) -> RelatedItem {
         RelatedItem {
@@ -246,6 +339,54 @@ mod tests {
         }
     }
 
+    /// Either side can name the pair, and both write the same line into the
+    /// same merge request.
+    #[test]
+    fn a_mention_is_written_to_whichever_side_is_the_merge_request() {
+        let issue = ItemRef::issue("team/app", "1");
+        let mr = ItemRef::merge_request("team/app", "7");
+
+        for (item, picked) in [(issue.clone(), mr.clone()), (mr.clone(), issue.clone())] {
+            let asked = item.clone();
+            let Cmd::MentionInMr {
+                item: refreshed,
+                mr: written,
+                target,
+                relation,
+            } = mention(item, picked, Relation::Closes)
+            else {
+                panic!("a mention is a mention");
+            };
+            assert_eq!(written, mr);
+            assert_eq!(target, issue);
+            assert_eq!(refreshed, asked, "the view that asked re-reads");
+            assert_eq!(relation, Relation::Closes);
+        }
+    }
+
+    /// Only an issue holds a stored link; a merge request has nowhere to put
+    /// one but its description.
+    #[test]
+    fn a_merge_request_offers_mentions_alone() {
+        assert!(
+            choices(ItemKind::MergeRequest)
+                .iter()
+                .all(|(_, c)| matches!(c, Choice::Mention(_))),
+        );
+        assert!(
+            choices(ItemKind::Issue)
+                .iter()
+                .any(|(_, c)| matches!(c, Choice::Link(_))),
+        );
+        for kind in [ItemKind::Issue, ItemKind::MergeRequest] {
+            let labels: Vec<&str> = choices(kind).iter().map(|(l, _)| *l).collect();
+            let mut unique = labels.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(unique.len(), labels.len(), "the chord keys off the label");
+        }
+    }
+
     #[test]
     fn a_derived_relation_refuses_to_be_unlinked() {
         let items = vec![
@@ -262,7 +403,6 @@ mod tests {
             let cx = DetailCtx {
                 item: ItemRef::issue("team/app", "1"),
                 related: &items,
-                issues: &[],
             };
             let mut fx = Effects {
                 dirty: &mut dirty,
