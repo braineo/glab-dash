@@ -332,9 +332,15 @@ fn a_rebuild_keeps_the_cursor_on_its_item_wherever_it_lands() {
     list.restore(&items, anchor.as_deref());
     assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#2"));
 
-    // Filtered out: the cursor goes to the top instead of to whoever
-    // inherited row 2.
+    // Gone — filtered out or closed: the cursor holds its row, which the
+    // successor now occupies.
     list.indices = vec![0, 2];
+    list.table_state.select(Some(1));
+    list.restore(&items, anchor.as_deref());
+    assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#3"));
+
+    // Gone from the last row: the cursor clamps onto the new last row.
+    list.indices = vec![0];
     list.restore(&items, anchor.as_deref());
     assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#1"));
 
@@ -355,4 +361,22 @@ fn a_list_with_no_cursor_yet_starts_at_the_top() {
     assert_eq!(list.anchor(&items), None);
     list.restore(&items, None);
     assert_eq!(list.table_state.selected(), Some(0));
+}
+
+#[test]
+fn a_rebuild_drops_a_stale_scroll_offset() {
+    let items = [Row("p#1"), Row("p#2"), Row("p#3")];
+    let mut list: ItemList<Row> = ItemList {
+        indices: vec![0, 1, 2],
+        ..Default::default()
+    };
+    list.table_state.select(Some(2));
+    *list.table_state.offset_mut() = 2;
+
+    // Narrowed to one match: an offset of 2 would have ratatui start the
+    // viewport past the only row left.
+    list.indices = vec![1];
+    list.restore(&items, Some("p#2"));
+    assert_eq!(list.table_state.offset(), 0);
+    assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#2"));
 }
