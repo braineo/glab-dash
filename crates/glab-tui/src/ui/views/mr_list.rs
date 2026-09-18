@@ -187,7 +187,7 @@ pub fn render(
                         Style::default().fg(styles::red()),
                     ),
                 ])),
-                None => Cell::default(),
+                None => Cell::from(""),
             };
 
             // Approval: green check, red uncheck
@@ -204,7 +204,7 @@ pub fn render(
                     styles::ICON_CHECK,
                     Style::default().fg(styles::green()),
                 )),
-                None => Cell::default(),
+                None => Cell::from(""),
             };
 
             // Threads: unresolved in orange, total in dim
@@ -221,7 +221,7 @@ pub fn render(
                     format!("{n}"),
                     Style::default().fg(styles::text_dim()),
                 )),
-                _ => Cell::default(),
+                _ => Cell::from(""),
             };
 
             let age = list_model::format_age(&item.updated_at, now);

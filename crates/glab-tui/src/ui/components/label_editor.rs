@@ -640,7 +640,10 @@ mod tests {
             .map(|&i| state.all_labels[i].as_str())
             .collect();
         assert!(pinned.contains(&"A"), "current label stays pinned");
-        assert!(pinned.contains(&"C"), "frequent label pinned despite usage map");
+        assert!(
+            pinned.contains(&"C"),
+            "frequent label pinned despite usage map"
+        );
     }
 
     #[test]
