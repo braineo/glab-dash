@@ -80,6 +80,14 @@ impl Conversation {
         self.loading = false;
     }
 
+    /// Everyone who has spoken on this item, for `@` completion — a thread
+    /// pulls in people who are on no team and so are in no config.
+    pub fn participants(&self) -> impl Iterator<Item = &str> {
+        self.discussions
+            .iter()
+            .flat_map(|d| d.comments().map(|n| n.author.username.as_str()))
+    }
+
     /// `None` on every row that belongs to no thread.
     pub fn thread_at_cursor(&self, body: &DetailBody) -> Option<&Discussion> {
         let Row::Thread { thread, .. } = body.cursor_row() else {
