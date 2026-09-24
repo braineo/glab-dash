@@ -148,8 +148,7 @@ impl App {
             .sort_presets
             .iter()
             .find(|p| p.name == name)
-            .map(|preset| preset.specs.clone())
-            .unwrap_or_default();
+            .map_or_default(|preset| preset.specs.clone());
         self.apply_sort_specs(specs);
     }
 

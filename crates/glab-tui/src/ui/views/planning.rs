@@ -437,7 +437,7 @@ fn render_column(
                 .map_or(styles::ICON_UNCHECK, styles::status_icon);
             let iid = format!("#{}", item.iid);
             let assignee = item.assignees.first().map_or("-", |u| u.username.as_str());
-            let weight = item.weight.map(|w| format!("{w}w")).unwrap_or_default();
+            let weight = item.weight.map_or_default(|w| format!("{w}w"));
 
             let title = &item.title;
 
