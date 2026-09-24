@@ -18,7 +18,7 @@ pub enum CommentTarget {
 
 /// Result of handling a key event in the comment input.
 pub enum InputAction {
-    /// User pressed Ctrl+C — submit the comment.
+    /// User pressed Ctrl+Enter — submit the comment.
     Submit,
     /// User pressed Esc — cancel input.
     Cancel,
@@ -60,7 +60,7 @@ impl CommentInput {
 
     /// Handle a key event. Returns the resulting action.
     ///
-    /// - **Ctrl+Enter** (or **Ctrl+C**) submits, **Esc** cancels.
+    /// - **Ctrl+Enter** submits, **Esc** cancels.
     /// - **Ctrl+Space** sets the mark, **Alt+W** copies the region.
     /// - **Ctrl+S** starts emacs-style incremental search (see [`Self::handle_isearch_key`]).
     /// - Everything else is delegated to `tui-textarea`, whose default emacs
@@ -75,9 +75,7 @@ impl CommentInput {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
-                // Ctrl+C is the fallback: terminals without keyboard enhancement
-                // report Ctrl+Enter as a plain Enter, which inserts a newline.
-                KeyCode::Enter | KeyCode::Char('c') => return InputAction::Submit,
+                KeyCode::Enter => return InputAction::Submit,
                 KeyCode::Char('s') => {
                     self.start_isearch();
                     return InputAction::Continue;

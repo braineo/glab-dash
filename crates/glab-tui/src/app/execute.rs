@@ -1,5 +1,9 @@
 //! TEA execute phase: drain pending Cmds and perform I/O side-effects.
 
+use anyhow::Result;
+use glab_api::GitLabClient;
+use glab_core::domain::ItemRef;
+
 use crate::cmd::Cmd;
 
 use super::{App, AsyncMsg, FetchState, ViewState};
@@ -153,6 +157,35 @@ impl App {
                     let _ = tx.send(AsyncMsg::IterationUpdated(result, issue_id, old_iteration));
                 });
             }
+            // GitLab owns the link ids, so a write re-reads rather than
+            // patching — which also picks up anyone else's change.
+            Cmd::FetchRelated(item) => {
+                self.refresh_related(item, |_, _| async { Ok(()) });
+            }
+            Cmd::AddLink {
+                item,
+                target,
+                relation,
+            } => {
+                self.refresh_related(item, move |client, item| async move {
+                    client.add_link(&item, &target, relation).await
+                });
+            }
+            Cmd::MentionInMr {
+                item,
+                mr,
+                target,
+                relation,
+            } => {
+                self.refresh_related(item, move |client, _| async move {
+                    client.mention_in_mr(&mr, &target, relation).await
+                });
+            }
+            Cmd::RemoveLink { item, link_id } => {
+                self.refresh_related(item, move |client, item| async move {
+                    client.remove_link(&item, link_id).await
+                });
+            }
             Cmd::SpawnSetStatus {
                 project,
                 issue_id,
@@ -171,5 +204,23 @@ impl App {
                 });
             }
         }
+    }
+
+    /// A read alone passes a `write` that does nothing.
+    fn refresh_related<F, Fut>(&self, item: ItemRef, write: F)
+    where
+        F: FnOnce(GitLabClient, ItemRef) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<()>> + Send,
+    {
+        let client = self.ctx.client.clone();
+        let tx = self.ctx.async_tx.clone();
+        tokio::spawn(async move {
+            let result = async {
+                write(client.clone(), item.clone()).await?;
+                client.list_related(&item).await
+            }
+            .await;
+            let _ = tx.send(AsyncMsg::RelatedLoaded(result, item));
+        });
     }
 }

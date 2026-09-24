@@ -1,7 +1,8 @@
 //! TEA handle phase for async messages: process results from background tasks.
 
 use crate::cmd::Cmd;
-use glab_core::domain::{Issue, MergeRequest, StatusValue};
+use glab_core::domain::RelatedItem;
+use glab_core::domain::{Issue, Item, MergeRequest, StatusValue};
 
 use super::issue_actions;
 use super::{App, AsyncMsg, FetchState, View};
@@ -17,7 +18,7 @@ impl App {
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
-                    self.data.issues.retain(|i| i.state == "opened");
+                    self.data.issues.retain(Issue::is_open);
                     self.ui.error = None;
                     self.record_fetch_done();
                     self.ui.dirty.issues = true;
@@ -37,7 +38,7 @@ impl App {
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
-                    self.data.mrs.retain(|m| m.state == "opened");
+                    self.data.mrs.retain(MergeRequest::is_open);
                     self.record_fetch_done();
                     self.ui.error = None;
                     self.ui.dirty.mrs = true;
@@ -71,6 +72,13 @@ impl App {
                     }
                 }
             }
+            AsyncMsg::RelatedLoaded(result, item) => match result {
+                Ok(mut related) => {
+                    related.sort_by_key(RelatedItem::rank);
+                    self.data.related_by_item.insert(item, related);
+                }
+                Err(e) => self.show_error(format!("Related: {e:#}")),
+            },
             AsyncMsg::ActionDone(result) => {
                 self.ui.loading = false;
                 match result {
@@ -95,7 +103,7 @@ impl App {
                         self.ui
                             .pending_cmds
                             .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
-                        self.data.issues.retain(|i| i.state == "opened");
+                        self.data.issues.retain(Issue::is_open);
                         self.ui.error = None;
                         self.ui.dirty.issues = true;
                     }
@@ -302,7 +310,7 @@ impl App {
                 .data
                 .mrs
                 .iter()
-                .filter(|m| m.state == "opened" && !returned.contains(&m.id))
+                .filter(|m| m.is_open() && !returned.contains(&m.id))
                 .map(|m| MergeRequest {
                     state: "closed".to_string(),
                     ..m.clone()

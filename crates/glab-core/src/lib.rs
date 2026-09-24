@@ -1,5 +1,6 @@
 //! The glab-dash domain layer: the [`domain`] model of GitLab issues, merge
-//! requests and the metadata around them, the [`label`] names they carry and
+//! requests, the reference that names one and the relations between them, the
+//! [`label`] names they carry and
 //! the [`kanban`] columns a board groups them into, the [`filter`] conditions
 //! applied to those items client-side, the [`sort`] specs that order them, the
 //! [`comment_filter`] rule for comments not worth reading, and the [`team`]

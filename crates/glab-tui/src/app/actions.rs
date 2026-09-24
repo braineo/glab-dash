@@ -1,8 +1,12 @@
 //! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
-use glab_core::domain::{Issue, MergeRequest, StatusValue};
+use glab_core::domain::{Issue, Item, MergeRequest, StatusValue};
+use glab_core::domain::{ItemKind, ItemRef};
+
+use crate::ui::components::related;
 
 use super::issue_actions::IssueActions;
+use super::item_actions;
 use super::mr_actions::MrActions;
 use super::{App, FocusedItem, Overlay, View};
 
@@ -111,29 +115,20 @@ impl App {
         }
     }
 
-    /// Dispatch comment submit to the focused issue or MR.
+    /// Both kinds take the same path; this only says which item.
     pub(super) fn dispatch_submit_comment(
         &mut self,
         body: &str,
         target: crate::ui::components::input::CommentTarget,
     ) {
-        match self.ui.focused.clone() {
-            Some(FocusedItem::Issue { id, .. }) => {
-                if let Some(issue) = self.data.issues.iter().find(|i| i.id == id) {
-                    issue.submit_comment(body, target, &self.ctx, &mut self.ui);
-                }
-            }
-            Some(FocusedItem::Mr { project, iid }) => {
-                if let Some(mr) = self
-                    .data
-                    .mrs
-                    .iter()
-                    .find(|m| m.iid == iid && m.project_path() == project)
-                {
-                    mr.submit_comment(body, target, &self.ctx, &mut self.ui);
-                }
-            }
-            None => {}
+        if let Some(focused) = self.ui.focused.clone() {
+            item_actions::submit_comment(
+                &focused.item_ref(),
+                body,
+                target,
+                &self.ctx,
+                &mut self.ui,
+            );
         }
     }
 
@@ -157,18 +152,100 @@ impl App {
     pub(super) fn action_open_detail(&mut self) {
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { id, project, iid }) => {
-                self.ui.views.issue_detail.open(&id, &project, &iid);
-                self.fetch_notes_for_issue(&project, &iid);
+                self.open_issue_detail(&id, &project, &iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::IssueDetail;
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                self.ui.views.mr_detail.open(&project, &iid);
-                self.fetch_notes_for_mr(&project, &iid);
+                self.open_mr_detail(&project, &iid);
                 self.ui.view_stack.push(self.ui.view);
                 self.ui.view = View::MrDetail;
             }
             None => {}
+        }
+        self.ui.dirty.selection = true;
+    }
+
+    /// Does not switch the view: the caller decides what to stack.
+    pub(super) fn open_issue_detail(&mut self, id: &str, project: &str, iid: &str) {
+        self.ui.views.issue_detail.open(id, project, iid);
+        self.fetch_notes_for_issue(project, iid);
+        self.ui
+            .pending_cmds
+            .push(crate::cmd::Cmd::FetchRelated(ItemRef::issue(project, iid)));
+        self.ui.dirty.selection = true;
+    }
+
+    /// Does not switch the view: the caller decides what to stack.
+    pub(super) fn open_mr_detail(&mut self, project: &str, iid: &str) {
+        self.ui.views.mr_detail.open(project, iid);
+        self.fetch_notes_for_mr(project, iid);
+        self.ui
+            .pending_cmds
+            .push(crate::cmd::Cmd::FetchRelated(ItemRef::merge_request(
+                project, iid,
+            )));
+        self.ui.dirty.selection = true;
+    }
+
+    /// A fetched item opens in the detail view; one outside the team's scope
+    /// has no local copy to render, so it opens in the browser.
+    ///
+    /// ponytail: a chain of blockers cannot be walked back item by item; give
+    /// the detail view its own stack if that bites.
+    pub(super) fn action_open_related(&mut self) {
+        let Some(target) = self.related_at_cursor() else {
+            return;
+        };
+        let reference = target.item.reference();
+        match target.item.kind {
+            ItemKind::Issue => {
+                let Some(issue) = self.data.issues.iter().find(|i| i.reference == reference) else {
+                    let _ = open::that_detached(&target.web_url);
+                    return;
+                };
+                let (id, project, iid) = (
+                    issue.id.clone(),
+                    issue.project_path().to_string(),
+                    issue.iid.clone(),
+                );
+                self.open_issue_detail(&id, &project, &iid);
+                self.enter_detail(View::IssueDetail);
+            }
+            ItemKind::MergeRequest => {
+                let Some(mr) = self.data.mrs.iter().find(|m| m.reference == reference) else {
+                    let _ = open::that_detached(&target.web_url);
+                    return;
+                };
+                let (project, iid) = (mr.project_path().to_string(), mr.iid.clone());
+                self.open_mr_detail(&project, &iid);
+                self.enter_detail(View::MrDetail);
+            }
+        }
+    }
+
+    /// Whichever detail view is open, the relation its cursor sits on.
+    fn related_at_cursor(&self) -> Option<glab_core::domain::RelatedItem> {
+        let (item, body) = match self.ui.view {
+            View::IssueDetail => {
+                let d = &self.ui.views.issue_detail;
+                (d.item(), &d.body)
+            }
+            View::MrDetail => {
+                let d = &self.ui.views.mr_detail;
+                (d.item(), &d.body)
+            }
+            _ => return None,
+        };
+        related::at_cursor(self.data.related_by_item.get(&item)?, body).cloned()
+    }
+
+    /// Crossing from one kind of detail to the other stacks what it left, so
+    /// Esc comes back to it; following a link within one kind replaces it.
+    fn enter_detail(&mut self, view: View) {
+        if self.ui.view != view {
+            self.ui.view_stack.push(self.ui.view);
+            self.ui.view = view;
         }
         self.ui.dirty.selection = true;
     }

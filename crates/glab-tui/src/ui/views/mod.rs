@@ -1,6 +1,14 @@
+use glab_core::domain::{ItemRef, RelatedItem};
+
 use crate::app::View;
 use crate::binding_group;
 use crate::keybindings::BindingGroup;
+
+/// What a detail view needs from `AppData` to answer a key.
+pub struct DetailCtx<'a> {
+    pub item: ItemRef,
+    pub related: &'a [RelatedItem],
+}
 
 binding_group! {
     /// Walking a detail view's conversation and acting on the thread under the
@@ -20,7 +28,7 @@ binding_group! {
         ('g') => Top | "g/G" "First / last row",
         ('G') => Bottom,
         (ctrl 'v') => PageDown | "^v/M-v" "Page down/up",
-        (alt 'u') => PageUp,
+        (alt 'v') => PageUp,
         ('c') => ReplyThread | "c" "Reply to this thread",
         ('C') => NewThread | "C" "Start a new thread",
         ('e') => EditComment | "e" "Edit this comment",
@@ -71,8 +79,12 @@ static PLANNING_CHAIN: &[&BindingGroup] = &[
     &list_model::FILTER_GROUP,
 ];
 
-/// A detail view scrolls and replies; it has no list and nothing to filter.
-static DETAIL_CHAIN: &[&BindingGroup] = &[&DETAIL_NAV_GROUP];
+/// A detail view scrolls and replies; it has no list and nothing to filter, so
+/// each kind adds only its own linked-item keys ahead of the shared group.
+static ISSUE_DETAIL_CHAIN: &[&BindingGroup] = &[&issue_detail::ISSUE_LINK_GROUP, &DETAIL_NAV_GROUP];
+
+/// A merge request's detail adds only the key that opens a linked issue.
+static MR_DETAIL_CHAIN: &[&BindingGroup] = &[&mr_detail::MR_LINK_GROUP, &DETAIL_NAV_GROUP];
 
 impl Views {
     /// The groups `view` composes, innermost first.  The view→groups map lives
@@ -82,7 +94,8 @@ impl Views {
         match view {
             View::Dashboard => BOARD_CHAIN,
             View::IssueList | View::MrList => LIST_CHAIN,
-            View::IssueDetail | View::MrDetail => DETAIL_CHAIN,
+            View::IssueDetail => ISSUE_DETAIL_CHAIN,
+            View::MrDetail => MR_DETAIL_CHAIN,
             View::Planning => PLANNING_CHAIN,
         }
     }

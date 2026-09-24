@@ -5,6 +5,7 @@
 //! where a `u64` is wanted, a string `iid`, connections that need unwrapping,
 //! and the `SCREAMING_CASE` pipeline status the UI matches lowercase.
 
+use glab_core::domain::Item;
 use glab_core::domain::MergeRequest;
 
 const RESPONSE: &str = include_str!("mr_graphql_response.json");
