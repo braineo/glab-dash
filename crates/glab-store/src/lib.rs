@@ -1,7 +1,3 @@
-//! The local SQLite store: every issue, merge request, label, iteration and
-//! work-item status glab-dash has fetched, plus the generic key-value slots
-//! callers persist their own state in.
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -13,11 +9,7 @@ use glab_core::domain::{Issue, Item, Iteration, MergeRequest, ProjectLabel, Work
 
 const SCHEMA_VERSION: u32 = 3;
 
-/// SQLite-backed persistence layer.
-///
-/// Replaces the old JSON cache with targeted per-table writes.
-/// All methods are synchronous — individual writes take microseconds,
-/// batch upserts single-digit milliseconds.
+/// All methods are synchronous.
 pub struct Db {
     conn: Connection,
 }
@@ -27,7 +19,7 @@ fn db_path() -> Option<PathBuf> {
 }
 
 impl Db {
-    /// Open (or create) the database at `~/.cache/glab-dash/data.db`.
+    /// Creates `~/.cache/glab-dash/data.db` when it does not exist.
     pub fn open() -> Result<Self> {
         let path = db_path().context("could not determine cache directory")?;
         if let Some(parent) = path.parent() {
@@ -42,7 +34,6 @@ impl Db {
         Ok(db)
     }
 
-    /// Open an in-memory database (for tests).
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
@@ -50,8 +41,6 @@ impl Db {
         db.migrate()?;
         Ok(db)
     }
-
-    // ── Schema migration ────────────────────────────────────────────
 
     fn migrate(&self) -> Result<()> {
         let version: u32 = self
@@ -115,10 +104,8 @@ impl Db {
         }
 
         if version < 3 {
-            // The cached MergeRequest JSON gained `detailedMergeStatus`, and a
-            // row missing a non-optional key no longer deserializes. Drop the
-            // cached merge requests and the fetch timestamp so the next fetch
-            // is full rather than incremental.
+            // The cached MergeRequest JSON gained `detailedMergeStatus`; drop
+            // the rows and the fetch timestamp so the next fetch is full.
             self.conn.execute_batch(
                 "DELETE FROM merge_requests;
                  DELETE FROM kv WHERE key = 'last_fetched_at';",
@@ -129,8 +116,6 @@ impl Db {
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
-
-    // ── Batch upserts (after API fetch) ─────────────────────────────
 
     pub fn upsert_issues(&self, issues: &[Issue]) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
@@ -196,8 +181,8 @@ impl Db {
     pub fn upsert_iterations(&self, iters: &[Iteration]) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         {
-            // Each fetch is one group's full cadence, and a team switch changes
-            // groups — so replace the cache rather than accumulating both.
+            // Each fetch is one group's full cadence, and a team switch
+            // changes groups.
             tx.execute("DELETE FROM iterations", [])?;
             let mut stmt =
                 tx.prepare_cached("INSERT OR REPLACE INTO iterations (id, data) VALUES (?1, ?2)")?;
@@ -219,9 +204,6 @@ impl Db {
         Ok(())
     }
 
-    // ── Reads ───────────────────────────────────────────────────────
-
-    /// Load issues, optionally filtered to a single state.
     pub fn load_issues(&self, state: Option<&str>) -> Result<Vec<Issue>> {
         let mut stmt = self
             .conn
@@ -229,7 +211,6 @@ impl Db {
         parse_rows("issues", stmt.query_map(params![state], |row| row.get(0))?)
     }
 
-    /// Load merge requests, optionally filtered to a single state.
     pub fn load_mrs(&self, state: Option<&str>) -> Result<Vec<MergeRequest>> {
         let mut stmt = self
             .conn
@@ -267,8 +248,7 @@ impl Db {
         Ok(map)
     }
 
-    /// Query issues closed within a date range, excluding those in a
-    /// specific iteration. Used for shadow work detection.
+    /// Issues closed within a date range, excluding one iteration's.
     pub fn query_shadow_work(
         &self,
         closed_after: &str,
@@ -285,7 +265,6 @@ impl Db {
         for row in rows {
             let json = row?;
             if let Ok(item) = serde_json::from_str::<Issue>(&json) {
-                // Exclude issues that belong to the current iteration
                 let dominated = exclude_iteration_id.is_some_and(|iter_id| {
                     item.iteration.as_ref().is_some_and(|i| i.id == iter_id)
                 });
@@ -296,8 +275,6 @@ impl Db {
         }
         Ok(items)
     }
-
-    // ── Key-value store ─────────────────────────────────────────────
 
     pub fn set_kv<T: Serialize>(&self, key: &str, value: &T) -> Result<()> {
         let json = serde_json::to_string(value)?;
@@ -322,10 +299,7 @@ impl Db {
     }
 }
 
-/// Deserialize the `data` column of every row, skipping a row whose JSON no
-/// longer matches the type — a cached row is disposable, but the skip is logged
-/// rather than silent, because a shape change otherwise shows up only as an
-/// inexplicably short list.
+/// A row whose JSON no longer matches the type is logged and skipped.
 fn parse_rows<T: DeserializeOwned>(
     table: &str,
     rows: impl Iterator<Item = rusqlite::Result<String>>,

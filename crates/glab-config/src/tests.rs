@@ -116,7 +116,6 @@ teams = []
     assert_eq!(members, Vec::<String>::new());
 }
 
-/// The minimum a config needs, so a test can add just the section it is about.
 fn with(section: &str) -> String {
     format!(
         r#"
@@ -233,7 +232,6 @@ fn a_generated_config_reads_back() {
     assert_eq!(round_tripped.me, config.me);
 }
 
-/// Two teams share one namespace, a third has its own.
 fn scoped_config() -> Config {
     toml::from_str(
         r#"

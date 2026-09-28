@@ -21,8 +21,6 @@ pub struct MrListState {
 }
 
 impl MrListState {
-    // ── Key handling ────────────────────────────────────────────────
-
     pub fn handle_key(
         &mut self,
         key: &KeyEvent,
@@ -52,8 +50,6 @@ impl MrListState {
             return EventResult::Consumed;
         }
 
-        // Motion and starting a search are the list's own; everything else
-        // (item actions, filtering, global) bubbles.
         let Some(action) = action else {
             return EventResult::Bubble;
         };
@@ -72,8 +68,6 @@ impl MrListState {
         }
         EventResult::Bubble
     }
-
-    // ── Filtering ───────────────────────────────────────────────────
 
     pub fn apply_filters(&mut self, mrs: &[MergeRequest], me: &str, label_orders: &LabelOrders) {
         let anchor = self.list.anchor(mrs);
@@ -136,7 +130,6 @@ pub fn render(
         state.filter.bar_selected,
     );
 
-    // Build table rows
     let now = chrono::Utc::now();
     let selected_idx = state.list.table_state.selected();
     let rows: Vec<Row> = state
@@ -174,7 +167,6 @@ pub fn render(
                 .collect::<Vec<_>>()
                 .join(",");
 
-            // Diff: green additions, red deletions
             let diff_cell = match item.diff_stats() {
                 Some(d) => Cell::from(Line::from(vec![
                     Span::styled(
@@ -190,7 +182,6 @@ pub fn render(
                 None => Cell::from(""),
             };
 
-            // Approval: green check, red uncheck
             let approval_cell = match item.approved {
                 Some(true) => Cell::from(Span::styled(
                     styles::ICON_CHECK,
@@ -207,7 +198,6 @@ pub fn render(
                 None => Cell::from(""),
             };
 
-            // Threads: unresolved in orange, total in dim
             let threads_cell = match (item.unresolved_threads(), item.notes_count()) {
                 (u, n) if u > 0 && n > 0 => Cell::from(Line::from(vec![
                     Span::styled(format!("{u}!"), Style::default().fg(styles::orange())),
@@ -292,7 +282,6 @@ pub fn render(
 
     frame.render_stateful_widget(table, chunks[1], &mut state.list.table_state);
 
-    // Preview pane: show full labels and details of selected MR
     if let Some(item) = state.list.selected_item(mrs) {
         let mut spans: Vec<Span> = vec![Span::styled(" Labels: ", styles::help_desc_style())];
         if item.labels.is_empty() {
@@ -308,7 +297,6 @@ pub fn render(
         }
         let pipeline_status = item.pipeline_status().unwrap_or("none");
 
-        // Build detail line: branch info, pipeline, approvals, diff stats
         let mut detail_spans = vec![
             Span::styled(" Branch: ", styles::help_desc_style()),
             Span::styled(
@@ -327,7 +315,6 @@ pub fn render(
             Span::styled(pipeline_status, styles::pipeline_style(pipeline_status)),
         ];
 
-        // Approvals
         let approved_by: Vec<&str> = item
             .approved_by
             .iter()
@@ -341,7 +328,6 @@ pub fn render(
             ));
         }
 
-        // Diff stats
         if let Some(stats) = item.diff_stats() {
             detail_spans.push(Span::styled("  Diff: ", styles::help_desc_style()));
             detail_spans.push(Span::styled(

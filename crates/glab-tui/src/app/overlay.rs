@@ -1,5 +1,3 @@
-//! Overlay key dispatch — each overlay type handles its own keys.
-
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::cmd::EventResult;
@@ -10,9 +8,8 @@ use crate::ui::views::filter_editor;
 use super::{App, Overlay, View};
 
 impl App {
-    /// Who `@` completes to in a comment draft: the configured teams, plus
-    /// whoever is already talking on the open item — a reviewer or reporter
-    /// from outside every team is exactly who a reply needs to name.
+    /// The configured teams, plus whoever is already talking on the open item
+    /// — a reviewer from outside every team is still worth naming.
     fn comment_mention_pool(&self) -> Vec<String> {
         let conversation = match self.ui.view {
             View::IssueDetail => Some(&self.ui.views.issue_detail.conversation),
@@ -31,11 +28,9 @@ impl App {
         members
     }
 
-    /// Overlay focus: if an overlay is active, it handles the key and
-    /// returns Consumed.  Returns Bubble only when no overlay is active.
     pub(super) fn dispatch_overlay(&mut self, key: &KeyEvent) -> EventResult {
-        // Take the overlay out so we can destructure it with owned access
-        // while still having `&mut self` for callbacks.
+        // Taken out so it can be destructured by value while `self` stays
+        // mutably borrowable for the callbacks.
         let overlay = std::mem::replace(&mut self.ui.overlay, Overlay::None);
 
         match overlay {
@@ -46,17 +41,13 @@ impl App {
 
             Overlay::Help => {
                 if key.code == KeyCode::Char('?') || keys::is_back(key) {
-                    // overlay already None
                 } else {
                     self.ui.overlay = Overlay::Help;
                 }
                 EventResult::Consumed
             }
 
-            Overlay::Error(_) => {
-                // Any key dismisses error; overlay already None
-                EventResult::Consumed
-            }
+            Overlay::Error(_) => EventResult::Consumed,
 
             Overlay::Confirm {
                 title,
@@ -70,7 +61,6 @@ impl App {
                     },
                     KeyCode::Char('n') | KeyCode::Esc => {}
                     _ => {
-                        // Unrecognized key — put overlay back
                         self.ui.overlay = Overlay::Confirm {
                             title,
                             message,
@@ -131,8 +121,6 @@ impl App {
                 mut autocomplete,
                 target,
             } => {
-                // Handle autocomplete keys first if active; each of these
-                // only steers the popup, leaving the draft open.
                 let steered = autocomplete.active
                     && match key.code {
                         KeyCode::Tab => {
@@ -160,8 +148,6 @@ impl App {
                         _ => false,
                     };
 
-                // Cancel and submit are the only two that close the draft, and
-                // the overlay is already `None` for them.
                 if !steered {
                     match input.handle_key(key) {
                         input::InputAction::Cancel => return EventResult::Consumed,
@@ -173,7 +159,6 @@ impl App {
                             }
                             return EventResult::Consumed;
                         }
-                        // No completion popup while isearch is moving the cursor.
                         input::InputAction::Continue if input.is_searching() => {
                             autocomplete.dismiss();
                         }

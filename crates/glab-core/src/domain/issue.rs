@@ -1,6 +1,3 @@
-//! An issue and what only an issue carries: its workflow status, its
-//! iteration, its weight.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -14,21 +11,18 @@ pub struct Milestone {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Iteration {
-    /// GitLab GID, e.g. "gid://gitlab/Iteration/123". Kept as the GID because
-    /// that is the form every mutation taking an iteration expects.
+    /// Every mutation taking an iteration wants the full GID.
     pub id: String,
-    /// Nullable in the GraphQL schema — iterations may have no title.
     pub title: Option<String>,
     pub start_date: Option<String>,
     pub due_date: Option<String>,
     pub state: String,
 }
 
-/// The state a closed issue reports.
 const STATE_CLOSED: &str = "closed";
 
-/// What a status means, whatever a project chose to call it.  A project names
-/// its own — "In Review", "Shipped" — and GitLab files each under one of these.
+/// A project names its own statuses — "In Review", "Shipped" — and GitLab
+/// files each under one of these categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusCategory {
     Triage,
@@ -40,8 +34,6 @@ pub enum StatusCategory {
 }
 
 impl StatusCategory {
-    /// An unrecognized category reads as [`Self::Other`] rather than failing:
-    /// GitLab may add one, and the item still has to show.
     pub fn parse(category: &str) -> Self {
         match category {
             "triage" => Self::Triage,
@@ -57,7 +49,6 @@ impl StatusCategory {
         self == Self::Done
     }
 
-    /// Abandoned — a duplicate, a won't-do.  Off the board, but not delivered.
     pub fn is_canceled(self) -> bool {
         self == Self::Canceled
     }
@@ -66,17 +57,15 @@ impl StatusCategory {
         matches!(self, Self::ToDo | Self::InProgress)
     }
 
-    /// Off the board, delivered or not.
     pub fn is_settled(self) -> bool {
         self.is_done() || self.is_canceled()
     }
 }
 
-/// A work-item status (`status { name category }`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusValue {
     pub name: String,
-    /// Status category from GitLab, e.g. "to_do", "in_progress", "done".
+    /// GitLab's own spelling: "to_do", "in_progress", "done".
     pub category: Option<String>,
 }
 
@@ -88,18 +77,12 @@ impl StatusValue {
     }
 }
 
-/// An issue, shaped as the root `issues` GraphQL query returns one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Issue {
-    /// The work item's global id (`ID!`), normalized to the `WorkItem` prefix
-    /// by [`de::work_item_gid`](crate::de::work_item_gid) so that the same
-    /// issue carries one id whether it arrived from `namespace.workItems` or
-    /// the root `issues` query. This is the form mutations take, so it is
-    /// passed straight through with no reconstruction.
+    /// Normalized to the `WorkItem` prefix, which is what mutations take.
     #[serde(deserialize_with = "crate::de::work_item_gid")]
     pub id: String,
-    /// Internal ID (`iid: String!`), as GraphQL sends it.
     pub iid: String,
     pub title: String,
     pub state: String,
@@ -115,16 +98,14 @@ pub struct Issue {
     pub web_url: String,
     pub description: Option<String>,
     pub user_notes_count: u64,
-    /// `reference(full: true)` — `group/project#123`.
+    /// Full: `group/project#123`, never a bare `#123`.
     pub reference: String,
-    /// Custom workflow status, from GitLab's work-item status system.
     pub status: Option<StatusValue>,
     pub iteration: Option<Iteration>,
     pub weight: Option<u32>,
 }
 
 impl Issue {
-    /// The custom workflow status name, if the issue has one.
     pub fn status_name(&self) -> Option<&str> {
         self.status.as_ref().map(|s| s.name.as_str())
     }
@@ -133,14 +114,11 @@ impl Issue {
         Some(self.status.as_ref()?.category())
     }
 
-    /// Its status says so, or — with no custom status — it is closed.
     pub fn is_done(&self) -> bool {
         self.status_category()
             .map_or(self.state == STATE_CLOSED, StatusCategory::is_done)
     }
 
-    /// Never true without a custom status: a plain closed issue does not say
-    /// which it was.
     pub fn is_canceled(&self) -> bool {
         self.status_category()
             .is_some_and(StatusCategory::is_canceled)
@@ -194,14 +172,13 @@ impl Item for Issue {
     }
 }
 
-/// A work item status from GitLab's custom status system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkItemStatus {
     pub id: String,
     pub name: String,
     #[serde(default)]
     pub position: Option<i32>,
-    /// Status category from GitLab (e.g. "active", "done", "canceled").
+    /// GitLab's own spelling: "active", "done", "canceled".
     #[serde(default)]
     pub category: Option<String>,
 }
@@ -262,7 +239,6 @@ mod tests {
         assert!(doing.is_active());
         assert!(!doing.is_done());
 
-        // An unknown category must not read as any of them.
         let odd = issue("opened", Some(("Parked", "on_the_moon")));
         assert_eq!(odd.status_category(), Some(StatusCategory::Other));
         assert!(!odd.is_done() && !odd.is_active() && !odd.is_canceled());

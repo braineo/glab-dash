@@ -1,10 +1,7 @@
 //! `Issue` deserializes a real GraphQL response.
 //!
-//! The fixture is an actual `IssueFields` payload from the root `issues` query
-//! with identifying content replaced. It guards what the removed
-//! `root_issues` conversion used to do by hand: a GID reduced to its numeric
-//! tail, an `iid` left as the string GraphQL sends, connections unwrapped, and
-//! the nullable iteration title that auto-generated iterations have.
+//! The fixture is an `IssueFields` payload from the root `issues` query with
+//! identifying content replaced.
 
 use glab_core::domain::{Issue, Item, StatusCategory};
 
@@ -14,18 +11,16 @@ const RESPONSE: &str = include_str!("issue_graphql_response.json");
 fn deserializes_graphql_response() {
     let issue: Issue = serde_json::from_str(RESPONSE).expect("IssueFields payload");
 
-    // `id: ID!` and `iid: String!` stay strings. The id is normalized to the
-    // `WorkItem` prefix even though the root query reports `Issue`.
+    // The id is normalized to the `WorkItem` prefix even though the root query
+    // reports `Issue`.
     assert_eq!(issue.id, "gid://gitlab/WorkItem/42950");
     assert_eq!(issue.iid, "5998");
     assert_eq!(issue.author.as_ref().unwrap().id, "gid://gitlab/User/1");
 
-    // Connections unwrap to plain vectors.
     assert_eq!(issue.assignees.len(), 1);
     assert_eq!(issue.assignees[0].username, "user2");
     assert_eq!(issue.labels, ["Is::Bug"]);
 
-    // Nested status, reached through the accessors the UI uses.
     assert_eq!(issue.status_name(), Some("Backlog"));
     assert_eq!(issue.status_category(), Some(StatusCategory::ToDo));
 
@@ -35,7 +30,6 @@ fn deserializes_graphql_response() {
     assert_eq!(iter.title, None);
     assert_eq!(iter.start_date.as_deref(), Some("2026-08-24"));
 
-    // `userNotesCount` is selected now; it used to be hardcoded to 0.
     assert_eq!(issue.user_notes_count, 3);
 
     assert_eq!(issue.reference, "group/proj#5998");
@@ -44,11 +38,10 @@ fn deserializes_graphql_response() {
     assert!(issue.closed_at.is_none());
 }
 
-/// The id must be identical whichever query produced the issue: the two result
-/// sets are deduplicated against each other, and `namespace.workItems` reports
-/// `gid://gitlab/WorkItem/42950` where the root `issues` query reports
-/// `gid://gitlab/Issue/42950`. Passing the raw GID through would make those
-/// look like two different issues.
+/// The id must be identical whichever query produced the issue:
+/// `namespace.workItems` reports `gid://gitlab/WorkItem/42950` where the root
+/// `issues` query reports `gid://gitlab/Issue/42950`, and the two result sets
+/// are deduplicated against each other.
 #[test]
 fn both_queries_yield_the_same_id() {
     let from_issues: Issue = serde_json::from_str(RESPONSE).unwrap();
@@ -62,9 +55,8 @@ fn both_queries_yield_the_same_id() {
     );
 }
 
-/// The type is also its own storage format: what `glab-db` writes must read
-/// back identically, even though serializing emits plain arrays where GraphQL
-/// sends `{ "nodes": [...] }` and a bare number where it sends a GID.
+/// The type is also its own storage format: serializing emits plain arrays
+/// where GraphQL sends `{ "nodes": [...] }`, and it must read back identically.
 #[test]
 fn round_trips_through_its_own_serialization() {
     let issue: Issue = serde_json::from_str(RESPONSE).unwrap();

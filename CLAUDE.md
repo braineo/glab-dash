@@ -6,34 +6,50 @@ Ultra-fast TUI for managing GitLab issues and merge requests across teams.
 
 ```bash
 cargo build --workspace          # dev build
-cargo build --release            # optimized release build
+cargo build --release            # release build
 cargo run                        # run the TUI (requires config)
 cargo run -- debug               # exercise fetch paths; output goes to the log file
 cargo test --workspace           # run all tests
 cargo fmt --all                  # format code
-cargo clippy --workspace         # lint (pedantic, must pass with zero warnings)
+cargo clippy --workspace         # lint
 typos                            # spell check
-make lint                        # auto-fix clippy warnings (must run before committing)
-make all                         # format + lint + test (full pre-commit check)
+make lint                        # clippy with --fix
+make all                         # format + lint + test
 make install                     # cargo install --path crates/glab-dash
 ```
 
 ## Code Quality
 
-All code must pass these checks before committing (enforced by CI):
+CI enforces, and `make all` runs:
 
-1. **`cargo fmt --check`** — all code formatted
-2. **`cargo clippy --workspace`** — zero warnings; `clippy::pedantic` and `warnings = "deny"` are set once in the root `Cargo.toml` under `[workspace.lints]`, and every crate opts in with `[lints] workspace = true`
-3. **`cargo build --workspace`** — zero warnings (dead code, unused imports, etc.)
-4. **`cargo test --workspace`** — all tests pass
-5. **`typos`** — no spelling errors (`_typos.toml` has exceptions)
+1. `cargo fmt --check`
+2. `cargo clippy --workspace` — zero warnings; `clippy::pedantic` and `warnings = "deny"` live in the root `Cargo.toml` under `[workspace.lints]`, and every crate opts in with `[lints] workspace = true`
+3. `cargo build --workspace` — zero warnings
+4. `cargo test --workspace`
+5. `typos` — `_typos.toml` holds the exceptions
 
-**Before committing, always run `make lint`** (`cargo clippy --workspace --all-targets --all-features --fix --allow-dirty -- -D warnings`) to auto-fix clippy warnings. This matches the CI clippy check and prevents pipeline failures.
+Run `make lint` before committing.
 
-Pedantic lint exceptions are configured once in `[workspace.lints.clippy]` in the root `Cargo.toml`. Do not add new `#[allow(...)]` attributes without good reason — prefer fixing the lint.
+Pedantic lint exceptions belong in `[workspace.lints.clippy]` in the root `Cargo.toml`, not in new `#[allow(...)]` attributes.
 
-**No defensive serde parsing**: Do not use `#[serde(default)]` on GraphQL response structs. The GraphQL schema defines a fixed shape — trust it. `Option<T>` already handles nullable fields correctly without `default`.
+**No defensive serde parsing**: no `#[serde(default)]` on GraphQL response structs. `Option<T>` already covers nullable fields.
 
-## Tests
+## Comments
 
-Run with `cargo test --workspace`.
+Write each comment as if the file had none: would a competent reader get
+something **wrong** without this line? Not slower — wrong. If not, there is no
+comment.
+
+That leaves four kinds:
+
+- An external fact the code cannot show — a GitLab API behavior, a WCAG
+  threshold, a schema quirk.
+- A landmine — why the obvious simplification is wrong, so nobody "fixes" it
+  back. (`palette`'s `from_color` silently clamps; its `Mix` rounds ties the
+  other way.)
+- An invisible contract — a bare tuple's field order and units, who must call
+  what first, an ordering guarantee.
+- A magic number that would otherwise be tuned by guesswork.
+
+Not: restating the signature, narrating the next line, section banners, or the
+reasoning behind a design. `ponytail:` markers stay.

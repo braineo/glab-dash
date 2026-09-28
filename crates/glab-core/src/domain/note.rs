@@ -1,5 +1,3 @@
-//! The notes on an item, and the threads they hang in.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -7,15 +5,13 @@ use super::User;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
-    /// GitLab's own id for the note, which is what an edit addresses.
     pub id: u64,
     pub body: String,
     pub author: User,
     pub created_at: DateTime<Utc>,
     #[serde(default)]
     pub system: bool,
-    /// Whether GitLab lets this note's thread be resolved.  Only a merge
-    /// request's notes ever are; an issue's are always `false`.
+    /// Always `false` on an issue's notes: GitLab resolves MR threads only.
     #[serde(default)]
     pub resolvable: bool,
     #[serde(default)]
@@ -29,20 +25,18 @@ pub struct Discussion {
 }
 
 impl Discussion {
-    /// The notes a reader is meant to see, in order — GitLab's own activity
-    /// notes ("changed the description", "assigned to …") are not comments.
+    /// GitLab's activity notes ("changed the description", "assigned to …")
+    /// are mixed in with the real comments and dropped here.
     pub fn comments(&self) -> impl Iterator<Item = &Note> {
         self.notes.iter().filter(|n| !n.system)
     }
 
-    /// Whether the thread is resolved.  GitLab tracks this per note; a thread
-    /// counts as resolved once every note that can be is.
+    /// GitLab tracks resolution per note, not per thread.
     pub fn resolved(&self) -> bool {
         let mut resolvable = self.notes.iter().filter(|n| n.resolvable).peekable();
         resolvable.peek().is_some() && resolvable.all(|n| n.resolved)
     }
 
-    /// Whether the thread can be resolved at all.
     pub fn resolvable(&self) -> bool {
         self.notes.iter().any(|n| n.resolvable)
     }

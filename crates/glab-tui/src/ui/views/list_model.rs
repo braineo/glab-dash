@@ -13,8 +13,6 @@ use glab_core::sort::SortSpec;
 use crate::binding_group;
 
 binding_group! {
-    /// Moving the cursor over a list and opening the row under it.  Every
-    /// view showing an [`ItemList`] composes this.
     pub LIST_NAV_GROUP: "List Navigation" {
         ('j') => MoveDown | "j/k" "Move down/up",
         (key Down) => MoveDown,
@@ -31,8 +29,6 @@ binding_group! {
 }
 
 binding_group! {
-    /// Narrowing a list: the fuzzy search, the filter menu, sort, and the
-    /// filter bar.  Composed by every view that owns a [`UserFilter`].
     pub FILTER_GROUP: "Filtering" {
         ('/') => StartSearch | "/" "Fuzzy search",
         ('f') => FilterMenu | "f" "Filter menu",
@@ -42,9 +38,6 @@ binding_group! {
     }
 }
 
-// ── ListCursor — non-generic borrowed handle for navigation ──
-
-/// Which navigation operation to perform on a list.
 #[derive(Clone, Copy)]
 pub enum NavOp {
     Next,
@@ -55,17 +48,14 @@ pub enum NavOp {
     PageUp,
 }
 
-/// A borrowed cursor into any `ItemList<T>`, carrying only the two fields
-/// that navigation needs (`table_state` + length).  Because it is concrete
-/// (not generic over `T`), callers can obtain one from *any* list without
-/// dynamic dispatch.
+/// Concrete rather than generic over `T`, so a caller can hold one from any
+/// list without dynamic dispatch.
 pub struct ListCursor<'a> {
     table_state: &'a mut TableState,
     len: usize,
 }
 
 impl ListCursor<'_> {
-    /// Apply a navigation operation.  Returns `true` if the selection moved.
     pub fn apply(&mut self, op: NavOp) -> bool {
         if self.len == 0 {
             return false;
@@ -84,10 +74,6 @@ impl ListCursor<'_> {
     }
 }
 
-// ── ItemList ──
-
-/// A list of items with table selection state and indices into a source slice.
-/// Generic over the item type — works for both issues and merge requests.
 pub struct ItemList<T> {
     pub table_state: TableState,
     pub indices: Vec<usize>,
@@ -105,7 +91,6 @@ impl<T> Default for ItemList<T> {
 }
 
 impl<T> ItemList<T> {
-    /// Borrow a non-generic cursor for navigation dispatch.
     pub fn cursor(&mut self) -> ListCursor<'_> {
         ListCursor {
             table_state: &mut self.table_state,
@@ -144,12 +129,9 @@ impl<T> ItemList<T> {
         Some(self.cursor().apply(op))
     }
 
-    /// Re-home the cursor after a rebuild changed `indices`.
-    ///
-    /// The scroll offset has to go with it: a shrunken list under a stale
-    /// offset makes ratatui clamp the viewport top to that offset and render
-    /// a near-empty table, which is how filtered-in rows went missing.
-    /// Starting at the top lets it scroll down to the cursor instead.
+    /// Resets the scroll offset too: a shrunken list under a stale offset
+    /// makes ratatui clamp the viewport top there and render a near-empty
+    /// table.
     pub fn clamp_selection(&mut self) {
         // ponytail: offset 0 parks a deep cursor at the viewport bottom;
         // centering it would need the row height plumbed in here.
@@ -167,15 +149,14 @@ impl<T> ItemList<T> {
 }
 
 impl<T: Item> ItemList<T> {
-    /// Name the item under the cursor, before a rebuild invalidates `indices`.
+    /// Call before a rebuild invalidates `indices`.
     pub fn anchor(&self, items: &[T]) -> Option<String> {
         self.selected_item(items)
             .map(|item| item.reference().to_string())
     }
 
-    /// Put the cursor back on `anchor` after a rebuild.  An item that is gone
-    /// — filtered out, closed — leaves the cursor on whichever row inherited
-    /// its index, so closing the item under the cursor steps to its successor.
+    /// An item that is gone leaves the cursor on whichever row inherited its
+    /// index, so closing the one under the cursor steps to its successor.
     pub fn restore(&mut self, items: &[T], anchor: Option<&str>) {
         let pos = anchor.and_then(|reference| {
             self.indices
@@ -189,9 +170,6 @@ impl<T: Item> ItemList<T> {
     }
 }
 
-// ── UserFilter ──
-
-/// Bundle of user-input filter, sort, and fuzzy search state.
 #[derive(Default)]
 pub struct UserFilter {
     pub conditions: Vec<FilterCondition>,
@@ -202,19 +180,14 @@ pub struct UserFilter {
     pub bar_selected: usize,
 }
 
-/// Result of filter bar handling a key.
 pub enum FilterBarAction {
-    /// Key consumed, no external effect.
     Consumed,
-    /// User exited the filter bar (Esc/Tab).
     Unfocused,
-    /// A filter condition was deleted — caller should refilter + persist.
+    /// The caller refilters and persists.
     Deleted,
 }
 
 impl UserFilter {
-    /// Handle keys when the filter bar is focused.
-    /// The filter bar owns its navigation and condition deletion.
     pub fn handle_bar_key(&mut self, key: &KeyEvent) -> FilterBarAction {
         if keys::is_back(key) || keys::is_tab(key) {
             self.bar_focused = false;
@@ -252,9 +225,8 @@ impl UserFilter {
         !self.fuzzy_query.is_empty()
     }
 
-    /// Handle fuzzy search input (Esc/Enter/Backspace/Char).
-    /// Returns `Some(true)` if refilter needed, `Some(false)` if handled but no refilter,
-    /// `None` if not in search mode (key not consumed).
+    /// `Some(true)` when a refilter is needed, `Some(false)` when the key was
+    /// handled without one, `None` when not in search mode.
     pub fn handle_fuzzy_input(&mut self, key: &KeyEvent) -> Option<bool> {
         if !self.fuzzy_active {
             return None;
@@ -281,12 +253,11 @@ impl UserFilter {
         }
     }
 
-    /// Start fuzzy search input mode.
     pub fn start_search(&mut self) {
         self.fuzzy_active = true;
     }
 
-    /// Multi-word fuzzy match: all words in the query must appear in the haystack.
+    /// Every word in the query must appear in the haystack.
     pub fn fuzzy_matches(&self, haystack: &str) -> bool {
         if self.fuzzy_query.is_empty() {
             return true;
@@ -299,12 +270,8 @@ impl UserFilter {
     }
 }
 
-// ── Shared rendering helpers ──
-
-/// Build a block with search-mode title. Three states:
-/// 1. Actively searching: cyan border, query with cursor, Enter/Esc hints
-/// 2. Has query but not searching: normal border, query shown
-/// 3. No query: plain block
+/// Titled for the search state: cyan with a cursor and hints while searching,
+/// the query alone when one is set, plain when it is not.
 pub fn search_block<'a>(label: &'a str, filter: &'a UserFilter) -> Block<'a> {
     if filter.fuzzy_active {
         let title_line = Line::from(vec![
@@ -367,7 +334,7 @@ pub fn search_block<'a>(label: &'a str, filter: &'a UserFilter) -> Block<'a> {
     }
 }
 
-/// Format a timestamp as relative age (e.g. "3d", "5h", "12m").
+/// As "3d", "5h", "12m".
 pub fn format_age(
     dt: &chrono::DateTime<chrono::Utc>,
     now: chrono::DateTime<chrono::Utc>,

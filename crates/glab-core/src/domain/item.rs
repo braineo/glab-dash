@@ -1,6 +1,3 @@
-//! Naming an item ([`ItemRef`]) and what one item is to another
-//! ([`RelatedItem`]), in every combination GitLab relates them in.
-
 use serde::{Deserialize, Serialize};
 
 use super::{User, project_from_reference};
@@ -13,7 +10,6 @@ pub enum ItemKind {
 }
 
 impl ItemKind {
-    /// `#` on an issue, `!` on a merge request.
     pub fn sigil(self) -> char {
         match self {
             ItemKind::Issue => '#',
@@ -22,8 +18,6 @@ impl ItemKind {
     }
 }
 
-/// An issue or merge request by identity alone, so two refs to the same item
-/// compare equal however they were built — which is what lets this key a map.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ItemRef {
     pub kind: ItemKind,
@@ -48,12 +42,10 @@ impl ItemRef {
         }
     }
 
-    /// The full reference GitLab prints, `group/project#123`.
     pub fn reference(&self) -> String {
         format!("{}{}{}", self.project, self.kind.sigil(), self.iid)
     }
 
-    /// `None` for a reference carrying no sigil, which names no item.
     pub fn parse(reference: &str) -> Option<Self> {
         let (project, iid, kind) = if let Some((project, iid)) = reference.rsplit_once('#') {
             (project, iid, ItemKind::Issue)
@@ -69,24 +61,20 @@ impl ItemRef {
     }
 }
 
-/// What an issue and a merge request answer to in common.
 pub trait Item {
     fn kind(&self) -> ItemKind;
-    /// The id a GraphQL mutation addresses.  Not an identity — the same item
-    /// arrives under more than one gid depending on the query, so look up by
-    /// [`ItemRef`].
+    /// Not an identity: the same item arrives under more than one gid
+    /// depending on the query.  Key by [`ItemRef`] instead.
     fn gid(&self) -> &str;
     fn iid(&self) -> &str;
-    /// The full reference GitLab prints, `group/project#123`.
+    /// Full: `group/project#123`, never a bare `#123`.
     fn reference(&self) -> &str;
     fn title(&self) -> &str;
     fn state(&self) -> &str;
-    /// Nullable on a merge request.
     fn web_url(&self) -> Option<&str>;
     fn labels(&self) -> &[String];
     fn assignees(&self) -> &[User];
 
-    /// e.g. `group/project`.
     fn project_path(&self) -> &str {
         project_from_reference(self.reference())
     }
@@ -126,7 +114,6 @@ impl Relation {
     pub const LINKABLE: [Relation; 3] =
         [Relation::BlockedBy, Relation::Blocks, Relation::RelatesTo];
 
-    /// "blocked by", with the related item as the object.
     pub fn label(self) -> &'static str {
         match self {
             Relation::BlockedBy => "blocked by",
@@ -137,7 +124,6 @@ impl Relation {
         }
     }
 
-    /// Blockers first, the merely connected last.
     pub fn rank(self) -> u8 {
         match self {
             Relation::BlockedBy => 0,
@@ -149,12 +135,9 @@ impl Relation {
     }
 }
 
-/// A relation and enough of the item it names to show it without fetching
-/// it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelatedItem {
     pub relation: Relation,
-    /// The related item's id
     pub gid: String,
     pub item: ItemRef,
     pub title: String,
@@ -167,17 +150,14 @@ impl RelatedItem {
         self.state == STATE_OPENED
     }
 
-    /// An open blocker: the one relation that holds the item up.
     pub fn is_blocker(&self) -> bool {
         self.relation == Relation::BlockedBy && self.is_open()
     }
 
-    /// By relation, and within one, open before settled.
     pub fn rank(&self) -> (u8, bool) {
         (self.relation.rank(), !self.is_open())
     }
 
-    /// Whether relation can be removed
     pub fn is_unlinkable(&self, item_kind: ItemKind) -> bool {
         item_kind == ItemKind::Issue
             && self.item.kind == ItemKind::Issue

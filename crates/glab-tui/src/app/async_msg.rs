@@ -1,5 +1,3 @@
-//! TEA handle phase for async messages: process results from background tasks.
-
 use crate::cmd::Cmd;
 use glab_core::domain::RelatedItem;
 use glab_core::domain::{Issue, Item, MergeRequest, StatusValue};
@@ -13,8 +11,8 @@ impl App {
             AsyncMsg::IssuesLoaded(result, incremental) => match result {
                 Ok(issues) => {
                     self.merge_issues(issues, incremental);
-                    // Snapshot all issues (open + closed) for DB persistence
-                    // before filtering to open-only in memory.
+                    // Snapshot open + closed for the DB before filtering to
+                    // open-only in memory.
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
@@ -34,8 +32,8 @@ impl App {
                 Ok((tracking, external)) => {
                     let mrs: Vec<_> = tracking.into_iter().chain(external).collect();
                     self.merge_mrs(mrs, incremental);
-                    // Snapshot all MRs (open + closed) for DB persistence
-                    // before filtering to open-only in memory.
+                    // Snapshot open + closed for the DB before filtering to
+                    // open-only in memory.
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
@@ -100,8 +98,6 @@ impl App {
                         if let Some(pos) = self.data.issues.iter().position(|e| e.id == issue.id) {
                             self.data.issues[pos] = issue;
                         }
-                        // Persist full snapshot (including closed) then remove closed
-                        // from memory — same pattern as IssuesLoaded.
                         self.ui
                             .pending_cmds
                             .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
@@ -135,7 +131,6 @@ impl App {
                 self.ui.loading = false;
                 match result {
                     Ok((project_path, iid, status_name)) => {
-                        // Look up the category from cached statuses
                         let category = self
                             .data
                             .work_item_statuses
@@ -173,7 +168,6 @@ impl App {
                 match result {
                     Ok(statuses) => {
                         if statuses.is_empty() && !is_background {
-                            // No custom statuses — fall back to open/close toggle
                             let item_state = self
                                 .ui
                                 .views
@@ -238,7 +232,6 @@ impl App {
                         self.ui.pending_cmds.push(Cmd::PersistIssues);
                     }
                     Err(e) => {
-                        // Revert the optimistic update
                         if let Some(pos) = self.data.issues.iter().position(|i| i.id == issue_id) {
                             self.data.issues[pos].iteration = old_iteration;
                             self.ui.dirty.issues = true;
@@ -252,14 +245,12 @@ impl App {
                     self.data.unplanned_work_cache.extend(dates);
                 }
                 self.data.unplanned_work_state = FetchState::Done;
-                // Unplanned work affects health computation, use issues dirty flag
                 self.ui.dirty.issues = true;
                 self.ui.pending_cmds.push(Cmd::PersistUnplannedWork);
             }
         }
     }
 
-    /// Merge incoming issues into `self.data.issues`, preserving newer cached entries.
     fn merge_issues(&mut self, issues: Vec<Issue>, incremental: bool) {
         if incremental {
             for item in issues {
@@ -285,8 +276,7 @@ impl App {
         }
     }
 
-    /// Merge incoming MRs into `self.data.mrs`, preserving newer cached entries.
-    /// Uses second precision: GraphQL truncates sub-second timestamps.
+    /// Compares at second precision: GraphQL truncates sub-second timestamps.
     fn merge_mrs(&mut self, mrs: Vec<MergeRequest>, incremental: bool) {
         if incremental {
             for item in mrs {
@@ -303,9 +293,8 @@ impl App {
         } else {
             let mut new_mrs = mrs;
             // A full walk lists open merge requests only, so a cached open one
-            // it did not return is no longer open. Carry it over as closed so
-            // the snapshot corrects the stored row; the caller then drops it
-            // from memory with the rest of the closed ones.
+            // it did not return is no longer open.  Carry it over as closed to
+            // correct the stored row.
             let returned: std::collections::HashSet<&String> =
                 new_mrs.iter().map(|m| &m.id).collect();
             let closed: Vec<MergeRequest> = self
@@ -333,8 +322,7 @@ impl App {
         }
     }
 
-    /// Refresh what the detail views hold from the freshly merged data, before
-    /// closed items are dropped from it — so closing an issue updates its
+    /// Runs before closed items are dropped, so closing an issue updates its
     /// detail rather than emptying it.
     fn sync_detail_snapshots(&mut self) {
         sync_snapshot(&mut self.ui.views.issue_detail.issue, &self.data.issues);
@@ -342,8 +330,6 @@ impl App {
     }
 }
 
-/// Replace `snapshot` with the item of the same gid in `items`, leaving it
-/// alone when `items` no longer carries that item.
 fn sync_snapshot<T: Item + Clone>(snapshot: &mut Option<T>, items: &[T]) {
     let Some(gid) = snapshot.as_ref().map(|s| s.gid().to_string()) else {
         return;

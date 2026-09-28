@@ -1,12 +1,5 @@
-//! The user's `config.toml`, deserialized into the domain's own types.
-//!
-//! This crate sits above `glab-core` so serde parses the file straight into the
-//! shapes the rest of the program already speaks: a filter preset holds
-//! [`FilterCondition`]s, a sort preset holds [`SortSpec`]s, and the board
-//! columns and label orders are the same [`KanbanColumn`] and [`LabelOrders`]
-//! the views and sorts consume. Reading the config is the deserialize; there is
-//! no second, stringly-typed shape to convert from, and a misspelled field or
-//! key is rejected here rather than silently dropped later.
+//! `config.toml`, deserialized straight into the domain's own types.  There is
+//! no second, stringly-typed shape to convert from.
 
 #[cfg(test)]
 mod tests;
@@ -38,9 +31,7 @@ pub struct Config {
     pub label_sort_orders: LabelOrders,
     #[serde(default)]
     pub kanban_columns: Vec<KanbanColumn>,
-    /// The reader's rule for comments the conversation should not show: a Lua
-    /// chunk returning `function(note) -> boolean`.  See
-    /// [`glab_core::comment_filter`].
+    /// A Lua chunk returning `function(note) -> boolean`.
     #[serde(default)]
     pub hide_comment: Option<String>,
 }
@@ -49,7 +40,6 @@ fn default_refresh() -> u64 {
     60
 }
 
-/// A named set of filter conditions the user can apply in one keystroke.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FilterPreset {
@@ -60,7 +50,6 @@ pub struct FilterPreset {
     pub conditions: Vec<FilterCondition>,
 }
 
-/// A named sort order the user can apply in one keystroke.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SortPreset {
@@ -84,7 +73,6 @@ impl Config {
         let mut config: Config =
             toml::from_str(&contents).context("Failed to parse config TOML")?;
 
-        // Environment variable overrides
         if let Ok(url) = std::env::var("GITLAB_URL") {
             config.gitlab_url = url;
         }
@@ -107,8 +95,8 @@ impl Config {
             .any(|t| t.tracking_projects.iter().any(|p| p == path))
     }
 
-    /// Every namespace worth fetching — every team's, deduplicated.  One fetch
-    /// covers all teams, so switching teams filters rather than reloads.
+    /// One fetch covers all teams, so switching teams filters rather than
+    /// reloads.
     pub fn all_tracking_projects(&self) -> Vec<String> {
         let mut all: Vec<String> = Vec::new();
         for team in &self.teams {
@@ -121,7 +109,7 @@ impl Config {
         all
     }
 
-    /// The namespaces the given team tracks.  The "All" view spans every team's.
+    /// `None` spans every team's.
     pub fn team_tracking_projects(&self, team: Option<usize>) -> Vec<String> {
         match team.and_then(|i| self.teams.get(i)) {
             Some(t) => t.tracking_projects.clone(),
@@ -129,8 +117,7 @@ impl Config {
         }
     }
 
-    /// The first team's first namespace — the stand-in when no team is active
-    /// and something needs a single project (statuses, the debug dump).
+    /// For what needs a single project: statuses, the debug dump.
     pub fn primary_tracking_project(&self) -> &str {
         self.teams
             .first()
@@ -138,9 +125,8 @@ impl Config {
             .map_or("", String::as_str)
     }
 
-    /// The group the given team's primary namespace sits in — everything
-    /// before the last `/`.  Iterations are defined on the group, not the
-    /// project, so each team's board reads its own cadence.
+    /// Everything before the last `/`: iterations are defined on the group,
+    /// not the project.
     pub fn team_tracking_group(&self, team: Option<usize>) -> &str {
         let primary = team
             .and_then(|i| self.teams.get(i))

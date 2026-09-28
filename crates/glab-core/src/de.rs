@@ -1,20 +1,13 @@
-//! Deserializers for the shapes GitLab's GraphQL API returns.
-//!
-//! The domain types are both the GraphQL wire format and the format the
-//! database writes, so each helper accepts the GraphQL form *and* the form
-//! `serde` produces when serializing the type back: a connection object or the
-//! plain array it round-trips as.
+//! The domain types are both the GraphQL wire format and the database format,
+//! so each helper accepts the GraphQL form *and* the form `serde` produces
+//! when serializing the type back: a connection object or a plain array.
 
 use serde::{Deserialize, Deserializer};
 
-/// A work item's global id, normalized to the `WorkItem` prefix.
-///
-/// The two queries that return an issue report different prefixes for the same
-/// issue — `namespace.workItems` gives `gid://gitlab/WorkItem/42950` where the
-/// root `issues` query gives `gid://gitlab/Issue/42950` — and the two result
-/// sets are deduplicated against each other. Normalizing on the way in makes
-/// them the same string, and makes the id directly usable as the
-/// `workItemUpdate` input, which wants the `WorkItem` form.
+/// `namespace.workItems` gives `gid://gitlab/WorkItem/42950` where the root
+/// `issues` query gives `gid://gitlab/Issue/42950` for the same issue, and the
+/// two result sets are deduplicated against each other.  `workItemUpdate`
+/// takes the `WorkItem` form.
 pub fn work_item_gid<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     let raw = String::deserialize(d)?;
     Ok(match raw.rsplit_once('/') {
@@ -23,7 +16,6 @@ pub fn work_item_gid<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error
     })
 }
 
-/// A GraphQL connection (`{ "nodes": [...] }`) or a plain array.
 pub fn nodes<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
@@ -41,7 +33,6 @@ where
     })
 }
 
-/// Label titles from `labels { nodes { title } }`, or a plain array of strings.
 pub fn label_titles<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
     #[derive(Deserialize)]
     struct Titled {
@@ -60,12 +51,8 @@ pub fn label_titles<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::E
     })
 }
 
-/// An optional enum value, lowercased.
-///
 /// GitLab's GraphQL enums are `SCREAMING_CASE` (`headPipeline.status` is
-/// `SUCCESS`), while the UI matches and sorts on the lowercase spelling the
-/// REST API used (`success`). Normalizing on the way in keeps one canonical
-/// form, so renderers and comparators never need to case-fold.
+/// `SUCCESS`); the UI matches and sorts on the lowercase spelling.
 pub fn lower_opt<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     Ok(Option::<String>::deserialize(d)?.map(|s| s.to_lowercase()))
 }

@@ -1,6 +1,3 @@
-//! What a focused issue and a focused merge request answer to identically,
-//! written once against [`Item`].  Each kind's own module keeps the rest.
-
 use glab_core::domain::{Item, ItemRef};
 
 use crate::cmd::EventResult;
@@ -11,7 +8,6 @@ use crate::ui::components::{
 
 use super::{AppCtx, AppData, AsyncMsg, Overlay, UiState, View};
 
-/// Bubbles anything only one kind answers to.
 pub fn handle_key(
     action: KeyAction,
     item: &impl Item,
@@ -41,7 +37,6 @@ pub fn handle_key(
         }
         KeyAction::EditAssignee => {
             let members = ctx.config.all_members();
-            // A detail has room for a picker; over a list, the chord.
             ui.overlay = if matches!(ui.view, View::IssueDetail | View::MrDetail) {
                 Overlay::Picker {
                     state: picker::PickerState::new("Assignee", members, false),
@@ -66,8 +61,7 @@ pub fn handle_key(
     EventResult::Consumed
 }
 
-/// Post `body` as a new thread, a reply or a rewrite, then re-list the threads
-/// so the view shows what the server kept.
+/// Re-lists the threads afterwards, so the view shows what the server kept.
 pub fn submit_comment(
     item: &ItemRef,
     body: &str,

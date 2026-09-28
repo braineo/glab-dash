@@ -6,10 +6,8 @@ use strum::{EnumString, IntoStaticStr, VariantArray};
 
 use super::label_order::LabelOrders;
 
-/// A sortable attribute of an issue or merge request.
-///
-/// As with `Field`, the snake_case names are what config files and the
-/// persisted view state both spell.
+/// The snake_case names are what config files and the persisted view state
+/// spell.
 #[derive(
     Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, EnumString, VariantArray,
 )]
@@ -25,21 +23,19 @@ pub enum SortField {
     Assignee,
     Label,
     Milestone,
-    /// Named `comments` in config; the GraphQL spelling is accepted too.
     #[strum(to_string = "comments", serialize = "user_notes_count")]
     #[serde(rename = "comments", alias = "user_notes_count")]
     UserNotesCount,
     Project,
     Weight,
     Iteration,
-    // MR-only
     Pipeline,
     Draft,
 }
 
 impl SortField {
-    /// The fields offered for issues. Hand-written because it is a subset:
-    /// `VariantArray` only knows every variant, not which kind each belongs to.
+    /// Hand-written: `VariantArray` knows every variant, not which kind each
+    /// belongs to.
     pub fn all_issue() -> &'static [SortField] {
         &[
             SortField::Iid,
@@ -58,7 +54,6 @@ impl SortField {
         ]
     }
 
-    /// The fields offered for merge requests. See [`SortField::all_issue`].
     pub fn all_mr() -> &'static [SortField] {
         &[
             SortField::Iid,
@@ -91,8 +86,6 @@ impl SortField {
 #[serde(rename_all = "snake_case")]
 pub enum SortDirection {
     Asc,
-    /// The default, so a config file may name a sort field and leave the
-    /// direction out.
     #[default]
     Desc,
 }
@@ -115,7 +108,7 @@ pub struct SortSpec {
     pub field: SortField,
     #[serde(default)]
     pub direction: SortDirection,
-    /// For Label field: which scope prefix to sort by (e.g., "workflow", "p")
+    /// Only read for `SortField::Label`.
     #[serde(default)]
     pub label_scope: Option<String>,
 }
@@ -214,7 +207,6 @@ fn compare_issue(a: &Issue, b: &Issue, spec: &SortSpec, label_orders: &LabelOrde
             a.iteration.as_ref().and_then(|i| i.title.as_deref()),
             b.iteration.as_ref().and_then(|i| i.title.as_deref()),
         ),
-        // MR-only fields are no-ops for issues
         SortField::Pipeline | SortField::Draft => Ordering::Equal,
     }
 }
@@ -261,7 +253,6 @@ fn compare_mr(
             let rb = rank(b.pipeline_status());
             ra.cmp(&rb)
         }
-        // Issue-only fields are no-ops for MRs
         SortField::Weight | SortField::Iteration => Ordering::Equal,
         SortField::Draft => {
             let da = a.draft;
@@ -271,7 +262,7 @@ fn compare_mr(
     }
 }
 
-/// Compare state strings with a defined order: opened > merged > closed
+/// opened > merged > closed.
 fn cmp_state(a: &str, b: &str) -> Ordering {
     fn rank(s: &str) -> u8 {
         match s {
@@ -284,7 +275,7 @@ fn cmp_state(a: &str, b: &str) -> Ordering {
     rank(a).cmp(&rank(b))
 }
 
-/// Compare optional strings; None sorts last.
+/// `None` sorts last.
 fn cmp_optional_str(a: Option<&str>, b: Option<&str>) -> Ordering {
     match (a, b) {
         (Some(a), Some(b)) => a.to_lowercase().cmp(&b.to_lowercase()),

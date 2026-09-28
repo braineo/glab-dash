@@ -2,13 +2,8 @@ use std::collections::HashSet;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-// ---------------------------------------------------------------------------
-// KeyAction — unified action enum replacing per-view actions
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyAction {
-    // --- Global ---
     Back,
     ToggleHelp,
     ShowLastError,
@@ -16,7 +11,6 @@ pub enum KeyAction {
     SwitchTheme,
     NavigateTo(crate::app::View),
 
-    // --- List / column navigation ---
     MoveUp,
     MoveDown,
     Top,
@@ -25,14 +19,12 @@ pub enum KeyAction {
     PageDown,
     OpenDetail,
 
-    // --- Search & Filter ---
     StartSearch,
     FocusFilterBar,
     FilterMenu,
     ClearFilters,
     SortByField,
 
-    // --- Shared item actions (resolved via FocusedItem) ---
     Refresh,
     FullRefresh,
     OpenBrowser,
@@ -42,60 +34,37 @@ pub enum KeyAction {
     EditAssignee,
     Comment,
 
-    // --- MR-specific ---
     Approve,
     Merge,
 
-    // --- Detail-specific ---
-    /// Reply into the thread the cursor is on.
     ReplyThread,
-    /// Open a new top-level thread.
     NewThread,
-    /// Rewrite the comment the cursor is on.
     EditComment,
-    /// Resolve or reopen the thread the cursor is on.
     ResolveThread,
-    /// Fold the thread the cursor is on away, or open it back up.
     ToggleThread,
-    /// Jump to the next thread still needing an answer.
     NextUnresolved,
-    /// Jump back to the previous one.
     PrevUnresolved,
 
-    // --- Linked issues (issue detail only) ---
-    /// Link another issue to this one.
     AddLink,
-    /// Drop the link the cursor is on.
     RemoveLink,
-    /// Open the linked issue the cursor is on.
     OpenLink,
 
-    // --- Board / column navigation (Dashboard & Planning) ---
     ColumnLeft,
     ColumnRight,
-    /// Toggle focus between health panel and iteration board on dashboard.
     ToggleDashboardFocus,
 
-    // --- Planning-specific ---
     ToggleColumnPrev,
     ToggleColumnNext,
     ToggleLayout,
     MoveIteration,
 }
 
-// ---------------------------------------------------------------------------
-// KeyMatcher — how a binding matches key events
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyMatcher {
-    /// Character key with no modifiers: KeyCode::Char(c), mods == NONE.
     Char(char),
-    /// Character key with Control: KeyCode::Char(c), mods contains CONTROL.
     Ctrl(char),
-    /// Character key with Alt (emacs' Meta): KeyCode::Char(c), mods contains ALT.
+    /// ALT, which emacs calls Meta.
     Alt(char),
-    /// Non-character key with no modifiers.
     Key(KeyCode),
 }
 
@@ -118,17 +87,12 @@ impl KeyMatcher {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Binding + BindingGroup
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy)]
 pub struct Binding {
     pub matcher: KeyMatcher,
     pub action: KeyAction,
-    /// Display label for help/status bar (empty = hidden from help).
+    /// Empty hides the binding from help and the status bar.
     pub label: &'static str,
-    /// Description for help overlay (empty = hidden from help).
     pub description: &'static str,
 }
 
@@ -148,21 +112,12 @@ pub struct BindingGroup {
     pub bindings: &'static [Binding],
 }
 
-// ---------------------------------------------------------------------------
-// Declaring groups
-// ---------------------------------------------------------------------------
-
-/// Declare a [`BindingGroup`], one line per binding.
-///
 /// A row is `(<key>) => <Action>`, optionally followed by `| "<label>"
 /// "<description>"`.  A row without that tail is a hidden alias: it still
-/// claims the key (so nothing later can bind it) but stays out of the help
-/// overlay and the status bar.  Keys are written `'c'`, `ctrl 'c'`, or
-/// `key Enter` for a named [`KeyCode`]; an action carrying a payload is
-/// written with it, `NavigateTo(View::Planning)`.
+/// claims the key so nothing later can bind it.  Keys are written `'c'`,
+/// `ctrl 'c'`, or `key Enter` for a named [`KeyCode`].
 ///
-/// Order matters inside a group and between groups: the first row whose key
-/// matches wins, so put the more specific binding first.
+/// The first row whose key matches wins, within a group and between groups.
 #[macro_export]
 macro_rules! binding_group {
     (
@@ -190,7 +145,6 @@ macro_rules! binding_group {
     (@or_blank $text:literal) => { $text };
 }
 
-/// The [`KeyMatcher`] for one `binding_group!` key spec.
 #[macro_export]
 macro_rules! binding_key {
     ($c:literal) => {
@@ -207,28 +161,17 @@ macro_rules! binding_key {
     };
 }
 
-// ---------------------------------------------------------------------------
-// Resolving
-// ---------------------------------------------------------------------------
-
-/// Resolve a key to the one action it fires, scanning `chain` in order.
-///
-/// The chain runs innermost first, so a group nearer the focus shadows an
-/// outer one binding the same key — a detail view's `r` (reply) wins over the
-/// global `r` (refresh) with no special case anywhere.
+/// Scans `chain` innermost first, so a group nearer the focus shadows an outer
+/// one binding the same key.
 pub fn resolve(chain: &[&'static BindingGroup], key: &KeyEvent) -> Option<KeyAction> {
     chain
         .iter()
         .find_map(|group| match_group(group.bindings, key))
 }
 
-/// The bindings in `chain` that can actually fire, grouped, with any binding
-/// whose key an earlier group already claimed dropped.  Hidden aliases claim
-/// their key too, so a labelled binding shadowed by an unlabelled one goes as
-/// well.
-///
-/// Help and the status bar render from this rather than from the raw groups,
-/// so neither can advertise a key [`resolve`] sends somewhere else.
+/// Drops any binding whose key an earlier group claimed, hidden aliases
+/// included, so help and the status bar never advertise a key [`resolve`] sends
+/// somewhere else.
 pub fn active_bindings(
     chain: &[&'static BindingGroup],
 ) -> Vec<(&'static BindingGroup, Vec<&'static Binding>)> {
@@ -246,7 +189,6 @@ pub fn active_bindings(
         .collect()
 }
 
-/// Find the first matching action in a single binding group.
 pub fn match_group(bindings: &[Binding], key: &KeyEvent) -> Option<KeyAction> {
     bindings.iter().find(|b| b.matches(key)).map(|b| b.action)
 }

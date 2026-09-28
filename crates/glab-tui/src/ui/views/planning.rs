@@ -24,7 +24,6 @@ pub enum PlanningLayout {
 use crate::binding_group;
 
 binding_group! {
-    /// Column motion, per-column visibility and the 3-col / 2-col layout.
     pub PLANNING_NAV_GROUP: "Planning Navigation" {
         ('[') => ColumnLeft | "[/]" "Switch column",
         (']') => ColumnRight,
@@ -69,15 +68,12 @@ impl Default for PlanningViewState {
 }
 
 impl PlanningViewState {
-    // ── Key handling ────────────────────────────────────────────────
-
     pub fn handle_key(
         &mut self,
         key: &KeyEvent,
         action: Option<KeyAction>,
         fx: &mut Effects,
     ) -> EventResult {
-        // Active column's filter bar
         let col = &mut self.columns[self.focused_column];
         if col.filter.bar_focused {
             match col.filter.handle_bar_key(key) {
@@ -90,7 +86,6 @@ impl PlanningViewState {
             return EventResult::Consumed;
         }
 
-        // Active column's fuzzy search
         if col.filter.is_searching() {
             if col.filter.handle_fuzzy_input(key) == Some(true) {
                 fx.dirty.view_state = true;
@@ -103,7 +98,6 @@ impl PlanningViewState {
             return EventResult::Bubble;
         };
 
-        // The focused column's list handles motion.
         if let Some(moved) = col.list.nav(action) {
             if moved {
                 fx.dirty.selection = true;
@@ -113,7 +107,6 @@ impl PlanningViewState {
             return EventResult::Consumed;
         }
 
-        // The view's own: column motion, visibility, layout, start search.
         match action {
             KeyAction::ColumnLeft => self.move_focus_left(),
             KeyAction::ColumnRight => self.move_focus_right(),
@@ -135,8 +128,6 @@ impl PlanningViewState {
         fx.dirty.selection = true;
         EventResult::Consumed
     }
-
-    // ── Query ───────────────────────────────────────────────────────
 
     pub fn selected_issue<'a>(&self, issues: &'a [Issue]) -> Option<&'a Issue> {
         self.columns[self.focused_column].list.selected_item(issues)
@@ -176,7 +167,7 @@ impl PlanningViewState {
             PlanningLayout::ThreeColumn => PlanningLayout::TwoColumn,
             PlanningLayout::TwoColumn => PlanningLayout::ThreeColumn,
         };
-        // In 2-column mode: col 0 = other, col 1 = current; col 2 is unused
+        // In 2-column mode col 0 is other, col 1 current, col 2 unused.
         if self.layout_mode == PlanningLayout::TwoColumn {
             self.column_visible = [true, true, false];
             if self.focused_column == 2 {
@@ -187,8 +178,7 @@ impl PlanningViewState {
         }
     }
 
-    /// Partition issues into columns based on iteration (prefilter),
-    /// then apply each column's fuzzy search and sort.
+    /// By iteration; each column's own fuzzy search and sort run afterwards.
     pub fn partition_issues(&mut self, issues: &[Issue], label_orders: &LabelOrders) {
         let anchors: Vec<_> = self
             .columns
@@ -201,7 +191,6 @@ impl PlanningViewState {
 
         let current_id = self.current_iteration.as_ref().map(|i| i.id.as_str());
 
-        // Step 1: prefilter by iteration into columns
         match self.layout_mode {
             PlanningLayout::ThreeColumn => {
                 let prev_id = self.prev_iteration.as_ref().map(|i| i.id.as_str());
@@ -230,7 +219,6 @@ impl PlanningViewState {
             }
         }
 
-        // Step 2: per-column fuzzy filter and sort
         for (col, anchor) in self.columns.iter_mut().zip(&anchors) {
             col.list.indices.retain(|&i| {
                 let item = &issues[i];
@@ -256,8 +244,6 @@ impl PlanningViewState {
     }
 }
 
-// ── Rendering ──
-
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -274,7 +260,6 @@ pub fn render(
         return;
     }
 
-    // Split into equal-width columns
     let constraints: Vec<Constraint> = visible
         .iter()
         .map(|_| Constraint::Ratio(1, u32::try_from(visible.len()).unwrap_or(u32::MAX)))
@@ -332,7 +317,6 @@ fn render_column(
         Style::default().fg(styles::text_dim())
     };
 
-    // Use search_block style when column has active search
     let block = if col.filter.is_searching() || col.filter.has_query() {
         let mut spans = vec![Span::styled(
             format!(" {header_text} /"),
@@ -393,7 +377,6 @@ fn render_column(
         return;
     }
 
-    // Layout: filter bar (1 line) + table + member stats footer
     let workload = member_stats(&col.list.indices, issues, team_members);
     let stats_height = if workload.is_empty() {
         0
@@ -413,7 +396,6 @@ fn render_column(
     ])
     .split(inner);
 
-    // Filter + sort bar
     if has_filter_bar {
         components::filter_bar::render(
             frame,
@@ -425,7 +407,6 @@ fn render_column(
         );
     }
 
-    // Issue table
     let rows: Vec<Row> = col
         .list
         .indices
@@ -473,7 +454,6 @@ fn render_column(
         &mut state.columns[col_idx].list.table_state,
     );
 
-    // Member stats footer
     if stats_height > 0 {
         let stat_lines: Vec<Line> = workload
             .iter()
@@ -497,7 +477,7 @@ pub fn iteration_label(iter: &Iteration) -> String {
     if let Some(title) = iter.title.as_deref().filter(|t| !t.is_empty()) {
         return title.to_string();
     }
-    // Titles are often null for auto-generated iterations — use date range
+    // Auto-generated iterations have no title.
     match (&iter.start_date, &iter.due_date) {
         (Some(s), Some(d)) => format!("{s} — {d}"),
         (Some(s), None) => format!("{s} —"),

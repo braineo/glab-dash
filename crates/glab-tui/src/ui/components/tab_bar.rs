@@ -41,7 +41,6 @@ const TABS: &[Tab] = &[
     },
 ];
 
-/// Map detail views to their parent tab.
 fn active_tab(view: View) -> View {
     match view {
         View::IssueDetail => View::IssueList,
@@ -86,7 +85,6 @@ pub fn render(frame: &mut Frame, area: Rect, current_view: View) {
         }
     }
 
-    // Fill remaining width
     let used: usize = spans.iter().map(Span::width).sum();
     let remaining = usize::from(area.width).saturating_sub(used);
     spans.push(Span::styled(

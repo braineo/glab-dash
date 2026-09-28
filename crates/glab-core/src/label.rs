@@ -1,41 +1,31 @@
-//! Scoped label names.
-//!
 //! A GitLab scoped label is written `scope::value`, and the value may itself
 //! contain the separator (`workflow::workspace::hardware`): the scope is
-//! everything before the first `::`, the value everything after it. GitLab
-//! allows only one label per scope on an item, which is why selecting one
-//! deselects its siblings.
+//! everything before the *first* `::`, the value everything after it.  GitLab
+//! allows only one label per scope on an item.
 
-/// The separator between a label's scope and its value.
 pub const SEP: &str = "::";
 
-/// The scope of a scoped label, or `None` when the label carries no scope.
 pub fn scope(label: &str) -> Option<&str> {
     label.split_once(SEP).map(|(scope, _)| scope)
 }
 
-/// The value `label` carries in `scope`, or `None` when it is not in that scope.
 pub fn value_in_scope<'a>(label: &'a str, scope: &str) -> Option<&'a str> {
     label
         .strip_prefix(scope)
         .and_then(|rest| rest.strip_prefix(SEP))
 }
 
-/// A label's `::`-separated segments, which is how a label is rendered as a
-/// row of chips.
 pub fn segments(label: &str) -> impl Iterator<Item = &str> {
     label.split(SEP)
 }
 
-/// Whether two labels claim the same scope, so setting one clears the other.
 /// Unscoped labels never conflict, not even with each other.
 fn same_scope(a: &str, b: &str) -> bool {
     matches!((scope(a), scope(b)), (Some(a), Some(b)) if a == b)
 }
 
-/// Toggle the label at `index` of a selection, enforcing GitLab's one label
-/// per scope: selecting a scoped label clears any other selected label sharing
-/// its scope. Deselecting clears nothing else.
+/// Selecting a scoped label clears any other selected label sharing its scope;
+/// deselecting clears nothing else.
 ///
 /// # Panics
 /// If `index` is out of range for either slice.
@@ -69,7 +59,6 @@ mod tests {
             value_in_scope("workflow::workspace::hardware", "workflow"),
             Some("workspace::hardware")
         );
-        // A scope that is only a prefix of the label's own scope does not match.
         assert_eq!(value_in_scope("workflow::done", "work"), None);
         assert_eq!(value_in_scope("bug", "workflow"), None);
     }

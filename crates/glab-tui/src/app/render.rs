@@ -1,5 +1,3 @@
-//! Render the TUI: tab bar, main view, status bar, and overlays.
-
 use glab_core::domain::Item;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -17,9 +15,8 @@ use super::{App, Overlay, View};
 impl App {
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        // Paint the theme's own background over the whole frame rather than
-        // letting the terminal's show through, so a light theme is legible in
-        // a dark terminal and the reverse.
+        // The theme's own background over the whole frame, so a light theme
+        // stays legible in a dark terminal and the reverse.
         frame.render_widget(
             ratatui::widgets::Block::default().style(
                 ratatui::style::Style::default()
@@ -35,14 +32,12 @@ impl App {
         ])
         .split(area);
 
-        // Tab bar
         crate::ui::components::tab_bar::render(frame, chunks[0], self.ui.view);
 
         let ctx = crate::ui::RenderCtx {
             label_colors: &self.data.label_color_map,
         };
 
-        // Render main view
         match self.ui.view {
             View::Dashboard => {
                 let current_iter = self.ui.views.planning.current_iteration.as_ref();
@@ -127,7 +122,6 @@ impl App {
             }
         }
 
-        // Status bar
         let team_name = self
             .ui
             .active_team
@@ -154,9 +148,7 @@ impl App {
                 .sum(),
             _ => self.data.team_issues.len() + self.data.team_mrs.len(),
         };
-        // The same chain the help overlay reads, so a hint always names the
-        // action the key really fires.  Contextual only — the globals are on
-        // the tab bar already.
+        // The same chain help reads, so a hint names the action the key fires.
         let binding_hints: Vec<(&str, &str)> =
             keybindings::active_bindings(&self.contextual_groups())
                 .into_iter()
@@ -182,10 +174,8 @@ impl App {
             },
         );
 
-        // Resolved before the overlay borrow: the chain owns nothing of `self`.
         let chain = self.active_groups();
 
-        // Render overlay on top
         match &mut self.ui.overlay {
             Overlay::None => {}
             Overlay::Help => {

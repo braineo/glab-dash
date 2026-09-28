@@ -36,10 +36,8 @@ impl GitLabClient {
         get_mutation_payload(&json, "workItemAddLinkedItems").map(|_| ())
     }
 
-    /// Record `target_gid` as related to — or closed by — the merge request
-    /// `gid`, which GitLab reads from the description rather than storing as a
-    /// link.  Read-modify-write: there is no append, and a line already present
-    /// is left alone rather than repeated.
+    /// GitLab reads this from the description rather than storing a link, so
+    /// it is read-modify-write; a line already present is left alone.
     pub async fn mention_in_mr(
         &self,
         gid: &str,
@@ -141,9 +139,7 @@ fn fold(closing: Vec<RelatedItem>, mentioning: Vec<RelatedItem>) -> Vec<RelatedI
         .collect()
 }
 
-/// The line a merge request's description carries to name `reference`.  GitLab
-/// acts on `Closes`; every other relation is the mention itself, so the words
-/// around it are for the reader.
+/// GitLab acts on `Closes`; the wording of the rest is for the reader alone.
 fn mention_line(reference: &str, relation: Relation) -> String {
     let keyword = match relation {
         Relation::Closes => "Closes",
@@ -161,9 +157,6 @@ fn encode_link_type(relation: Relation) -> Result<&'static str> {
     })
 }
 
-/// Both halves `mention_in_mr` needs before it writes: the description it
-/// edits, the path and iid the mutation addresses the merge request by, and
-/// the reference the line names the target with.
 #[derive(Deserialize)]
 struct Mention {
     #[serde(rename = "mergeRequest")]
@@ -257,8 +250,7 @@ enum MrLinkType {
 }
 
 impl MrLinkedItem {
-    /// An issue on an external tracker arrives with `workItem` null and nothing
-    /// an [`ItemRef`] can name.
+    /// An issue on an external tracker arrives with `workItem` null.
     fn into_related(self) -> Option<RelatedItem> {
         let relation = match self.link_type {
             MrLinkType::Closes => Relation::Closes,
@@ -446,8 +438,6 @@ mod tests {
         );
     }
 
-    /// GitLab returns an issue on an external tracker in the same array, with
-    /// `workItem` null — it names nothing this can address.
     #[test]
     fn a_merge_requests_issues_come_with_their_reference_and_skip_external_ones() {
         let linked: Vec<MrLinkedItem> = serde_json::from_str(

@@ -7,13 +7,12 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use crate::ui::styles;
 
-/// Home-row keys used as chord codes for sequential generation (9 keys).
 const CHORD_KEYS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
 
-/// Divider sentinel — labels starting with this are rendered as separator lines.
+/// A label starting with this renders as a separator and takes no code.
 pub const DIVIDER: &str = "───";
 
-/// Section header sentinel — labels starting with this are rendered as bold titles.
+/// A label starting with this renders as a title and takes no code.
 pub const HEADER: &str = "§ ";
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +26,6 @@ pub struct ChordState {
     pub title: String,
     pub options: Vec<(String, String)>, // (code, label)
     pub input: String,
-    /// Longest code length (for display alignment).
     pub max_code_len: usize,
     pub kind: ChordKind,
 }
@@ -39,13 +37,8 @@ pub enum ChordAction {
 }
 
 impl ChordState {
-    /// Create a chord with cascading name-derived keys (avy/easymotion style).
-    ///
-    /// - Unique first letter → 1-char code (instant select)
-    /// - Shared first letter → 2-char codes: first letter + distinguishing char
-    /// - Divider labels (starting with `DIVIDER`) get empty codes and render as separators.
+    /// Codes come from the labels themselves; see [`generate_name_codes`].
     pub fn new_for_names(title: &str, labels: Vec<String>) -> Self {
-        // Separate real labels from dividers/headers for code generation
         let real_labels: Vec<String> = labels
             .iter()
             .filter(|l| !l.starts_with(DIVIDER) && !l.starts_with(HEADER))
@@ -75,7 +68,6 @@ impl ChordState {
         }
     }
 
-    /// Create a chord with pre-computed (code, label) pairs.
     pub fn from_options(title: &str, options: Vec<(String, String)>, max_code_len: usize) -> Self {
         Self {
             title: title.to_string(),
@@ -99,16 +91,14 @@ impl ChordState {
                 let mut test = self.input.clone();
                 test.push(c);
 
-                // Exact code match → select immediately
                 if let Some((_, label)) = self.options.iter().find(|(code, _)| *code == test) {
                     return ChordAction::Selected(label.clone());
                 }
-                // Valid prefix → narrow candidates
                 if self.options.iter().any(|(code, _)| code.starts_with(&test)) {
                     self.input = test;
                     return ChordAction::Continue;
                 }
-                // No match → avy-style: silently ignore wrong letter
+                // Silently ignored rather than cancelling, avy style.
                 ChordAction::Continue
             }
             KeyCode::Backspace if !self.input.is_empty() => {
@@ -120,7 +110,6 @@ impl ChordState {
     }
 }
 
-/// Generate sequential home-row codes (a, s, d, ... or aa, as, ad, ...).
 fn generate_codes(count: usize, code_len: usize) -> Vec<String> {
     if code_len == 1 {
         CHORD_KEYS[..count]
@@ -141,18 +130,13 @@ fn generate_codes(count: usize, code_len: usize) -> Vec<String> {
     }
 }
 
-/// Generate cascading name-derived chord codes (for labels/assignees).
-///
-/// Names with a unique first letter get a 1-char code.
-/// Names sharing a first letter ALL get 2-char codes: shared letter +
-/// a distinguishing character derived from the name. This avoids the
-/// problem where a 1-char code blocks selection of longer prefixes.
+/// A unique first letter is a 1-char code; where one is shared, *every* sharer
+/// gets a 2-char code, so no 1-char code blocks a longer prefix.
 pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
     let n = labels.len();
     if n == 0 {
         return Vec::new();
     }
-    // Fall back to sequential for very large sets
     if n > 26 {
         return generate_codes(n, 2);
     }
@@ -163,12 +147,9 @@ pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
 
     for group in &groups {
         if group.len() == 1 {
-            // Unique first letter → single-char code
             codes[group[0]] = first_letter_of[group[0]].to_string();
         } else {
-            // Shared first letter: ALL items get 2-char codes so that
-            // typing the first letter narrows candidates instead of
-            // immediately selecting one.
+            // All of them, so the first letter narrows rather than selects.
             let first = first_letter_of[group[0]];
 
             let mut used_second: Vec<char> = Vec::new();
@@ -198,13 +179,8 @@ pub fn generate_name_codes(labels: &[String]) -> Vec<String> {
     codes
 }
 
-/// Generate priority-aware single-char chord codes (for statuses).
-///
-/// Every label gets a single-char code when possible (≤ 26 items).
-/// Labels with a unique first letter claim it directly. When multiple
-/// labels share a first letter, the first one (by input order / priority)
-/// keeps it and the rest are reassigned to a unique character derived
-/// from later letters in their name.
+/// Single-char codes wherever possible.  On a shared first letter the first
+/// label by input order keeps it — so pass the labels in priority order.
 pub fn generate_priority_codes(labels: &[String]) -> Vec<String> {
     let n = labels.len();
     if n == 0 {
@@ -219,7 +195,6 @@ pub fn generate_priority_codes(labels: &[String]) -> Vec<String> {
     let mut codes = vec![String::new(); n];
     let mut used: Vec<char> = Vec::new();
 
-    // Pass 1: assign first-letter codes to unique groups and primaries
     for group in &groups {
         let first = first_letter_of[group[0]];
         let primary = *group.iter().min().unwrap_or(&group[0]);
@@ -227,7 +202,6 @@ pub fn generate_priority_codes(labels: &[String]) -> Vec<String> {
         used.push(first);
     }
 
-    // Pass 2: displaced items get a single unique char from their name
     for group in &groups {
         if group.len() == 1 {
             continue;
@@ -261,7 +235,8 @@ pub fn generate_priority_codes(labels: &[String]) -> Vec<String> {
     codes
 }
 
-/// Shared helper: extract alpha chars and group label indices by first letter.
+/// Returns each label's alpha chars, the indices grouped by first letter, and
+/// those first letters.
 fn group_by_first_letter(labels: &[String]) -> (Vec<Vec<char>>, Vec<Vec<usize>>, Vec<char>) {
     let n = labels.len();
     let alpha_chars: Vec<Vec<char>> = labels
@@ -301,8 +276,6 @@ fn group_by_first_letter(labels: &[String]) -> (Vec<Vec<char>>, Vec<Vec<usize>>,
     (alpha_chars, groups, first_letter_of)
 }
 
-// ── Rendering ──
-
 pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
     let has_sections = state
         .options
@@ -316,7 +289,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ChordState) {
     }
 }
 
-/// Render as a multi-column grid (default for simple chord lists).
 fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
     let max_label_len = state
         .options
@@ -324,7 +296,7 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
         .map(|(_, l)| l.len())
         .max()
         .unwrap_or(6);
-    // Status icons add "◌ " prefix (2 display chars) to each label
+    // A status icon prefixes 2 display columns to each label.
     let icon_width = if state.kind == ChordKind::Status {
         2
     } else {
@@ -360,11 +332,9 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
                 let (code, label) = &state.options[item_idx];
                 let is_active = state.input.is_empty() || code.starts_with(&state.input);
 
-                // ── Code: avy-style progressive highlight ──
                 render_code(&mut spans, code, state.max_code_len, typed_len, is_active);
                 spans.push(Span::raw(" "));
 
-                // ── Label ──
                 if state.kind == ChordKind::Status && is_active {
                     let icon = styles::status_icon(label);
                     let sty = styles::status_style(label);
@@ -389,14 +359,12 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &ChordState) {
         lines.push(Line::from(spans));
     }
 
-    // ── Hint line ──
     lines.push(render_hint(state, typed_len));
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
 }
 
-/// Render as a single-column sectioned list with headers and dividers.
 fn render_sectioned(frame: &mut Frame, area: Rect, state: &ChordState) {
     let max_label_len = state
         .options
@@ -425,7 +393,6 @@ fn render_sectioned(frame: &mut Frame, area: Rect, state: &ChordState) {
     let typed_len = state.input.len();
 
     for (code, label) in &state.options {
-        // Section header
         if let Some(title) = label.strip_prefix(HEADER) {
             lines.push(Line::from(vec![
                 Span::raw(" "),
@@ -439,7 +406,6 @@ fn render_sectioned(frame: &mut Frame, area: Rect, state: &ChordState) {
             continue;
         }
 
-        // Divider
         if label.starts_with(DIVIDER) {
             let line = "─".repeat(item_width);
             lines.push(Line::from(Span::styled(
@@ -449,7 +415,6 @@ fn render_sectioned(frame: &mut Frame, area: Rect, state: &ChordState) {
             continue;
         }
 
-        // Normal item
         let is_active = state.input.is_empty() || code.starts_with(&state.input);
         let mut spans = Vec::new();
         render_code(&mut spans, code, state.max_code_len, typed_len, is_active);
@@ -464,18 +429,14 @@ fn render_sectioned(frame: &mut Frame, area: Rect, state: &ChordState) {
         lines.push(Line::from(spans));
     }
 
-    // ── Hint line ──
     lines.push(render_hint(state, typed_len));
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
 }
 
-/// Render a chord code with avy-style progressive dimming/highlighting.
-///
-/// Active + partial input: typed prefix muted, remaining chars bright.
-/// Active + no input: full code in accent color.
-/// Inactive: fully dimmed.
+/// The typed prefix is muted and the rest bright while it matches; a code that
+/// cannot match is fully dimmed.
 pub fn render_code(
     spans: &mut Vec<Span<'static>>,
     code: &str,
@@ -483,14 +444,12 @@ pub fn render_code(
     typed: usize,
     active: bool,
 ) {
-    // Right-align padding for variable-length codes
     let pad = max_width.saturating_sub(code.len());
     if pad > 0 {
         spans.push(Span::raw(" ".repeat(pad)));
     }
 
     if active && typed > 0 {
-        // Typed prefix → muted; remaining → bright hint target
         spans.push(Span::styled(
             code[..typed].to_string(),
             Style::default().fg(styles::overlay_text_dim()),
@@ -513,7 +472,6 @@ pub fn render_code(
     }
 }
 
-/// Render the bottom hint line showing typing progress and key hints.
 fn render_hint(state: &ChordState, typed: usize) -> Line<'static> {
     if state.input.is_empty() {
         return Line::from(vec![

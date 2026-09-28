@@ -1,5 +1,3 @@
-//! TEA execute phase: drain pending Cmds and perform I/O side-effects.
-
 use anyhow::Result;
 use glab_api::GitLabClient;
 use glab_core::domain::ItemKind;
@@ -9,7 +7,6 @@ use crate::cmd::Cmd;
 use super::{App, AsyncMsg, FetchState, ViewState};
 
 impl App {
-    /// Drain `pending_cmds` and execute each side-effect.
     pub(super) fn execute_pending_cmds(&mut self) {
         let cmds = std::mem::take(&mut self.ui.pending_cmds);
         for cmd in cmds {
@@ -19,7 +16,6 @@ impl App {
 
     fn execute_cmd(&mut self, cmd: Cmd) {
         match cmd {
-            // ── Persistence (targeted SQLite writes) ─────────────────
             Cmd::PersistIssues => {
                 let _ = self.ctx.db.upsert_issues(&self.data.issues);
             }
@@ -81,7 +77,6 @@ impl App {
                 let _ = self.ctx.db.set_kv("last_fetched_at", &ts);
             }
 
-            // ── API fetches ──────────────────────────────────────────
             Cmd::FetchAll => self.fetch_all(),
             Cmd::FetchAllFull => {
                 if !self.fetch_in_flight() {
@@ -92,7 +87,6 @@ impl App {
             }
             Cmd::FetchHealthData => self.maybe_fetch_health_data(),
 
-            // ── API mutations ────────────────────────────────────────
             Cmd::SpawnCloseIssue { issue_id } => {
                 let client = self.ctx.client.clone();
                 let tx = self.ctx.async_tx.clone();
@@ -158,7 +152,7 @@ impl App {
                 });
             }
             // GitLab owns the link ids, so a write re-reads rather than
-            // patching — which also picks up anyone else's change.
+            // patching.
             Cmd::FetchRelated { kind, gid } => {
                 self.refresh_related(vec![(kind, gid)], |_, _| async { Ok(()) });
             }
@@ -212,9 +206,8 @@ impl App {
         }
     }
 
-    /// Run `write` against the first gid in `reads`, then re-read the related
-    /// list of every item in `reads`: one write can change both sides of a
-    /// pair.  A read alone passes a `write` that does nothing.
+    /// Re-reads every item in `reads`, not just the one written: one write can
+    /// change both sides.  A plain read passes a `write` that does nothing.
     fn refresh_related<F, Fut>(&self, reads: Vec<(ItemKind, String)>, write: F)
     where
         F: FnOnce(GitLabClient, String) -> Fut + Send + 'static,

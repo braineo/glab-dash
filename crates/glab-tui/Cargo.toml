@@ -17,6 +17,7 @@ glab-config.workspace = true
 glab-core.workspace = true
 fuzzy-matcher.workspace = true
 open.workspace = true
+palette.workspace = true
 ratatui.workspace = true
 reqwest.workspace = true
 glab-store.workspace = true

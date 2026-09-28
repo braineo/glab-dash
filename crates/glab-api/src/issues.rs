@@ -1,10 +1,7 @@
-//! Issue reads and writes, all over GraphQL.
-//!
-//! GitLab exposes an issue two ways and glab-dash uses both: `namespace.workItems`
-//! walks a namespace and its descendants, and the root `issues` query finds
-//! issues by assignee anywhere on the instance. The two report the same issue
-//! under different global ids, which `glab_core::de::work_item_gid` normalizes
-//! so the results can be merged.
+//! `namespace.workItems` walks a namespace and its descendants; the root
+//! `issues` query finds issues by assignee anywhere on the instance.  They
+//! report the same issue under different global ids, which
+//! `glab_core::de::work_item_gid` normalizes.
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -15,8 +12,7 @@ use glab_core::domain::Issue;
 use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload, join_walks};
 use crate::wire::{RootIssuesQuery, WorkItem, WorkItemsQuery};
 
-/// The selection the root `issues` query uses, deserialized straight into
-/// [`glab_core::domain::Issue`].
+/// Deserialized straight into [`glab_core::domain::Issue`].
 const ISSUE_FIELDS: &str = r"
     fragment IssueFields on Issue {
         id iid title state
@@ -65,7 +61,7 @@ const WORK_ITEM_FIELDS: &str = r"
     }
 ";
 
-/// The states an issue list query can filter on. `None` asks for every state.
+/// `None` asks for every state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum IssueState {
@@ -74,11 +70,8 @@ pub enum IssueState {
 }
 
 impl GitLabClient {
-    /// List the issues under each of `namespaces` and its descendant projects,
-    /// deduplicated by id across namespaces.
-    ///
-    /// `updated_after` is an ISO 8601 timestamp restricting the walk to issues
-    /// touched since — the incremental refresh — and `None` walks all of them.
+    /// Walks each namespace's descendant projects too.  `updated_after` is an
+    /// ISO 8601 timestamp restricting the walk to issues touched since.
     pub async fn list_namespace_issues(
         &self,
         namespaces: &[String],
@@ -131,12 +124,7 @@ impl GitLabClient {
         join_walks(set, |i| &i.id).await
     }
 
-    /// List the issues assigned to any of `members`, anywhere on the instance,
-    /// deduplicated by id.
-    ///
-    /// Unlike [`list_namespace_issues`](Self::list_namespace_issues) this is not
-    /// scoped to a namespace, so the caller decides which projects' results to
-    /// keep.
+    /// Instance-wide, so the caller decides which projects' results to keep.
     pub async fn list_assigned_issues(
         &self,
         members: &[String],
@@ -188,9 +176,6 @@ impl GitLabClient {
         join_walks(set, |i| &i.id).await
     }
 
-    /// Apply `input` to the work item `gid` through the `workItemUpdate`
-    /// mutation and return the issue as it stands after the write.
-    ///
     /// `input` carries the widget fields to change (`assigneesWidget`,
     /// `labelsWidget`, `stateEvent`); the id is filled in here.
     pub async fn update_issue(&self, gid: &str, input: Value) -> Result<Issue> {
@@ -205,7 +190,7 @@ impl GitLabClient {
         Ok(Issue::from(work_item))
     }
 
-    /// Move the work item `gid` to `status_id`, one of the ids
+    /// `status_id` is one of the ids
     /// [`fetch_work_item_statuses`](Self::fetch_work_item_statuses) returned.
     pub async fn update_issue_status(&self, gid: &str, status_id: &str) -> Result<()> {
         let input = serde_json::json!({ "statusWidget": { "status": status_id } });
@@ -216,8 +201,7 @@ impl GitLabClient {
         Ok(())
     }
 
-    /// Move the work item `gid` into iteration `iteration_gid`, or out of every
-    /// iteration when it is `None`.
+    /// `None` moves it out of every iteration.
     pub async fn update_issue_iteration(
         &self,
         gid: &str,
@@ -231,9 +215,8 @@ impl GitLabClient {
         Ok(())
     }
 
-    /// Run `workItemUpdate` with `input`. `read_back` selects the updated work
-    /// item in the response; a mutation whose result the caller discards skips
-    /// it, keeping the document — and GitLab's complexity budget for it — small.
+    /// `read_back` selects the updated work item in the response, which costs
+    /// GitLab complexity budget, so a caller discarding it leaves it off.
     async fn update_work_item(&self, input: Value, read_back: bool) -> Result<Value> {
         let selection = if read_back {
             "workItem { ...WorkItemFields }"
@@ -264,13 +247,11 @@ impl GitLabClient {
     }
 }
 
-/// `input` with the work item's global id filled in.
 fn input_with_id(mut input: Value, gid: &str) -> Value {
     input["id"] = serde_json::json!(gid);
     input
 }
 
-/// A state filter as the `IssuableState` variable, `null` for every state.
 fn state_value(state: Option<IssueState>) -> Value {
     state.map_or(Value::Null, |s| Value::from(<&'static str>::from(s)))
 }

@@ -1,17 +1,14 @@
-//! The shapes GitLab's GraphQL responses arrive in, and how they fold into the
-//! [`glab_core::domain`] types the rest of glab-dash works with.
-//!
 //! Types are named for the schema type they select, prefixed with the document
-//! that selects it where the same schema type is selected differently by more
-//! than one — every document's root is its `<Document>Query`.
+//! where two documents select the same type differently; every document's root
+//! is its `<Document>Query`.
 
 use chrono::{DateTime, FixedOffset, Utc};
 use serde::Deserialize;
 
 use glab_core::domain::{self, Issue, Iteration, MergeRequest, Milestone, StatusValue, User};
 
-/// GraphQL answers `OPEN`/`CLOSED` where the rest of glab-dash spells the same
-/// states `opened`/`closed`.
+/// GraphQL answers `OPEN`/`CLOSED`; everything else spells them
+/// `opened`/`closed`.
 pub(crate) fn normalize_state(state: &str) -> String {
     match state.to_lowercase().as_str() {
         "open" => "opened".to_string(),
@@ -19,20 +16,16 @@ pub(crate) fn normalize_state(state: &str) -> String {
     }
 }
 
-/// A GraphQL response envelope. Errors are handled before deserialization, so
-/// only `data` is read here.
 #[derive(Deserialize)]
 pub(crate) struct Response<T> {
     pub data: T,
 }
 
-/// A connection selected without `pageInfo`, read for its nodes alone.
 #[derive(Deserialize)]
 pub(crate) struct Nodes<T> {
     pub nodes: Vec<T>,
 }
 
-/// One page of a cursor-paginated connection.
 #[derive(Deserialize)]
 pub(crate) struct Page<T> {
     pub nodes: Vec<T>,
@@ -48,11 +41,8 @@ pub(crate) struct PageInfo {
     pub end_cursor: Option<String>,
 }
 
-/// A response body that holds one paginated connection.
-///
 /// The path down to the connection differs per query and can be absent — an
-/// unknown project, a user the token cannot see — which `None` reports as an
-/// empty walk rather than an error.
+/// unknown project, a user the token cannot see — which `None` reports.
 pub(crate) trait Paged<T> {
     fn page(self) -> Option<Page<T>>;
 }
@@ -210,9 +200,8 @@ pub(crate) struct UserMrsQuery {
     user: Option<UserMrConnection>,
 }
 
-/// One response shape for every merge-request connection a user has —
-/// `authoredMergeRequests`, `assignedMergeRequests` or
-/// `reviewRequestedMergeRequests` — whichever the document selected wins.
+/// Serves `authoredMergeRequests`, `assignedMergeRequests` and
+/// `reviewRequestedMergeRequests`: whichever the document selected wins.
 #[derive(Deserialize)]
 struct UserMrConnection {
     #[serde(

@@ -39,7 +39,6 @@ pub fn render(
         spans.push(Span::raw(" "));
     }
 
-    // Sort chips
     for spec in sort_specs {
         let text = format!(" {} ", spec.display());
         spans.push(Span::styled(text, styles::sort_chip_style()));

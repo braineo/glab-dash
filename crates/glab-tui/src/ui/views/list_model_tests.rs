@@ -12,8 +12,6 @@ fn key(code: KeyCode) -> KeyEvent {
     }
 }
 
-// ── ItemList tests ──
-
 #[test]
 fn test_item_list_default_is_empty() {
     let list: ItemList<u32> = ItemList::default();
@@ -84,8 +82,6 @@ fn test_clamp_selection_valid_unchanged() {
     list.clamp_selection();
     assert_eq!(list.table_state.selected(), Some(1));
 }
-
-// ── UserFilter tests ──
 
 #[test]
 fn test_user_filter_default() {
@@ -194,8 +190,6 @@ fn test_start_search() {
     assert!(f.is_searching());
 }
 
-// ── format_age tests ──
-
 #[test]
 fn test_format_age_days() {
     let now = chrono::Utc::now();
@@ -225,11 +219,6 @@ fn cond() -> FilterCondition {
     }
 }
 
-// ── Filter bar focus lifecycle ──
-//
-// The bar is reachable only through `KeyAction::FocusFilterBar`; these cover
-// what it does once focused, so the wiring is not the only thing under test.
-
 #[test]
 fn the_filter_bar_walks_and_deletes_conditions() {
     let mut f = UserFilter {
@@ -238,7 +227,6 @@ fn the_filter_bar_walks_and_deletes_conditions() {
         ..UserFilter::default()
     };
 
-    // Right walks up to the last chip and stops there; left saturates at 0.
     for expected in [1, 2, 2] {
         f.handle_bar_key(&key(KeyCode::Right));
         assert_eq!(f.bar_selected, expected);
@@ -248,7 +236,6 @@ fn the_filter_bar_walks_and_deletes_conditions() {
         assert_eq!(f.bar_selected, expected);
     }
 
-    // `x` removes the selected chip and reports it so the view repersists.
     assert!(matches!(
         f.handle_bar_key(&key(KeyCode::Char('x'))),
         FilterBarAction::Deleted
@@ -269,7 +256,6 @@ fn the_filter_bar_releases_focus_on_esc_tab_and_the_last_delete() {
         assert!(!f.bar_focused);
     }
 
-    // Deleting the last condition leaves nothing to walk, so focus drops.
     let mut f = UserFilter {
         conditions: vec![cond()],
         bar_focused: true,
@@ -280,9 +266,6 @@ fn the_filter_bar_releases_focus_on_esc_tab_and_the_last_delete() {
     assert!(!f.bar_focused);
 }
 
-// ── Cursor reconciliation ──
-
-/// All `restore` looks at is the reference, so an item is one here.
 struct Row(&'static str);
 
 impl Item for Row {
@@ -327,24 +310,19 @@ fn a_rebuild_keeps_the_cursor_on_its_item_wherever_it_lands() {
     let anchor = list.anchor(&items);
     assert_eq!(anchor.as_deref(), Some("p#2"));
 
-    // A sort moved it to the end; the cursor follows the item, not the row.
     list.indices = vec![2, 0, 1];
     list.restore(&items, anchor.as_deref());
     assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#2"));
 
-    // Gone — filtered out or closed: the cursor holds its row, which the
-    // successor now occupies.
     list.indices = vec![0, 2];
     list.table_state.select(Some(1));
     list.restore(&items, anchor.as_deref());
     assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#3"));
 
-    // Gone from the last row: the cursor clamps onto the new last row.
     list.indices = vec![0];
     list.restore(&items, anchor.as_deref());
     assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#1"));
 
-    // Nothing left to point at.
     list.indices.clear();
     list.restore(&items, anchor.as_deref());
     assert_eq!(list.table_state.selected(), None);
@@ -373,8 +351,7 @@ fn a_rebuild_drops_a_stale_scroll_offset() {
     list.table_state.select(Some(2));
     *list.table_state.offset_mut() = 2;
 
-    // Narrowed to one match: an offset of 2 would have ratatui start the
-    // viewport past the only row left.
+    // An offset of 2 would start the viewport past the only row left.
     list.indices = vec![1];
     list.restore(&items, Some("p#2"));
     assert_eq!(list.table_state.offset(), 0);

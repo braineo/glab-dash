@@ -1,18 +1,8 @@
-//! The GitLab API client: every HTTP round-trip glab-dash makes, and nothing
-//! else.
+//! Every HTTP round-trip glab-dash makes.  GraphQL for the list queries and
+//! work-item mutations, REST v4 for what GraphQL does not cover.
 //!
-//! GitLab answers on two APIs and this crate speaks both — GraphQL for the list
-//! queries and work-item mutations, REST v4 for the endpoints GraphQL does not
-//! cover (notes, discussions, related items, approvals, merges, labels, user
-//! search). Wire
-//! shapes stay inside: a caller passes plain arguments and gets
-//! [`glab_core::domain`] types back, so the `wire` shapes, the query documents
-//! and GitLab's own error envelopes never reach the layers above.
-//!
-//! The client owns one round-trip per method, plus the cursor pagination a
-//! single connection needs. It holds no configuration and knows nothing of
-//! tracking projects or team membership: which namespaces to ask about, which
-//! results to keep, and how to sequence a refresh are the caller's to decide.
+//! The client holds no configuration: which namespaces to ask about, which
+//! results to keep and how to sequence a refresh are the caller's.
 
 pub mod client;
 pub mod discussions;

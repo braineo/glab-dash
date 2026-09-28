@@ -1,13 +1,5 @@
 //! What a focused issue answers to differently from a merge request; the rest
 //! is in [`item_actions`](super::item_actions).
-//!
-//! `Issue` lives in `glab-core`, so the methods that take one are hung off it
-//! with the [`IssueActions`] extension trait; the chord and confirm builders,
-//! which never had a receiver, are plain module functions.
-//!
-//! `IssueActions::handle_action_key` is called from `dispatch_focused_item`
-//! with disjoint borrows: `&self` + `&AppData` (both immutable, from the
-//! same struct), `&AppCtx` (immutable infra), `&mut UiState` (mutable UI).
 
 use crate::cmd::{Cmd, EventResult};
 use crate::keybindings::KeyAction;
@@ -19,12 +11,9 @@ use glab_core::domain::{
 use super::item_actions;
 use super::{AppCtx, AppData, Overlay, UiState};
 
-/// Issue actions that need the app's context, ui and data. Implemented for
-/// `Issue`, which this crate does not own.
 use crate::binding_group;
 
 binding_group! {
-    /// What a focused issue answers to, wherever the cursor is on one.
     pub ISSUE_ACTION_GROUP: "Issue Actions" {
         ('s') => SetStatus | "s" "Set status",
         ('x') => ToggleState | "x" "Close / Reopen",
@@ -37,7 +26,6 @@ binding_group! {
 }
 
 pub trait IssueActions {
-    /// Handle a key press against the issue-action bindings.
     fn handle_action_key(
         &self,
         action: KeyAction,
@@ -45,7 +33,6 @@ pub trait IssueActions {
         data: &AppData,
         ui: &mut UiState,
     ) -> EventResult;
-    /// Replace the issue's labels and push the change to the API.
     fn update_labels(
         &mut self,
         labels: &[String],
@@ -53,7 +40,6 @@ pub trait IssueActions {
         ctx: &AppCtx,
         ui: &mut UiState,
     );
-    /// Assign the issue to `username`, optimistically updating in place.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState);
 }
 
@@ -91,8 +77,7 @@ impl IssueActions for Issue {
                     ui,
                 );
             }
-            // GitLab resolves merge request threads only; an issue's notes come
-            // back `resolvable: false` and there is no endpoint to call.
+            // GitLab resolves merge request threads only.
             KeyAction::ResolveThread => {
                 ui.error = Some("GitLab does not support resolving issue threads".to_string());
             }
@@ -104,7 +89,6 @@ impl IssueActions for Issue {
         EventResult::Consumed
     }
 
-    /// Update labels via GraphQL diff (add/remove GIDs).
     fn update_labels(
         &mut self,
         labels: &[String],
@@ -149,7 +133,6 @@ impl IssueActions for Issue {
         ui.dirty.issues = true;
     }
 
-    /// Update assignee via GraphQL.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
         let placeholder = User {
             id: String::new(),
@@ -188,7 +171,6 @@ impl IssueActions for Issue {
     }
 }
 
-/// Open status chord from cached statuses, or trigger async fetch.
 fn fetch_or_show_status_chord(
     project: &str,
     issue_id: &str,
@@ -204,7 +186,6 @@ fn fetch_or_show_status_chord(
         build_status_chord(project, issue_id, iid, close_only, statuses, data, ui);
         return;
     }
-    // No cached statuses — fetch them asynchronously
     let client = ctx.client.clone();
     let tx = ctx.async_tx.clone();
     let project = project.to_string();
@@ -219,7 +200,6 @@ fn fetch_or_show_status_chord(
     });
 }
 
-/// Build the status chord from already-cached statuses.
 pub fn build_status_chord(
     project: &str,
     issue_id: &str,
@@ -233,7 +213,6 @@ pub fn build_status_chord(
     let issue_id_owned = issue_id.to_string();
     let is_duplicate = |s: &WorkItemStatus| s.name.to_lowercase().contains("duplicate");
 
-    // Done first: closing an issue is what this chord is opened for most.
     let mut sorted_indices: Vec<usize> = (0..statuses.len())
         .filter(|&i| !is_duplicate(&statuses[i]))
         .collect();
@@ -308,7 +287,6 @@ pub fn build_status_chord(
     }
 }
 
-/// Show a close/reopen confirm dialog for issues without custom statuses.
 pub fn show_close_reopen_confirm(issue_id: &str, iid: &str, item_state: &str, ui: &mut UiState) {
     let issue_id = issue_id.to_string();
     if item_state == "opened" {
@@ -342,7 +320,6 @@ pub fn show_close_reopen_confirm(issue_id: &str, iid: &str, item_state: &str, ui
     }
 }
 
-/// Open the iteration move chord.
 fn show_iteration_chord(issue_id: &str, data: &AppData, ui: &mut UiState) {
     let issue_id = issue_id.to_string();
     let current_pos = data.iterations.iter().position(|i| i.state == "current");

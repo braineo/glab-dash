@@ -1,30 +1,15 @@
-//! Which comments are worth reading, and which are noise the reader asked to
-//! never see again.
-//!
-//! The reader decides, in the config's `hide_comment` — a Lua chunk returning
-//! `function(note) -> boolean`.  Bot accounts, what the bot wrote, and the
-//! quick-action comments that exist to trigger a workflow rather than to say
-//! anything are all the same one rule:
-//!
-//! [`DEFAULT`] is what a generated config starts with.
-//!
-//! The interpreter is loaded with the string, table and math libraries and
-//! nothing else, so a config script cannot reach the filesystem or the network
-//! however it is written.
+//! The config's `hide_comment` is a Lua chunk returning
+//! `function(note) -> boolean`.  Only string, table and math are loaded, so a
+//! config script can reach neither filesystem nor network.
 
 use anyhow::{Result, anyhow};
 use mlua::{Function, Lua, LuaOptions, StdLib};
 
 use crate::domain::{Discussion, Note};
 
-/// The rule a generated config ships with: bot accounts, and comments whose
-/// first word is a quick action (`/test --some-param`).  Testing the first word
-/// whole is what keeps a comment opening on `/etc/hosts` — a path, not a
-/// command — in the conversation.
-///
-/// Padding the username with hyphens is how `bot` is matched as a whole word
-/// wherever it sits, Lua patterns having no alternation: `testing-bot` and
-/// `bot-testing` both hide, `robot` does not.
+/// The username is padded with hyphens to match `bot` as a whole word, Lua
+/// patterns having no alternation: `testing-bot` and `bot-testing` hide,
+/// `robot` does not.
 pub const DEFAULT: &str = r#"return function(note)
   local first = note.body:match("^%S+")
   return ("-" .. note.author .. "-"):match("%-bot%-") ~= nil
@@ -32,19 +17,12 @@ pub const DEFAULT: &str = r#"return function(note)
 end
 "#;
 
-/// The reader's comment rule, compiled once.  The default hides nothing, which
-/// is what an empty config means.
 #[derive(Default)]
 pub struct CommentFilter {
-    /// The compiled `hide_comment` predicate, and the state it lives in.
     script: Option<(Lua, Function)>,
 }
 
 impl CommentFilter {
-    /// Compile `src` — the config's `hide_comment` — failing on a chunk that
-    /// will not compile or does not evaluate to a function.  A broken predicate
-    /// is worth saying out loud rather than quietly passing every comment
-    /// through.
     // ponytail: no instruction-count hook, so `while true do end` in the config
     // hangs whoever calls `visible_threads`.  Add `Lua::set_hook` if that bites.
     pub fn new(src: &str) -> Result<Self> {
@@ -63,8 +41,6 @@ impl CommentFilter {
         })
     }
 
-    /// The threads worth reading: hidden notes are dropped, and a thread left
-    /// with no comment goes with them.
     pub fn visible_threads(&self, discussions: Vec<Discussion>) -> Vec<Discussion> {
         discussions
             .into_iter()
@@ -76,9 +52,6 @@ impl CommentFilter {
             .collect()
     }
 
-    /// Whether this note should stay out of the conversation.  A script that
-    /// raises keeps the note: the reader is better off seeing bot chatter than
-    /// silently losing a comment to a typo in their config.
     pub fn hides(&self, note: &Note) -> bool {
         let Some((lua, predicate)) = &self.script else {
             return false;
@@ -93,7 +66,6 @@ impl CommentFilter {
     }
 }
 
-/// The note as the script sees it.
 fn note_table(lua: &Lua, note: &Note) -> mlua::Result<mlua::Table> {
     let t = lua.create_table()?;
     t.set("author", note.author.username.as_str())?;

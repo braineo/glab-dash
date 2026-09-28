@@ -1,6 +1,3 @@
-//! [`Issue`] and [`MergeRequest`], what they answer to in common ([`Item`]),
-//! and how one names another ([`ItemRef`]).
-
 mod issue;
 mod item;
 mod merge_request;
@@ -15,7 +12,7 @@ pub use note::{Discussion, Note};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    /// user id REST API returns number but new GraphQL returns "gid://gitlab/User/{id}"
+    /// REST returns a number, GraphQL `gid://gitlab/User/{id}`.
     #[serde(deserialize_with = "crate::de::user_id")]
     pub id: String,
     pub username: String,
@@ -30,7 +27,7 @@ pub struct ProjectLabel {
 }
 
 /// Strip the `#123` / `!45` suffix off a full reference, leaving the project
-/// path. Full refs look like `group/project#123` or `group/sub/project!45`.
+/// path: `group/project#123`, `group/sub/project!45`.
 fn project_from_reference(full_ref: &str) -> &str {
     match full_ref.rfind(['#', '!']) {
         Some(idx) => &full_ref[..idx],

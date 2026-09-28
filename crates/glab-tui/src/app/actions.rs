@@ -1,5 +1,3 @@
-//! Action methods: browser, labels, assignee, comment, status, detail navigation.
-
 use glab_core::domain::ItemKind;
 use glab_core::domain::{Issue, Item, MergeRequest, StatusValue};
 
@@ -18,7 +16,6 @@ impl App {
         iid: &str,
         status_name: &str,
     ) {
-        // Find the status from cached statuses
         let status = self
             .data
             .work_item_statuses
@@ -33,7 +30,6 @@ impl App {
         let status_id = status.id.clone();
         let status_category = status.category.clone();
 
-        // Optimistic update
         if let Some(pos) = self
             .data
             .issues
@@ -71,7 +67,6 @@ impl App {
             .push(crate::cmd::Cmd::PersistLabelUsage);
     }
 
-    /// Dispatch label update to the focused issue or MR.
     pub(super) fn dispatch_update_labels(&mut self, labels: &[String]) {
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { id, .. }) => {
@@ -93,7 +88,6 @@ impl App {
         }
     }
 
-    /// Dispatch assignee update to the focused issue or MR.
     pub(super) fn dispatch_update_assignee(&mut self, username: &str) {
         match self.ui.focused.clone() {
             Some(FocusedItem::Issue { id, .. }) => {
@@ -115,7 +109,6 @@ impl App {
         }
     }
 
-    /// Both kinds take the same path; this only says which item.
     pub(super) fn dispatch_submit_comment(
         &mut self,
         body: &str,
@@ -132,12 +125,10 @@ impl App {
         }
     }
 
-    /// Look up the issue shown in the detail view by its stored gid.
     pub(super) fn current_detail_issue(&self) -> Option<&Issue> {
         self.ui.views.issue_detail.issue.as_ref()
     }
 
-    /// Look up the MR shown in the detail view by its stored (project, iid).
     pub(super) fn current_detail_mr(&self) -> Option<&MergeRequest> {
         self.ui.views.mr_detail.mr.as_ref()
     }
@@ -195,8 +186,8 @@ impl App {
         self.ui.dirty.selection = true;
     }
 
-    /// A fetched item opens in the detail view; one outside the team's scope
-    /// has no local copy to render, so it opens in the browser.
+    /// An item outside the team's scope has no local copy to render, so it
+    /// opens in the browser instead.
     ///
     /// ponytail: a chain of blockers cannot be walked back item by item; give
     /// the detail view its own stack if that bites.
@@ -227,7 +218,6 @@ impl App {
         }
     }
 
-    /// Whichever detail view is open, the relation its cursor sits on.
     fn related_at_cursor(&self) -> Option<glab_core::domain::RelatedItem> {
         let (gid, body) = match self.ui.view {
             View::IssueDetail => (
@@ -265,7 +255,6 @@ impl App {
 
         let old_iteration = self.data.issues[issue_idx].iteration.clone();
 
-        // Optimistic update
         self.data.issues[issue_idx].iteration = target.cloned();
         self.data.issues[issue_idx].updated_at = chrono::Utc::now();
         self.ui.dirty.issues = true;

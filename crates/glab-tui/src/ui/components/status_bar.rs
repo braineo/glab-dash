@@ -5,7 +5,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::ui::styles;
 
-/// A duration as its largest whole unit: `45s`, `12m`, `3h`, `2d`.
+/// Largest whole unit only: `45s`, `12m`, `3h`, `2d`.
 pub fn format_span(secs: u64) -> String {
     if secs < 60 {
         format!("{secs}s")
@@ -90,7 +90,6 @@ pub fn render(frame: &mut Frame, area: Rect, props: &StatusBarProps) {
         ));
     }
 
-    // Right-aligned hints (dynamic per view)
     let mut hints_spans = Vec::new();
     for (key, desc) in props.hints {
         hints_spans.push(Span::styled(*key, styles::help_key_style()));

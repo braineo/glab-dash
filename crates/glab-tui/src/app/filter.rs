@@ -1,5 +1,3 @@
-//! Filter and sort methods: active filter access, sort/filter UI, chord callbacks.
-
 use super::{App, Overlay, View};
 use crate::cmd::Cmd;
 use crate::ui::components::chord_popup;
@@ -8,7 +6,6 @@ use crate::ui::views::list_model::UserFilter;
 use glab_core::filter::{Field, Op};
 
 impl App {
-    /// Returns a mutable reference to the `UserFilter` for the current view.
     pub(super) fn active_filter_mut(&mut self) -> &mut UserFilter {
         match self.ui.view {
             View::IssueList | View::IssueDetail => &mut self.ui.views.issue_list.filter,
@@ -41,20 +38,17 @@ impl App {
 
         let mut labels = Vec::new();
 
-        // "Clear sort" when a sort is active
         let has_sort = !self.active_filter().sort_specs.is_empty();
         if has_sort {
             labels.push("⊘ Clear sort".to_string());
         }
 
-        // Sort config presets
         for p in &self.ctx.config.sort_presets {
             if p.kind == kind {
                 labels.push(format!("▸ {}", p.name));
             }
         }
 
-        // Built-in field sorts
         let fields: &[glab_core::sort::SortField] = match kind {
             "merge_request" => glab_core::sort::SortField::all_mr(),
             _ => glab_core::sort::SortField::all_issue(),
@@ -63,7 +57,6 @@ impl App {
             labels.push(field.name().to_string());
         }
 
-        // Label scope sorts from config
         for order in &self.ctx.config.label_sort_orders {
             labels.push(format!("{}::", order.scope));
         }
@@ -77,19 +70,16 @@ impl App {
     }
 
     pub(super) fn handle_sort_field_chosen(&mut self, value: &str) {
-        // Clear sort — apply immediately
         if value == "⊘ Clear sort" {
             self.apply_sort_specs(Vec::new());
             return;
         }
 
-        // Config preset — apply immediately
         if let Some(preset_name) = value.strip_prefix("▸ ") {
             self.apply_sort_preset(preset_name);
             return;
         }
 
-        // Field or label scope — show direction chord
         let (field_name, label_scope) = if let Some(scope) = value.strip_suffix("::") {
             ("label".to_string(), Some(scope.to_string()))
         } else {
@@ -169,7 +159,6 @@ impl App {
 
         let mut labels = Vec::new();
 
-        // ── Builder section ──
         labels.push(format!("{}Builder", chord_popup::HEADER));
 
         let conditions = &self.active_filter().conditions;
@@ -181,7 +170,6 @@ impl App {
             labels.push("⊘ Clear all".to_string());
         }
 
-        // ── Presets section ──
         let has_presets = self.ctx.config.filters.iter().any(|f| f.kind == kind);
         if has_presets {
             labels.push(chord_popup::DIVIDER.to_string());
@@ -217,7 +205,6 @@ impl App {
             return;
         }
 
-        // Remove a condition (strip "✕ " prefix, find and remove matching)
         if let Some(display) = value.strip_prefix("✕ ") {
             let conditions = &mut self.active_filter_mut().conditions;
             if let Some(idx) = conditions.iter().position(|c| c.display() == display) {
@@ -225,7 +212,6 @@ impl App {
             }
             self.ui.dirty.view_state = true;
             self.ui.pending_cmds.push(Cmd::PersistViewState);
-            // Reopen the filter menu
             self.action_show_filter_menu();
         }
     }
@@ -268,7 +254,6 @@ impl App {
     }
 
     pub(super) fn handle_filter_op_chosen(&mut self, field: Field, value: &str) {
-        // Parse op from the display label (e.g., "equals (=)" → Eq)
         let op = if value.starts_with("equals") {
             Op::Eq
         } else if value.starts_with("not equals") {
@@ -281,13 +266,12 @@ impl App {
             return;
         };
 
-        // Set up filter editor at the value step with field and op pre-selected
+        // Straight to the value step: field and op are already picked.
         let mut state = filter_editor::FilterEditorState::default();
         state.selected_field = Some(field);
         state.selected_op = Some(op);
         state.step = filter_editor::EditorStep::EnterValue;
         self.ui.overlay = Overlay::FilterEditor(state);
-        // Populate suggestions now that overlay field is set
         let suggestions = self.get_filter_suggestions();
         if let Overlay::FilterEditor(ref mut s) = self.ui.overlay {
             s.suggestions = suggestions;
@@ -313,7 +297,6 @@ impl App {
                     "closed".to_string(),
                     "merged".to_string(),
                 ];
-                // Add any custom status names from cached statuses
                 for statuses in self.data.work_item_statuses.values() {
                     for s in statuses {
                         let name = s.name.to_lowercase();

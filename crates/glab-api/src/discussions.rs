@@ -1,8 +1,5 @@
-//! Notes and discussions, over REST.
-//!
-//! GitLab routes an issue's and a merge request's notes through the same
-//! endpoints under a different collection segment, so [`ItemKind`] names which
-//! and the three operations are written once.
+//! An issue's and a merge request's notes share these REST endpoints under a
+//! different collection segment, which [`ItemKind`] names.
 
 use anyhow::Result;
 use reqwest::Method;
@@ -13,11 +10,6 @@ use glab_core::domain::{Discussion, Note};
 use crate::client::{GitLabClient, item_path};
 
 impl GitLabClient {
-    /// List the discussion threads on the issuable `iid` in `project`, oldest
-    /// thread first.
-    ///
-    /// Walks every page: a busy merge request has more than one page of
-    /// threads, and stopping at the first drops the rest of the conversation.
     pub async fn list_discussions(
         &self,
         kind: ItemKind,
@@ -43,13 +35,8 @@ impl GitLabClient {
         Ok(all)
     }
 
-    /// Open a new thread on the issuable `iid` in `project` with `body` as its
-    /// first note.
-    ///
-    /// Posts to `discussions` rather than `notes` on purpose.  A note posted to
-    /// `notes` comes back as an individual note, which GitLab shows without a
-    /// reply box and — on a merge request — will not resolve; a thread takes
-    /// replies and resolves from the moment it exists.
+    /// Posts to `discussions`, not `notes`: a note posted to `notes` comes back
+    /// as an individual note, which takes no replies and will not resolve.
     pub async fn create_thread(
         &self,
         kind: ItemKind,
@@ -63,10 +50,8 @@ impl GitLabClient {
         Self::send(request).await
     }
 
-    /// Post `body` as a reply into the existing thread `discussion_id`.
-    ///
-    /// Works on an individual note too: GitLab turns a single comment into a
-    /// thread when the first reply lands on it.
+    /// Works on an individual note too: GitLab turns it into a thread on the
+    /// first reply.
     pub async fn reply_to_discussion(
         &self,
         kind: ItemKind,
@@ -87,13 +72,7 @@ impl GitLabClient {
         Self::send(request).await
     }
 
-    /// Rewrite the note `note_id` with `body`.
-    ///
-    /// Addressed through the flat `notes` collection rather than the thread it
-    /// sits in: the note's id is enough, so a reply and a standalone comment
-    /// take the same route.  GitLab refuses a note the token's user may not
-    /// edit, which is what keeps this to the author and the project's
-    /// maintainers.
+    /// GitLab refuses a note the token's user may not edit.
     pub async fn update_note(
         &self,
         kind: ItemKind,
@@ -109,10 +88,7 @@ impl GitLabClient {
         Self::send(request).await
     }
 
-    /// Resolve or reopen the merge request thread `discussion_id`.
-    ///
-    /// Merge requests only: an issue's notes come back with `resolvable: false`
-    /// and GitLab has no route to resolve them, so there is no `kind` to pass.
+    /// Merge requests only: GitLab has no route to resolve an issue's notes.
     pub async fn resolve_discussion(
         &self,
         project: &str,

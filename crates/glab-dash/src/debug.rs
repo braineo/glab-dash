@@ -1,5 +1,3 @@
-//! Non-interactive debug mode: exercise the fetch paths and log results.
-
 use anyhow::{Context, Result};
 use glab_api::{GitLabClient, IssueState, MrState};
 use glab_config::Config;
@@ -8,8 +6,7 @@ use glab_store::Db;
 use glab_tui::app::App;
 use tokio::sync::mpsc;
 
-/// Exercise the fetch paths and log results. Output goes to the tracing log
-/// file, not the terminal.
+/// Output goes to the tracing log file, not the terminal.
 pub async fn run() -> Result<()> {
     let config = Config::load().context("Failed to load configuration")?;
     let client = GitLabClient::new(&config.gitlab_url, &config.token)
@@ -84,7 +81,6 @@ pub async fn run() -> Result<()> {
         tracing::warn!("debug: no issue to fetch related items for");
     }
 
-    // Simulate what the app does: store issues, refilter, check count
     tracing::info!("debug: simulating app flow");
     let (async_tx, _async_rx) = mpsc::unbounded_channel();
     let db = Db::open().context("Failed to open database")?;

@@ -1,9 +1,3 @@
-//! The terminal event loop.
-//!
-//! The imperative shell around [`App`]: it takes over the terminal, drives the
-//! handle → reconcile → execute cycle from crossterm key events, async results
-//! and the auto-refresh timer, and restores the terminal on the way out.
-
 use std::io;
 use std::time::Duration;
 
@@ -21,15 +15,9 @@ use tokio::sync::mpsc;
 
 use crate::app::{App, AsyncMsg};
 
-/// Take over the terminal and run `app` until a quit action ends it, draining
-/// `async_rx` for results of the fetches and mutations it spawns. The terminal
-/// is put into raw mode on an alternate screen for the duration and restored
-/// before returning.
 pub async fn run(mut app: App, mut async_rx: mpsc::UnboundedReceiver<AsyncMsg>) -> Result<()> {
-    // Setup terminal.  `try_init` gives raw mode, the alternate screen and a
-    // panic hook that undoes both — without it a panic or any `?` below leaves
-    // the user in a wrecked shell.  Mouse capture and the keyboard flags are
-    // ours to set, and ours to unset.
+    // `try_init` gives raw mode, the alternate screen and a panic hook that
+    // undoes both.  Mouse capture and the keyboard flags are ours to unset.
     // ponytail: the panic hook does not know about those two, so a panic leaves
     // mouse capture on.  Wrap them in the hook if that ever bites.
     let mut terminal = ratatui::try_init()?;
@@ -43,22 +31,17 @@ pub async fn run(mut app: App, mut async_rx: mpsc::UnboundedReceiver<AsyncMsg>) 
         )?;
     }
 
-    // Crossterm event stream — native tokio integration, no polling thread
     let mut event_stream = EventStream::new();
 
-    // Auto-refresh timer using configured interval (default 60s)
     let refresh_interval = Duration::from_secs(app.ctx.config.refresh_interval_secs);
     let mut refresh_timer = tokio::time::interval(refresh_interval);
     refresh_timer.tick().await; // consume the immediate first tick
 
-    // Load cache for instant startup, then fetch fresh data in background
     app.load_from_db();
     app.fetch_all();
 
-    // Main loop — event-driven rendering with drain-before-paint.
-    // Block on select! for the first event, then drain all pending events
-    // before rendering once.  This gives immediate visual feedback while
-    // coalescing bursts (e.g. held-key scrolling) into a single paint.
+    // Block on select! for the first event, then drain the rest before
+    // rendering once, so a burst of held keys coalesces into one paint.
     loop {
         if app.ui.needs_redraw {
             terminal.draw(|frame| app.render(frame))?;
@@ -90,7 +73,6 @@ pub async fn run(mut app: App, mut async_rx: mpsc::UnboundedReceiver<AsyncMsg>) 
             }
         }
 
-        // Drain pending events — coalesce into a single render pass
         let mut quit = false;
         while crossterm::event::poll(Duration::ZERO)? {
             if let CEvent::Key(key) = crossterm::event::read()?
@@ -110,8 +92,6 @@ pub async fn run(mut app: App, mut async_rx: mpsc::UnboundedReceiver<AsyncMsg>) 
         }
     }
 
-    // Restore terminal: undo what we set up ourselves, then let ratatui unwind
-    // the raw mode and alternate screen it entered.
     if has_keyboard_enhancement {
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }

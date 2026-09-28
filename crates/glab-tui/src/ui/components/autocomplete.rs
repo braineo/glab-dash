@@ -46,7 +46,6 @@ impl AutocompleteState {
         issues: &[Issue],
         mrs: &[MergeRequest],
     ) {
-        // Scan backwards from cursor to find a trigger character
         let before = &text[..cursor_byte_pos];
         let mut found_trigger = None;
 
@@ -74,7 +73,6 @@ impl AutocompleteState {
 
         let query = &text[pos + trigger_char.len_utf8()..cursor_byte_pos];
 
-        // Rebuild items if kind or trigger position changed
         if self.kind.as_ref() != Some(&kind) || self.trigger_pos != pos {
             self.kind = Some(kind.clone());
             self.trigger_pos = pos;
@@ -125,7 +123,6 @@ impl AutocompleteState {
             scored.sort_by_key(|&(_, s)| std::cmp::Reverse(s));
             self.filtered = scored.into_iter().map(|(i, _)| i).collect();
         }
-        // Truncate to reasonable size
         self.filtered.truncate(MAX_VISIBLE * 3);
         self.selected = 0;
     }
@@ -148,7 +145,6 @@ impl AutocompleteState {
         self.selected = self.selected.saturating_sub(1);
     }
 
-    /// Returns the selected completion item, if any.
     pub fn selected_item(&self) -> Option<&CompletionItem> {
         let idx = *self.filtered.get(self.selected)?;
         self.items.get(idx)
@@ -170,7 +166,6 @@ pub fn render(frame: &mut Frame, input_area: Rect, state: &AutocompleteState) {
         None => "",
     };
 
-    // Position dropdown below input area
     let dropdown = Rect {
         x: input_area.x + 1,
         y: input_area.y + input_area.height,

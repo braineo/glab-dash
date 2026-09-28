@@ -1,8 +1,3 @@
-//! What the open item is related to, as rows in a detail body, and the keys
-//! that add and drop one.
-//!
-//! What a relation means, how it sorts and whether it can be dropped are the
-//! domain's answers; this spends them on icons, colors and keys.
 use glab_core::domain::{Issue, Item, MergeRequest};
 use glab_core::domain::{ItemKind, RelatedItem, Relation};
 use ratatui::style::Style;
@@ -16,7 +11,6 @@ use crate::ui::components::{chord_popup::ChordState, picker::PickerState};
 use crate::ui::views::DetailCtx;
 use crate::ui::{styles, wrap};
 
-/// The icon for a relation that neither blocks nor is blocked.
 const ICON_RELATED: &str = "\u{21C4}";
 /// Columns the relation is padded to, so the references line up.
 const RELATION_WIDTH: usize = 11;
@@ -46,7 +40,6 @@ pub fn handle_key(
     EventResult::Consumed
 }
 
-/// `None` on every row that holds no relation.
 pub fn at_cursor<'a>(related: &'a [RelatedItem], body: &DetailBody) -> Option<&'a RelatedItem> {
     let Row::Related(index) = body.cursor_row() else {
         return None;
@@ -54,7 +47,7 @@ pub fn at_cursor<'a>(related: &'a [RelatedItem], body: &DetailBody) -> Option<&'
     related.get(index)
 }
 
-/// Nothing at all when there are none: no section rule either.
+/// Pushes nothing at all when there are none, not even a section rule.
 pub fn push(body: &mut DetailBody, related: &[RelatedItem], width: usize) {
     if related.is_empty() {
         return;
@@ -70,9 +63,7 @@ pub fn push(body: &mut DetailBody, related: &[RelatedItem], width: usize) {
     };
     body.section("LINKED", Some(tally), width);
 
-    // References run from `app!33` to a four-segment path, so the title column
-    // is set by the widest one here rather than by a constant.  Capped, so one
-    // long path cannot shove every title off the row.
+    // Capped, so one long path cannot shove every title off the row.
     let refs: Vec<String> = related.iter().map(reference).collect();
     let ref_width = refs
         .iter()
@@ -90,8 +81,6 @@ pub fn push(body: &mut DetailBody, related: &[RelatedItem], width: usize) {
     body.extend(rows);
 }
 
-/// The kind icon the tab bar uses, then the full reference: the sigil alone,
-/// buried at the end of a long project path, is not what the eye lands on.
 fn reference(related: &RelatedItem) -> String {
     let kind = match related.item.kind {
         ItemKind::Issue => styles::ICON_ISSUES,
@@ -100,8 +89,7 @@ fn reference(related: &RelatedItem) -> String {
     format!("{kind} {}", related.item.reference())
 }
 
-/// The relation carries the color — an open blocker is what the reader scans
-/// for.  A settled one keeps its shape and loses its color.
+/// A settled relation keeps its shape and loses its color.
 fn row(related: &RelatedItem, reference: &str, ref_width: usize, width: usize) -> Line<'static> {
     let (icon, tint) = match related.relation {
         Relation::BlockedBy => (styles::ICON_BLOCKED, styles::red()),
@@ -115,7 +103,7 @@ fn row(related: &RelatedItem, reference: &str, ref_width: usize, width: usize) -
         (styles::text_dim(), styles::text_dim())
     };
     let relation = format!("{icon} {:<RELATION_WIDTH$}", related.relation.label());
-    // Padded by display width: a reference is not all single-column glyphs.
+    // By display width: a reference is not all single-column glyphs.
     let pad = " ".repeat(ref_width.saturating_sub(wrap::width(reference)));
     let reference = format!("{reference}{pad}  ");
     let used = wrap::width(&relation) + wrap::width(&reference) + detail_body::LEAD;
@@ -132,18 +120,15 @@ fn row(related: &RelatedItem, reference: &str, ref_width: usize, width: usize) -
     )
 }
 
-/// What picking a target does with it.
 #[derive(Clone, Copy)]
 enum Choice {
-    /// A stored issue link, which only an issue holds.
     Link(Relation),
-    /// A line in a merge request's description, which is the only way GitLab
-    /// relates an issue to a merge request.  Named from the merge request's
-    /// side, since that is where the line lives.
+    /// The only way GitLab relates an issue to a merge request.  Named from
+    /// the merge request's side, since that is where the line lives.
     Mention(Relation),
 }
 
-/// What `L` offers on an item of `kind`, labelled from that item's side.
+/// Labelled from `kind`'s own side.
 fn choices(kind: ItemKind) -> Vec<(&'static str, Choice)> {
     match kind {
         ItemKind::Issue => vec![
@@ -160,7 +145,7 @@ fn choices(kind: ItemKind) -> Vec<(&'static str, Choice)> {
     }
 }
 
-/// `L`, first half: which relation, which also decides what is picked from.
+/// The relation also decides what is picked from.
 fn pick_relation(kind: ItemKind, gid: String) -> Overlay {
     let choices = choices(kind);
     let labels: Vec<String> = choices
@@ -183,8 +168,8 @@ fn pick_relation(kind: ItemKind, gid: String) -> Overlay {
                         relation,
                     })
                 }
-                // Whichever side is the merge request holds the line, so an
-                // issue picks a merge request and a merge request an issue.
+                // The merge request holds the line, so each side picks the
+                // other kind.
                 Choice::Mention(relation) => {
                     let rows = match kind {
                         ItemKind::Issue => mr_rows(&app.data.mrs, &gid),
@@ -199,9 +184,8 @@ fn pick_relation(kind: ItemKind, gid: String) -> Overlay {
     }
 }
 
-/// Whichever side is the merge request carries the line; the other is what it
-/// names.  `kind` and `view_gid` are the view that asked, `picked` the other
-/// side of the pair.
+/// `kind` and `view_gid` are the view that asked, `picked` the other side;
+/// whichever is the merge request carries the line.
 fn mention(kind: ItemKind, view_gid: String, picked: String, relation: Relation) -> Cmd {
     let (gid, target_gid) = if kind == ItemKind::MergeRequest {
         (view_gid, picked)
@@ -215,15 +199,14 @@ fn mention(kind: ItemKind, view_gid: String, picked: String, relation: Relation)
     }
 }
 
-/// What the picker shows for one item, and the gid of the item that row is.
-/// They travel together so a pick never has to be read back out of its label.
+/// Label and gid travel together, so a pick is never read back out of a
+/// label.
 struct TargetRow {
     label: String,
     subtitle: String,
     gid: String,
 }
 
-/// `L`, second half: which item.
 fn pick_target(
     label: &str,
     rows: Vec<TargetRow>,
@@ -248,8 +231,7 @@ fn pick_target(
     }
 }
 
-/// An issue's own name for its state beats the raw one, which is what the rest
-/// of the app shows.
+/// An issue's custom status beats its raw state.
 fn issue_rows(issues: &[Issue], self_gid: &str) -> Vec<TargetRow> {
     rows(issues, self_gid, |i| {
         i.status_name().unwrap_or(&i.state).to_string()
@@ -260,7 +242,7 @@ fn mr_rows(mrs: &[MergeRequest], self_gid: &str) -> Vec<TargetRow> {
     rows(mrs, self_gid, |m| m.state.clone())
 }
 
-/// One row per item, the item itself left out: nothing relates to itself.
+/// Leaves out the item itself: nothing relates to itself.
 ///
 /// ponytail: offers only what has been fetched; naming something outside the
 /// team's scope needs free text in the picker.
@@ -341,8 +323,6 @@ mod tests {
         }
     }
 
-    /// Either side can name the pair, and both write the same line into the
-    /// same merge request.
     #[test]
     fn a_mention_is_written_to_whichever_side_is_the_merge_request() {
         const MR: &str = "gid://gitlab/MergeRequest/7";
@@ -366,8 +346,6 @@ mod tests {
         }
     }
 
-    /// Only an issue holds a stored link; a merge request has nowhere to put
-    /// one but its description.
     #[test]
     fn a_merge_request_offers_mentions_alone() {
         assert!(

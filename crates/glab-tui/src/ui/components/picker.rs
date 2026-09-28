@@ -13,7 +13,6 @@ use crate::ui::{keys, styles};
 pub struct PickerState {
     pub title: String,
     pub items: Vec<String>,
-    /// Optional second line per item, shown below the main text in a dimmer style.
     pub subtitles: Vec<String>,
     pub filtered: Vec<usize>,
     pub query: String,
@@ -21,12 +20,9 @@ pub struct PickerState {
     pub multi_select: bool,
     pub selected: Vec<bool>,
     matcher: SkimMatcherV2,
-    /// Applied to the highlighted item as the cursor moves, so a choice can be
-    /// seen before it is made.  It has to be idempotent and cheap: it runs on
-    /// every keystroke the picker handles.
+    /// Must be idempotent and cheap: it runs on every keystroke.
     preview: Option<fn(&str) -> bool>,
-    /// The value `preview` is handed back if the picker is cancelled, undoing
-    /// whatever the walk through the list applied.
+    /// Handed to `preview` if the picker is cancelled.
     preview_restore: String,
 }
 
@@ -53,9 +49,8 @@ impl PickerState {
         state
     }
 
-    /// Preview the highlighted item with `apply` as the cursor moves, starting
-    /// the highlight on `current` and putting `current` back if the picker is
-    /// cancelled.
+    /// The highlight starts on `current`, and `current` is applied again if
+    /// the picker is cancelled.
     #[must_use]
     pub fn with_preview(mut self, current: &str, apply: fn(&str) -> bool) -> Self {
         if let Some(idx) = self.items.iter().position(|item| item == current) {
@@ -76,8 +71,6 @@ impl PickerState {
         let action = self.dispatch_key(key);
         if let Some(apply) = self.preview {
             match action {
-                // Whatever the key did, the highlight may have moved: show
-                // wherever it landed.
                 PickerAction::Continue => {
                     if let Some(idx) = self.current_item_idx() {
                         apply(&self.items[idx]);
@@ -86,7 +79,6 @@ impl PickerState {
                 PickerAction::Cancel => {
                     apply(&self.preview_restore);
                 }
-                // The pick stands; the caller applies it for real.
                 PickerAction::Picked(_) => {}
             }
         }
@@ -94,7 +86,7 @@ impl PickerState {
     }
 
     fn dispatch_key(&mut self, key: &KeyEvent) -> PickerAction {
-        // Use nav variants (no j/k) since typing is active in picker
+        // Nav variants only: j and k are typing here.
         if keys::is_nav_up(key) {
             self.move_up();
             return PickerAction::Continue;
@@ -125,7 +117,6 @@ impl PickerState {
         PickerAction::Continue
     }
 
-    /// Toggle a label under GitLab's one-label-per-scope rule.
     fn toggle_label(&mut self, idx: usize) {
         label::toggle(&self.items, &mut self.selected, idx);
     }
@@ -212,7 +203,6 @@ pub fn render(
 
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).split(popup);
 
-    // Search input
     let search_block = styles::overlay_block(&state.title);
     let search_text = if state.query.is_empty() {
         Span::styled(
@@ -225,7 +215,6 @@ pub fn render(
     let search = Paragraph::new(Line::from(search_text)).block(search_block);
     frame.render_widget(search, chunks[0]);
 
-    // List
     let items: Vec<ListItem> = state
         .filtered
         .iter()
@@ -239,7 +228,6 @@ pub fn render(
                 };
                 spans.push(Span::styled(format!("{icon} "), style));
             }
-            // Render labels with scoped styling in the Labels picker
             if state.title == "Labels" {
                 let color = label_colors.get(&state.items[idx]).map(String::as_str);
                 spans.extend(styles::label_spans(&state.items[idx], color));
@@ -256,7 +244,6 @@ pub fn render(
                 ));
             }
             let mut lines = vec![Line::from(spans)];
-            // Show subtitle as a second line if available
             if let Some(sub) = state.subtitles.get(idx)
                 && !sub.is_empty()
             {
@@ -305,8 +292,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// What the preview last applied, so a test can watch it without touching
-    /// the real palette.
+    /// Lets a test watch the preview without touching the real palette.
     static PREVIEWED: AtomicUsize = AtomicUsize::new(0);
 
     fn record(value: &str) -> bool {
@@ -323,13 +309,11 @@ mod tests {
         PickerState::new("Pick", items, false).with_preview("bb", record)
     }
 
-    /// One test rather than two: the tests in a binary run in parallel and
-    /// `PREVIEWED` is one static, so splitting the confirm case out would have
-    /// the two races each other's writes.
+    /// One test rather than two: `PREVIEWED` is a single static and the tests
+    /// in a binary run in parallel.
     #[test]
     fn a_preview_follows_the_cursor_and_only_a_cancel_undoes_it() {
         let mut state = picker();
-        // The highlight starts on the current value, not at the top.
         assert_eq!(state.current_item_idx(), Some(1));
 
         assert!(matches!(
@@ -344,7 +328,6 @@ mod tests {
         ));
         assert_eq!(PREVIEWED.load(Ordering::Relaxed), 2, "back on 'bb'");
 
-        // Typing refilters and re-homes the highlight, which previews too.
         state.handle_key(&key(KeyCode::Char('a')));
         assert_eq!(
             PREVIEWED.load(Ordering::Relaxed),
@@ -352,14 +335,12 @@ mod tests {
             "'a' is the only match"
         );
 
-        // Escaping puts back whatever was in effect when the picker opened.
         assert!(matches!(
             state.handle_key(&key(KeyCode::Esc)),
             PickerAction::Cancel
         ));
         assert_eq!(PREVIEWED.load(Ordering::Relaxed), 2, "restored to 'bb'");
 
-        // A confirmed pick is left standing for the caller to apply for real.
         let mut state = picker();
         state.handle_key(&key(KeyCode::Down));
         match state.handle_key(&key(KeyCode::Enter)) {

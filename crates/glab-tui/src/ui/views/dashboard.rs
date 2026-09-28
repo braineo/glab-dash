@@ -19,8 +19,6 @@ use glab_core::sort::label_order::LabelOrders;
 
 use std::collections::HashMap;
 
-// ── Iteration Health ──
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HealthTab {
     #[default]
@@ -61,8 +59,8 @@ pub enum BurnRate {
 use crate::binding_group;
 
 binding_group! {
-    /// The health/board focus toggle and column motion.  Listed ahead of the
-    /// filter group so the board's `Tab` wins over the filter bar's.
+    /// Ahead of the filter group, so the board's `Tab` wins over the filter
+    /// bar's.
     pub BOARD_NAV_GROUP: "Board Navigation" {
         (key Tab) => ToggleDashboardFocus | "Tab" "Toggle health/board focus",
         ('[') => ColumnLeft | "[/]" "Switch column/tab",
@@ -74,28 +72,23 @@ binding_group! {
 
 #[derive(Default)]
 pub struct IterationHealth {
-    // Progress
     pub total_issues: usize,
     pub done_issues: usize,
     pub days_elapsed: i64,
     pub days_remaining: i64,
     pub days_total: i64,
     pub burn_rate: BurnRate,
-    // Focusable lists (indices into App::issues for unplanned_work/at_risk,
-    // into App::shadow_work_cache for shadow_work)
+    // Indices into `App::data.issues`, or into `shadow_work_cache` for
+    // `shadow_work`.
     pub unplanned_work: ItemList<Issue>,
     pub shadow_work: ItemList<Issue>,
     pub at_risk: ItemList<Issue>,
-    // Loading states (derived from fetch state, not stored separately)
     pub unplanned_work_loading: bool,
-    // Tab navigation
     pub active_tab: HealthTab,
 }
 
 impl IterationHealth {
-    /// Health panel handles list nav in the active tab.
     pub fn handle_key(&mut self, action: KeyAction, fx: &mut Effects) -> EventResult {
-        // Active tab's list handles motion
         if let Some(moved) = self.active_list_mut().nav(action) {
             if moved {
                 fx.dirty.selection = true;
@@ -130,9 +123,7 @@ impl IterationHealth {
         }
     }
 
-    /// Resolve the selected issue from the active health tab.
-    /// `issues` is the main issue list (for unplanned_work/at_risk),
-    /// `shadow_work_cache` is the separate shadow work source.
+    /// The shadow work tab indexes `shadow_work_cache`, the rest `issues`.
     pub fn selected_issue<'a>(
         &self,
         issues: &'a [Issue],
@@ -146,15 +137,11 @@ impl IterationHealth {
     }
 }
 
-// ── Iteration Board ──
-
 pub struct StatusColumn {
-    /// Which statuses this column gathers, and the heading it shows.
     pub column: KanbanColumn,
     pub list: ItemList<Issue>,
 }
 
-/// Max visible columns in the sliding window.
 const DEFAULT_VISIBLE_COLUMNS: usize = 3;
 
 #[derive(Default)]
@@ -162,15 +149,11 @@ pub struct IterationBoardState {
     pub columns: Vec<StatusColumn>,
     pub focused_column: usize,
     pub filter: UserFilter,
-    /// When true, `[`/`]` and `j`/`k` navigate the health panel instead of the board.
+    /// `[`, `]`, `j` and `k` steer the health panel rather than the board.
     pub health_focused: bool,
 }
 
 impl IterationBoardState {
-    // ── Key handling ────────────────────────────────────────────────
-
-    /// Dashboard key handler. Delegates to focused child (health or column),
-    /// then handles board-level keys (column nav, tab toggle, filter, search).
     pub fn handle_key(
         &mut self,
         key: &KeyEvent,
@@ -178,7 +161,6 @@ impl IterationBoardState {
         mut health: Option<&mut IterationHealth>,
         fx: &mut Effects,
     ) -> EventResult {
-        // Filter bar
         if self.filter.bar_focused {
             match self.filter.handle_bar_key(key) {
                 FilterBarAction::Deleted => {
@@ -190,7 +172,6 @@ impl IterationBoardState {
             return EventResult::Consumed;
         }
 
-        // Fuzzy search
         if self.filter.is_searching() {
             if self.filter.handle_fuzzy_input(key) == Some(true) {
                 fx.dirty.view_state = true;
@@ -203,7 +184,6 @@ impl IterationBoardState {
             return EventResult::Bubble;
         };
 
-        // 1. Focused child: health panel or board column
         let child = if self.health_focused {
             health
                 .as_mut()
@@ -226,7 +206,6 @@ impl IterationBoardState {
             return child;
         }
 
-        // 2. The board's own: focus toggle, column motion, start search.
         match action {
             KeyAction::ToggleDashboardFocus => self.health_focused = !self.health_focused,
             KeyAction::ColumnLeft => {
@@ -252,10 +231,7 @@ impl IterationBoardState {
         EventResult::Consumed
     }
 
-    // ── Column management ───────────────────────────────────────────
-
-    /// Build columns from the configured ones if any are declared, otherwise
-    /// one column per status the project defines.
+    /// Falls back to one column per status when none are configured.
     pub fn build_columns(&mut self, statuses: &[WorkItemStatus], configured: &[KanbanColumn]) {
         let columns = if configured.is_empty() {
             KanbanColumn::from_statuses(statuses)
@@ -274,20 +250,18 @@ impl IterationBoardState {
         }
     }
 
-    /// Compute the window start so `focused_column` is visible in the window.
     fn window_start(&self, visible: usize) -> usize {
         let total = self.columns.len();
         if total <= visible {
             return 0;
         }
-        // Keep focused column within the visible window
-        // Try to center the focused column when possible
         let half = visible / 2;
         let start = self.focused_column.saturating_sub(half);
         start.min(total - visible)
     }
 
-    /// Partition current-iteration issues into status columns, apply shared fuzzy/sort.
+    /// Current iteration only; the shared fuzzy search and sort run per
+    /// column afterwards.
     pub fn partition_issues(
         &mut self,
         issues: &[Issue],
@@ -307,14 +281,13 @@ impl IterationBoardState {
         let current_id = current_iteration.map(|i| i.id.as_str());
 
         for (i, item) in issues.iter().enumerate() {
-            // Prefilter: only current iteration
             let iter_id = item.iteration.as_ref().map(|it| it.id.as_str());
             if iter_id != current_id || current_id.is_none() {
                 continue;
             }
 
-            // An item whose status no column claims is left off the board
-            // rather than filed under whichever column happens to be first.
+            // Left off the board entirely, rather than filed under whichever
+            // column happens to be first.
             let Some(col_idx) = self
                 .columns
                 .iter()
@@ -326,7 +299,6 @@ impl IterationBoardState {
             self.columns[col_idx].list.indices.push(i);
         }
 
-        // Apply shared filter conditions, fuzzy filter, and sort to each column
         for (col, anchor) in self.columns.iter_mut().zip(&anchors) {
             col.list.indices.retain(|&i| {
                 let item = &issues[i];
@@ -361,8 +333,6 @@ impl IterationBoardState {
     }
 }
 
-// ── Rendering ──
-
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     frame: &mut Frame,
@@ -386,7 +356,6 @@ pub fn render(
     ])
     .split(area);
 
-    // Header
     let team_name = active_team
         .and_then(|idx| config.teams.get(idx))
         .map_or("all", |t| t.name.as_str());
@@ -423,7 +392,6 @@ pub fn render(
     );
     frame.render_widget(header, chunks[0]);
 
-    // Summary (left) + Health panel (right)
     let content_chunks =
         Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(chunks[1]);
@@ -439,7 +407,6 @@ pub fn render(
         unplanned_work_cache,
     );
 
-    // Iteration board (bottom half)
     render_iteration_board(
         frame,
         chunks[2],
@@ -479,7 +446,6 @@ fn render_iteration_board(
         },
     );
 
-    // Search indicator in title
     let title_line = if board.filter.is_searching() {
         Line::from(vec![
             Span::styled(
@@ -537,11 +503,9 @@ fn render_iteration_board(
         return;
     }
 
-    // Filter + sort bar
     let has_filter_bar = !board.filter.conditions.is_empty() || !board.filter.sort_specs.is_empty();
     let filter_bar_height = u16::from(has_filter_bar);
 
-    // Reserve 1 line at bottom for column indicator, optional filter bar at top
     let board_parts = Layout::vertical([
         Constraint::Length(filter_bar_height),
         Constraint::Min(1),
@@ -562,7 +526,6 @@ fn render_iteration_board(
     let board_area = board_parts[1];
     let indicator_area = board_parts[2];
 
-    // Sliding window: show up to DEFAULT_VISIBLE_COLUMNS columns
     let visible = DEFAULT_VISIBLE_COLUMNS.min(board.columns.len());
     let win_start = board.window_start(visible);
     let win_end = (win_start + visible).min(board.columns.len());
@@ -578,7 +541,6 @@ fn render_iteration_board(
         render_board_column(frame, *col_rect, board, col_idx, issues, is_focused);
     }
 
-    // Bottom indicator: show all columns with counts
     render_column_indicator(frame, indicator_area, board, win_start, win_end);
 }
 
@@ -628,7 +590,6 @@ fn render_board_column(
         return;
     }
 
-    // Issue rows
     let rows: Vec<Row> = col
         .list
         .indices
@@ -669,7 +630,6 @@ fn render_column_indicator(
 ) {
     let mut spans: Vec<Span> = Vec::new();
 
-    // Left arrow if scrolled
     if win_start > 0 {
         spans.push(Span::styled(
             "\u{25c0} ",
@@ -704,7 +664,6 @@ fn render_column_indicator(
         spans.push(Span::styled(label, style));
     }
 
-    // Right arrow if more columns
     if win_end < board.columns.len() {
         spans.push(Span::styled(
             " \u{25b6}",
@@ -714,8 +673,6 @@ fn render_column_indicator(
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
-
-// ── Iteration Health Rendering ──
 
 #[allow(clippy::too_many_arguments)]
 fn render_iteration_health(
@@ -804,7 +761,6 @@ fn render_progress_line(
         },
     );
 
-    // Progress bar: manual █░ rendering
     let pct = (health.done_issues * 100)
         .checked_div(health.total_issues)
         .unwrap_or(0);
@@ -814,7 +770,6 @@ fn render_progress_line(
     let bar_filled: String = "\u{2588}".repeat(filled);
     let bar_empty: String = "\u{2591}".repeat(empty);
 
-    // Burn rate indicator
     let (burn_label, burn_color) = match health.burn_rate {
         BurnRate::Ahead => ("\u{25b2} Ahead", styles::green()),
         BurnRate::OnTrack => ("\u{25cf} On Track", styles::green()),
@@ -832,7 +787,6 @@ fn render_progress_line(
         Span::styled(" \u{2502} ", Style::default().fg(styles::border())),
     ];
 
-    // Day X/Y (N days left)
     if health.days_total > 0 {
         spans.push(Span::styled(
             format!(
@@ -847,7 +801,6 @@ fn render_progress_line(
         ));
     }
 
-    // Progress bar
     spans.push(Span::styled(
         bar_filled,
         Style::default().fg(styles::green()),
@@ -865,7 +818,6 @@ fn render_progress_line(
         Style::default().fg(styles::border()),
     ));
 
-    // Burn rate
     spans.push(Span::styled(burn_label, Style::default().fg(burn_color)));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -955,7 +907,6 @@ fn render_health_list(
         return;
     }
 
-    // Pick the right source slice for this tab
     let source: &[Issue] = match tab {
         HealthTab::UnplannedWork | HealthTab::AtRisk => issues,
         HealthTab::ShadowWork => shadow_work_cache,
@@ -1023,8 +974,6 @@ fn render_health_list(
     frame.render_stateful_widget(table, area, &mut health.active_list_mut().table_state);
 }
 
-// ── Summary Panel (left side) ──
-
 fn render_quick_stats(
     frame: &mut Frame,
     area: Rect,
@@ -1041,7 +990,6 @@ fn render_quick_stats(
         return;
     }
 
-    // Split: stats summary (3 lines) + member table (rest)
     let parts = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).split(inner);
 
     render_stats_summary(frame, parts[0], config, issues, mrs);
@@ -1215,10 +1163,7 @@ fn render_member_table(
     frame.render_widget(table, area);
 }
 
-/// Compute iteration health metrics from available data.
-///
-/// This is a pure function that derives all health metrics from the provided data.
-/// Called from `App::compute_iteration_health()`.
+/// Pure: everything it reports comes from the arguments.
 pub fn compute_health(
     issues: &[Issue],
     current_iteration: &Iteration,
@@ -1229,7 +1174,6 @@ pub fn compute_health(
 ) -> IterationHealth {
     let current_id = &current_iteration.id;
 
-    // Parse iteration dates
     let start_date = current_iteration
         .start_date
         .as_deref()
@@ -1250,7 +1194,6 @@ pub fn compute_health(
         _ => (0, 0, 0),
     };
 
-    // Collect iteration issues
     let iter_issues: Vec<&Issue> = issues
         .iter()
         .filter(|i| i.in_iteration(current_id))
@@ -1266,7 +1209,6 @@ pub fn compute_health(
         let expected_pct = days_elapsed as f64 / days_total as f64;
         let actual_pct = done_issues as f64 / total_issues as f64;
         if expected_pct < 0.05 {
-            // Too early to judge
             BurnRate::Unknown
         } else {
             let ratio = actual_pct / expected_pct;
@@ -1282,7 +1224,6 @@ pub fn compute_health(
         BurnRate::Unknown
     };
 
-    // Unplanned work: issues added 3+ days after iteration start (indices into `issues`)
     let unplanned_threshold = start_date
         .map(|s| s.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc() + chrono::Duration::days(3));
     let mut unplanned_work = ItemList::<Issue>::default();
@@ -1307,10 +1248,9 @@ pub fn compute_health(
     });
     unplanned_work.clamp_selection();
 
-    // Shadow work: closed issues updated during the iteration but not in it
-    // (indices into `shadow_work_cache`).  The DB already filters by closed_at
-    // range and excludes the current iteration; what is left is dropping the
-    // canceled ones — a duplicate or a won't-do is not work that got done.
+    // The DB already filtered by closed_at range and excluded the current
+    // iteration; what is left is dropping the canceled ones, which are not
+    // work that got done.
     let mut shadow_work = ItemList::<Issue>::default();
     for (i, ti) in shadow_work_cache.iter().enumerate() {
         if !ti.is_canceled() {
@@ -1326,8 +1266,6 @@ pub fn compute_health(
     });
     shadow_work.clamp_selection();
 
-    // At risk: unfinished iteration issues not updated in 5+ days (indices into
-    // `issues`).
     let stale_threshold = Utc::now() - chrono::Duration::days(5);
     let mut at_risk = ItemList::<Issue>::default();
     for (i, item) in issues.iter().enumerate() {
@@ -1346,7 +1284,6 @@ pub fn compute_health(
     });
     at_risk.clamp_selection();
 
-    // Preserve tab + selection state from previous health
     let active_tab = prev_health.map_or(HealthTab::default(), |h| {
         unplanned_work.table_state = h.unplanned_work.table_state;
         shadow_work.table_state = h.shadow_work.table_state;
@@ -1423,7 +1360,6 @@ mod tests {
             make_issue(2, Some("gid://gitlab/Iteration/1")),
         ];
 
-        // Must not panic even though columns is empty
         board.partition_issues(&issues, Some(&iter), &LabelOrders::default(), "");
         assert!(board.columns.is_empty());
     }

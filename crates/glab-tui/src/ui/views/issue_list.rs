@@ -21,20 +21,14 @@ pub struct IssueListState {
 }
 
 impl IssueListState {
-    // ── Key handling ────────────────────────────────────────────────
-
-    /// Handle keys for the issue list view.
-    ///
-    /// Delegates to focused children first (filter bar → fuzzy → list nav),
-    /// then handles view-level keys (start search).  Bubbles everything
-    /// else (item actions, global nav) to the parent.
+    /// Focused children first — filter bar, fuzzy search, list navigation —
+    /// then the view's own keys.  Everything else bubbles.
     pub fn handle_key(
         &mut self,
         key: &KeyEvent,
         action: Option<KeyAction>,
         fx: &mut Effects,
     ) -> EventResult {
-        // 1. Filter bar owns its keys when focused
         if self.filter.bar_focused {
             match self.filter.handle_bar_key(key) {
                 FilterBarAction::Deleted => {
@@ -46,7 +40,6 @@ impl IssueListState {
             return EventResult::Consumed;
         }
 
-        // 2. Fuzzy search owns its keys when active
         if self.filter.is_searching() {
             let is_exit = matches!(key.code, KeyCode::Enter | KeyCode::Esc);
             if self.filter.handle_fuzzy_input(key) == Some(true) {
@@ -59,8 +52,6 @@ impl IssueListState {
             return EventResult::Consumed;
         }
 
-        // 3. Motion and starting a search are the list's own; everything else
-        // (item actions, filtering, global) bubbles.
         let Some(action) = action else {
             return EventResult::Bubble;
         };
@@ -79,8 +70,6 @@ impl IssueListState {
         }
         EventResult::Bubble
     }
-
-    // ── Filtering ───────────────────────────────────────────────────
 
     pub fn apply_filters(&mut self, issues: &[Issue], me: &str, label_orders: &LabelOrders) {
         let anchor = self.list.anchor(issues);
@@ -134,7 +123,6 @@ pub fn render(
     ])
     .split(area);
 
-    // Filter + sort bar
     components::filter_bar::render(
         frame,
         chunks[0],
@@ -144,7 +132,6 @@ pub fn render(
         state.filter.bar_selected,
     );
 
-    // Build table rows
     let now = chrono::Utc::now();
     let selected_idx = state.list.table_state.selected();
     let rows: Vec<Row> = state
@@ -169,7 +156,6 @@ pub fn render(
             let labels = styles::labels_compact(&item.labels, 30, label_colors);
             let age = list_model::format_age(&item.updated_at, now);
 
-            // Show custom status if available, otherwise fall back to state
             let (state_icon, state_text) = if let Some(status) = item.status_name() {
                 (styles::status_icon(status), status.to_string())
             } else {
@@ -252,7 +238,6 @@ pub fn render(
 
     frame.render_stateful_widget(table, chunks[1], &mut state.list.table_state);
 
-    // Preview pane: show full labels of selected item
     if let Some(item) = state.list.selected_item(issues) {
         let mut spans: Vec<Span> = vec![Span::styled(" Labels: ", styles::help_desc_style())];
         if item.labels.is_empty() {

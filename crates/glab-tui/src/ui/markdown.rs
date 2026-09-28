@@ -5,9 +5,7 @@ use ratatui::text::{Line, Span};
 
 use crate::ui::{highlight, styles, wrap};
 
-/// Render a markdown string into styled ratatui Lines, each one screen row wide
-/// at most, wrapped to `width` columns behind `indent`.  A `width` of zero means
-/// the target width is not known yet, so nothing wraps.
+/// One [`Line`] per screen row.  A `width` of zero wraps nothing.
 pub fn render(text: &str, indent: &str, width: usize) -> Vec<Line<'static>> {
     let arena = Arena::new();
     let opts = options();
@@ -24,9 +22,8 @@ fn options() -> Options<'static> {
     opts.extension.autolink = true;
     opts.extension.tasklist = true;
     opts.extension.footnotes = true;
-    // GitLab renders these too, and without them their source shows through:
-    // a `[!note]` marker, a literal `:tada:`, `$x$` as text, a `>>>` quote
-    // flattened into a paragraph, and front matter parsed as a heading.
+    // GitLab renders these too; without them a `[!note]` marker, a literal
+    // `:tada:`, `$x$`, a `>>>` quote and front matter all show as source.
     opts.extension.alerts = true;
     opts.extension.multiline_block_quotes = true;
     opts.extension.shortcodes = true;
@@ -102,8 +99,8 @@ fn render_node<'a>(
             ));
             lines.push(Line::from(""));
         }
-        // Code keeps its source rows: reflowing it would move the line breaks
-        // its meaning rests on, so a row wider than the pane is left to clip.
+        // Reflowing code would move the line breaks its meaning rests on, so
+        // a row wider than the pane is clipped instead.
         NodeValue::CodeBlock(cb) => {
             let code_bg = styles::code_bg();
             if cb.info.is_empty() {
@@ -122,8 +119,6 @@ fn render_node<'a>(
             }
             let body = cb.literal.trim_end();
             let rail = Span::styled("│ ", Style::default().fg(styles::border()));
-            // A fence naming a language syntect knows is colored token by
-            // token; anything else stays one flat run, as it always was.
             match highlight::code_lines(&cb.info, body, styles::theme_name(), code_bg) {
                 Some(rows) => {
                     for row in rows {
@@ -162,13 +157,9 @@ fn render_node<'a>(
             }
             lines.push(Line::from(""));
         }
-        // The quote bar leads every row, wrapped ones included, so the body is
-        // rendered into the room it leaves and the bar is laid over each row.
         NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(..) => {
             render_quote(node, lines, indent, ctx, width, None);
         }
-        // An alert is a quote that names itself, so it is drawn as one behind
-        // its title.
         NodeValue::Alert(alert) => {
             let title = alert
                 .title
@@ -210,9 +201,7 @@ fn render_node<'a>(
     }
 }
 
-/// Draw `node`'s children behind the bar that marks a quote, wrapped into the
-/// room the bar leaves so a wrapped row keeps it.  `title` heads the quote when
-/// it has one, which is what separates an alert from a plain quote.
+/// `title` heads the quote, which is what makes it an alert.
 fn render_quote<'a>(
     node: &'a AstNode<'a>,
     lines: &mut Vec<Line<'static>>,
@@ -221,8 +210,7 @@ fn render_quote<'a>(
     width: usize,
     title: Option<String>,
 ) {
-    // Dashed, so a quote inside a comment body cannot be mistaken for
-    // the solid rail the conversation draws down a thread.
+    // Dashed, so it is not mistaken for the conversation's solid thread rail.
     let bar = "\u{2506} ";
     let inner = width
         .saturating_sub(wrap::width(indent))
@@ -271,7 +259,6 @@ fn render_list_item<'a>(
         ListType::Ordered => format!("  {num}. "),
     };
 
-    // Check if the first child is a TaskItem
     let mut children = node.children().peekable();
     let (prefix, prefix_style) = if let Some(first) = children.peek() {
         if let NodeValue::TaskItem(task) = &first.data.borrow().value {
@@ -286,7 +273,6 @@ fn render_list_item<'a>(
             } else {
                 Style::default().fg(styles::text_dim())
             };
-            // Skip the TaskItem node itself
             let _ = children.next();
             (p, s)
         } else {
@@ -333,8 +319,7 @@ fn collect_inline<'a>(node: &'a AstNode<'a>, spans: &mut Vec<Span<'static>>, ctx
             c.code = true;
             spans.push(Span::styled(format!(" {} ", code.literal), c.style()));
         }
-        // Math is not typeset in a terminal, so its source is shown the way a
-        // code span is: as source, marked as source.
+        // Not typeset in a terminal, so it is shown as a code span is.
         NodeValue::Math(math) => {
             let mut c = ctx.clone();
             c.code = true;
@@ -453,8 +438,6 @@ fn render_table<'a>(
         rows.push(row);
     }
 
-    // Columns are sized and padded in display columns, so a cell that is not
-    // plain ASCII still lines its separator up with the rest.
     let col_count = rows.iter().map(Vec::len).max().unwrap_or(0);
     let mut widths = vec![0usize; col_count];
     for row in &rows {
@@ -465,9 +448,8 @@ fn render_table<'a>(
         }
     }
 
-    // A table wider than the pane is clipped at the edge, which drops whole
-    // columns with nothing to show they were there.  Shrink the widest column
-    // until the row fits instead, and truncate the cells that no longer do.
+    // Clipping at the pane edge would drop whole columns with nothing to show
+    // they were there.
     let budget = width
         .saturating_sub(wrap::width(indent) + 2)
         .saturating_sub(3 * col_count.saturating_sub(1));
@@ -516,7 +498,6 @@ fn render_table<'a>(
 mod tests {
     use super::render;
 
-    /// The plain text of each rendered row.
     fn rows(lines: &[ratatui::text::Line<'static>]) -> Vec<String> {
         lines
             .iter()
@@ -524,8 +505,6 @@ mod tests {
             .collect()
     }
 
-    /// A bullet's text holds the bullet's column when it wraps, rather than
-    /// falling back to the left edge.
     #[test]
     fn a_wrapped_bullet_holds_its_column() {
         let rendered = rows(&render(
@@ -537,8 +516,6 @@ mod tests {
         assert_eq!(rendered[1], "      enough that it has to wrap");
     }
 
-    /// Widths are display columns, so the separator of a table holding CJK text
-    /// lands in the same column on every row.
     #[test]
     fn a_table_aligns_columns_holding_wide_glyphs() {
         let md = "| team | note |\n|---|---|\n| 統合制御 | ok |\n| controls | ok |\n";
@@ -559,8 +536,6 @@ mod tests {
         );
     }
 
-    /// A table wider than the pane fits inside it, rather than running off the
-    /// edge and losing its last columns to the clip.
     #[test]
     fn a_wide_table_shrinks_to_the_pane() {
         let md = "| stage | job | why it failed |\n|---|---|---|\n\
@@ -576,8 +551,6 @@ mod tests {
         );
     }
 
-    /// GitLab renders alerts, `>>>` quotes, emoji shortcodes, math and front
-    /// matter, so their source must not show through here either.
     #[test]
     fn gitlab_flavored_syntax_does_not_show_its_source() {
         let cases = [
@@ -598,7 +571,6 @@ mod tests {
         }
     }
 
-    /// A `---` that is not front matter is still a rule.
     #[test]
     fn a_rule_is_not_mistaken_for_front_matter() {
         let rendered = rows(&render("before\n\n---\n\nafter", "", 20));
@@ -608,8 +580,6 @@ mod tests {
         );
     }
 
-    /// A zero width means the caller does not know the pane yet, so nothing
-    /// wraps and the row stays whole.
     #[test]
     fn a_zero_width_leaves_a_paragraph_unwrapped() {
         let body = "a fairly long single paragraph that would certainly wrap somewhere";

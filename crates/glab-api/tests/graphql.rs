@@ -1,14 +1,8 @@
-//! Transport-level behaviour every GraphQL caller depends on: following a
-//! connection's cursor, and refusing a response GitLab answered 200 with but
-//! filled with errors.
-
 use glab_api::{GitLabClient, IssueState, MrState};
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
-/// Answers each successive POST with the next scripted body, so one mock can
-/// script a paginated walk.
 struct Script(std::sync::Mutex<std::vec::IntoIter<Value>>);
 
 impl Script {
@@ -29,7 +23,6 @@ impl Respond for Script {
     }
 }
 
-/// A work item node as `WorkItemFields` selects it, with no widgets set.
 fn work_item(iid: &str) -> Value {
     json!({
         "id": format!("gid://gitlab/WorkItem/{iid}"),
@@ -83,7 +76,6 @@ async fn follows_the_cursor_to_the_last_page() {
         issues.iter().map(|i| i.iid.as_str()).collect::<Vec<_>>(),
         ["1", "2", "3"]
     );
-    // Two pages, one request each — the walk stops when hasNextPage is false.
     assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
 
@@ -108,7 +100,6 @@ async fn resumes_from_the_cursor_the_previous_page_returned() {
 
 #[tokio::test]
 async fn stops_when_the_connection_is_absent() {
-    // An unknown project answers `project: null` rather than an error.
     let (_server, client) = mock_graphql(vec![json!({ "data": { "project": null } })]).await;
 
     let mrs = client
@@ -140,7 +131,6 @@ async fn deduplicates_across_namespaces() {
 
 #[tokio::test]
 async fn top_level_errors_fail_the_call() {
-    // GitLab reports an unauthorized or malformed query with a 200 status.
     let (_server, client) = mock_graphql(vec![json!({
         "data": null,
         "errors": [{ "message": "Field 'weight' doesn't exist" }],
@@ -160,7 +150,6 @@ async fn top_level_errors_fail_the_call() {
 
 #[tokio::test]
 async fn mutation_errors_fail_the_call() {
-    // A rejected write also answers 200, with its reason in the payload.
     let (_server, client) = mock_graphql(vec![json!({
         "data": { "workItemUpdate": {
             "errors": ["Status is not available", "Iteration is not in the cadence"],
@@ -182,8 +171,6 @@ async fn mutation_errors_fail_the_call() {
 
 #[tokio::test]
 async fn retries_a_page_the_transport_failed() {
-    // A blip mid-walk must not discard the pages already collected — or, with
-    // the fan-out, cancel every sibling walk.
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/graphql"))

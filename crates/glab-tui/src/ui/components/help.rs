@@ -13,8 +13,8 @@ pub fn render(frame: &mut Frame, area: Rect, chain: &[&'static BindingGroup]) {
     let section_style = styles::section_header_style().bg(styles::overlay());
     let mut lines = vec![Line::from("")];
 
-    // Only what can actually fire: `active_bindings` drops any key an earlier
-    // group already claimed, so a shadowed row is never advertised.
+    // `active_bindings` drops any key an earlier group claimed, so a shadowed
+    // row is never advertised.
     for (group, bindings) in keybindings::active_bindings(chain) {
         let shown: Vec<_> = bindings
             .into_iter()

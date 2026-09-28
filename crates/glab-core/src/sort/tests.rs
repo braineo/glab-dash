@@ -5,7 +5,6 @@ use crate::domain::*;
 use super::label_order::{LabelOrder, LabelOrders};
 use super::spec::*;
 
-/// The declared order of one scope's values.
 fn label_orders(scope: &str, values: &[&str]) -> LabelOrders {
     [LabelOrder {
         scope: scope.to_string(),

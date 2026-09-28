@@ -1,15 +1,9 @@
-//! Soft-wrapping styled text to a column width.
+//! One [`Line`] per screen row, so a caller can address rows by index and keep
+//! chrome on every one.  [`Paragraph`](ratatui::widgets::Paragraph)'s own
+//! wrapping restarts a wrapped row at column zero, losing the indent leading
+//! it.
 //!
-//! [`Paragraph`](ratatui::widgets::Paragraph)'s own wrapping cannot serve a
-//! view whose rows carry chrome.  It reflows a logical line into however many
-//! screen rows it needs and knows nothing of the indent or gutter leading that
-//! line, so every row after the first starts back at column zero and a wrapped
-//! reply becomes indistinguishable from a root comment.  Wrapping here instead
-//! makes one [`Line`] mean one screen row, which keeps the chrome on every row
-//! and lets a caller address rows by index.
-//!
-//! Widths are display columns, measured over grapheme clusters, so text that is
-//! not plain ASCII lines up: a CJK glyph claims the two columns it draws in.
+//! Widths are display columns: a CJK glyph claims the two columns it draws in.
 
 use std::mem;
 
@@ -18,18 +12,13 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// The display width of `s` in terminal columns.
-///
-/// A multi-codepoint emoji is measured as the sum of its parts, which overstates
-/// the one or two columns a terminal that ligates it actually draws; terminals
-/// disagree here and no measurement satisfies all of them.
+/// A multi-codepoint emoji measures as the sum of its parts, which overstates
+/// a terminal that ligates it.
 pub fn width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
 
-/// Cut `s` down to at most `width` display columns, marking a cut with an
-/// ellipsis so a shortened cell reads as shortened rather than as the whole of
-/// it.  A `width` of zero leaves nothing to draw in.
+/// A cut is marked with an ellipsis, which the `width` has to fit.
 pub fn truncate(s: &str, width: usize) -> String {
     if self::width(s) <= width {
         return s.to_string();
@@ -51,7 +40,6 @@ pub fn truncate(s: &str, width: usize) -> String {
     out
 }
 
-/// One grapheme cluster, the style it carries, and the columns it draws in.
 struct Cell {
     text: String,
     style: Style,
@@ -64,14 +52,12 @@ impl Cell {
     }
 }
 
-/// Break `body` into rows no wider than `width` columns, preferring a break at
-/// whitespace and hard-splitting a word too wide to fit a row of its own.  Each
-/// row keeps the styles of the spans it came from.  Whitespace a break lands on
-/// is dropped, so no row starts or ends on it; leading whitespace on the first
-/// row survives, being content rather than a break.
+/// Breaks at whitespace, hard-splitting a word too wide for a row of its own.
+/// Whitespace a break lands on is dropped; leading whitespace on the first row
+/// survives.
 ///
 /// A `width` of zero means the target width is not known yet, so `body` comes
-/// back as a single unwrapped row.
+/// back as one unwrapped row.
 pub fn wrap_spans(body: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>>> {
     let cells = flatten(body);
     if width == 0 || cells.iter().map(|c| c.width).sum::<usize>() <= width {
@@ -81,8 +67,7 @@ pub fn wrap_spans(body: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>
     let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
     let mut row: Vec<Cell> = Vec::new();
     let mut row_width = 0;
-    // Whitespace between two words, held back until a word follows it: if the
-    // row breaks here instead, the break consumes it.
+    // Held back until a word follows: a break here consumes it instead.
     let mut gap: Vec<Cell> = Vec::new();
     let mut gap_width = 0;
 
@@ -94,15 +79,14 @@ pub fn wrap_spans(body: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>
             continue;
         }
 
-        // The word does not fit after the gap, so the row ends before both.
         if !row.is_empty() && row_width + gap_width + run_width > width {
             rows.push(regroup(mem::take(&mut row)));
             row_width = 0;
             gap.clear();
             gap_width = 0;
         }
-        // A row opened by a break drops the gap; the document's own first row
-        // keeps it, where it is the text's own leading whitespace.
+        // The first row of all keeps it: there it is the text's own leading
+        // whitespace, not a break.
         if row.is_empty() && !rows.is_empty() {
             gap.clear();
             gap_width = 0;
@@ -110,7 +94,6 @@ pub fn wrap_spans(body: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>
         row.append(&mut gap);
         row_width += mem::take(&mut gap_width);
 
-        // Still wider than a whole row, so the word itself has to be split.
         for cell in run {
             if !row.is_empty() && row_width + cell.width > width {
                 rows.push(regroup(mem::take(&mut row)));
@@ -124,10 +107,8 @@ pub fn wrap_spans(body: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>
     rows
 }
 
-/// Wrap `body` to `width` columns behind `prefix`, which leads the first row
-/// while every row the body wraps onto is led by blanks as wide as it.  This is
-/// the shape of a bullet, a heading marker or an indent: chrome that introduces
-/// a block once and holds its column for the rest.
+/// `prefix` leads the first row; the rows it wraps onto are led by blanks as
+/// wide as it.  The shape of a bullet, a heading marker or an indent.
 pub fn hanging(
     prefix: &[Span<'static>],
     body: &[Span<'static>],
@@ -150,8 +131,7 @@ pub fn hanging(
         .collect()
 }
 
-/// Explode the spans into one [`Cell`] per grapheme cluster, so a break can
-/// land anywhere and [`regroup`] can put the spans back together after.
+/// One [`Cell`] per grapheme cluster, so a break can land anywhere.
 fn flatten(spans: &[Span<'static>]) -> Vec<Cell> {
     spans
         .iter()
@@ -165,8 +145,7 @@ fn flatten(spans: &[Span<'static>]) -> Vec<Cell> {
         .collect()
 }
 
-/// Group cells into alternating runs of whitespace and non-whitespace, the
-/// words and gaps wrapping decides between.
+/// Alternating runs of whitespace and non-whitespace.
 fn runs(cells: Vec<Cell>) -> Vec<Vec<Cell>> {
     let mut out: Vec<Vec<Cell>> = Vec::new();
     for cell in cells {
@@ -178,7 +157,6 @@ fn runs(cells: Vec<Cell>) -> Vec<Vec<Cell>> {
     out
 }
 
-/// Rebuild spans from cells, merging neighbors that share a style back into one.
 fn regroup(cells: Vec<Cell>) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     for cell in cells {
@@ -197,15 +175,12 @@ mod tests {
 
     use super::{hanging, wrap_spans};
 
-    /// The plain text of each wrapped row, so a test reads break points without
-    /// span noise.
     fn texts(rows: &[Vec<Span<'static>>]) -> Vec<String> {
         rows.iter()
             .map(|row| row.iter().map(|s| s.content.as_ref()).collect())
             .collect()
     }
 
-    /// The plain text of each line, for the prefixed forms.
     fn lines(rendered: &[Line<'static>]) -> Vec<String> {
         rendered
             .iter()
@@ -249,9 +224,6 @@ mod tests {
         );
     }
 
-    /// The whole point of measuring in columns: a run of CJK breaks at half as
-    /// many glyphs as an ASCII run of the same column width, because each glyph
-    /// draws in two columns.
     #[test]
     fn wide_glyphs_count_the_two_columns_they_draw_in() {
         assert_eq!(
@@ -287,8 +259,6 @@ mod tests {
         );
     }
 
-    /// The bug this module exists for: a wrapped row holds the chrome's column
-    /// instead of falling back to zero.
     #[test]
     fn a_hanging_prefix_holds_its_column_on_every_wrapped_row() {
         assert_eq!(

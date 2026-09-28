@@ -1,5 +1,3 @@
-//! The glab-dash binary: initialize logging, then run the requested command.
-
 mod debug;
 mod logging;
 mod onboarding;
@@ -22,7 +20,6 @@ struct Cli {
     command: Option<Command>,
 }
 
-/// What to run. With no subcommand, the dashboard opens.
 #[derive(Subcommand)]
 enum Command {
     /// Exercise the fetch paths without a terminal; results go to the log file.
@@ -38,8 +35,7 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Load the config (running onboarding first when there is none), open the
-/// cache, and hand a built [`App`] to the event loop.
+/// Runs onboarding first when there is no config.
 async fn run_dashboard() -> Result<()> {
     let config = if onboarding::needs_onboarding() {
         onboarding::run_onboarding().await?

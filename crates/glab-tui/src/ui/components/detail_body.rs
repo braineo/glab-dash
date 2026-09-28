@@ -1,10 +1,5 @@
-//! The body of a detail view: whatever its sections put in it, as one flat list
-//! of rows a single cursor walks.
-//!
-//! A visual row is the unit, so a body too tall for the pane scrolls and every
-//! row — wrapped tails included — records what it belongs to.  A view pushes its
-//! own sections in whatever order it reads best; what fills them is not this
-//! module's business.
+//! A *visual* row is the unit, so every row — wrapped tails included — records
+//! what it belongs to and a single cursor can walk the lot.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -15,27 +10,18 @@ use ratatui::widgets::Paragraph;
 use crate::keybindings::KeyAction;
 use crate::ui::{markdown, styles};
 
-/// The cursor's own column, marking the row every key acts on.
 const CURSOR_BAR: &str = "\u{258C}";
-/// The spine a section holds down the left of its rows.
 pub const RAIL: &str = "\u{258F}";
 /// Columns the chrome claims before a row's text: cursor, rail, gap.
 pub const LEAD: usize = 3;
-/// Rows a page key moves by.
 const PAGE: usize = 10;
 
-/// What a row belongs to, so the row under the cursor answers what a key acts
-/// on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Row {
-    /// A section rule or a spacer.
     Chrome,
-    /// A row of the item's own description.
     Description,
-    /// The row for the related item at this index into the view's related list.
     Related(usize),
-    /// A row of the thread at this index into `discussions`, belonging to its
-    /// `note`th comment.  Its `head` names the thread's first author.
+    /// `head` marks the row naming the thread's author.
     Thread {
         thread: usize,
         note: usize,
@@ -44,40 +30,31 @@ pub enum Row {
 }
 
 impl Row {
-    /// Chrome is stepped over, never landed on: no key acts on it.
     fn is_stop(self) -> bool {
         self != Row::Chrome
     }
 }
 
-/// The rows of one detail view, and where the reader is in them.
+/// Rebuilt on each draw.
 ///
-/// Rebuilt on each draw: tens of small bodies re-parse in well under a
-/// millisecond, and nothing can go stale.  ponytail: cache against a
-/// fingerprint if a very long conversation ever shows up in a profile.
+/// ponytail: cache against a fingerprint if a very long conversation ever shows
+/// up in a profile.
 #[derive(Default)]
 pub struct DetailBody {
-    /// Parallel to `lines`.  Key handling reads them, so they outlive the
-    /// frame that built them.
     rows: Vec<Row>,
-    /// Each row from the rail on; the cursor column is added while drawing.
+    /// From the rail on; the cursor column is added while drawing.
     lines: Vec<Line<'static>>,
     cursor: usize,
-    /// The first row drawn.
     offset: usize,
 }
 
 impl DetailBody {
-    // ── Building, once per draw ──────────────────────────────────────
-
     /// The cursor and offset survive a build: they are where the reader is.
     pub fn begin(&mut self) {
         self.rows.clear();
         self.lines.clear();
     }
 
-    /// A chip naming the section, an optional tally, and a rule to the pane
-    /// edge.
     pub fn section(&mut self, title: &str, tally: Option<String>, width: usize) {
         let mut spans = vec![
             Span::raw(" "),
@@ -114,7 +91,7 @@ impl DetailBody {
         }
     }
 
-    /// Nothing at all for an item with no description.
+    /// Pushes nothing at all for an item with no description.
     pub fn description(&mut self, description: Option<&str>, width: usize) {
         let Some(text) = description.map(str::trim).filter(|d| !d.is_empty()) else {
             return;
@@ -129,8 +106,6 @@ impl DetailBody {
             );
         }
     }
-
-    // ── Reading ──────────────────────────────────────────────────────
 
     /// [`Row::Chrome`] when the body is empty, which no key acts on either.
     pub fn cursor_row(&self) -> Row {
@@ -153,7 +128,6 @@ impl DetailBody {
         self.cursor = row;
     }
 
-    /// The plain text of every row, chrome included.
     #[cfg(test)]
     pub fn text(&self) -> Vec<String> {
         self.lines
@@ -161,8 +135,6 @@ impl DetailBody {
             .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect()
     }
-
-    // ── Navigating ───────────────────────────────────────────────────
 
     /// `true` when the key was one of these, so a caller can try its own.
     pub fn handle_key(&mut self, action: KeyAction) -> bool {
@@ -195,7 +167,7 @@ impl DetailBody {
         }
     }
 
-    /// `from` itself at the end.
+    /// Returns `from` itself at the end.
     fn step(&self, from: usize, down: bool) -> usize {
         self.next_stop(from, down).unwrap_or(from)
     }
@@ -208,8 +180,7 @@ impl DetailBody {
         }
     }
 
-    /// `target`, or the nearest row a key can act on — `dir` first, then back,
-    /// so a jump always lands somewhere addressable.
+    /// The nearest row a key can act on, searching `down` first then back.
     fn settle(&self, target: usize, down: bool) -> usize {
         if self.rows.get(target).is_some_and(|r| r.is_stop()) {
             return target;
@@ -219,7 +190,7 @@ impl DetailBody {
             .unwrap_or(target)
     }
 
-    /// Move `offset` no further than keeping the cursor inside `height` rows.
+    /// Moves `offset` the least it can to keep the cursor within `height`.
     pub fn scroll_into_view(&mut self, height: usize) {
         if height == 0 {
             return;
@@ -230,11 +201,8 @@ impl DetailBody {
         } else if self.cursor >= self.offset + height {
             self.offset = self.cursor + 1 - height;
         }
-        // Folding a thread away would otherwise strand the view past the end.
         self.offset = self.offset.min(self.rows.len().saturating_sub(height));
     }
-
-    // ── Drawing ──────────────────────────────────────────────────────
 
     /// Scrolls to wherever the cursor now is.
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
@@ -252,7 +220,6 @@ impl DetailBody {
                 )];
                 spans.extend(self.lines[row].spans.clone());
                 let line = Line::from(spans);
-                // The cursor's tint wins over the band.
                 match band(self.rows[row], selected) {
                     Some(bg) => fill(line, width, Style::default().bg(bg)),
                     None => line,
@@ -263,8 +230,6 @@ impl DetailBody {
     }
 }
 
-/// The cursor's tint on the selected row; a quieter band on a thread's head
-/// row, which is what divides one thread from the next.
 pub fn band(row: Row, selected: bool) -> Option<Color> {
     if selected {
         return Some(styles::highlight());
@@ -272,7 +237,6 @@ pub fn band(row: Row, selected: bool) -> Option<Color> {
     matches!(row, Row::Thread { head: true, .. }).then_some(styles::surface())
 }
 
-/// Put `chrome` in the columns to the left of `line`, then a single gap.
 pub fn indented(chrome: &[Span<'static>], line: Line<'static>) -> Line<'static> {
     let mut spans = chrome.to_vec();
     spans.push(Span::raw(" "));
@@ -280,8 +244,7 @@ pub fn indented(chrome: &[Span<'static>], line: Line<'static>) -> Line<'static> 
     Line::from(spans)
 }
 
-/// Pad `line` to `width` and lay `style` under it, so its background reaches
-/// the pane edge.  A span with a background of its own keeps it.
+/// A span with a background of its own keeps it.
 pub fn fill(line: Line<'static>, width: usize, style: Style) -> Line<'static> {
     let used: usize = line.spans.iter().map(Span::width).sum();
     let mut spans = line.spans;
@@ -289,8 +252,7 @@ pub fn fill(line: Line<'static>, width: usize, style: Style) -> Line<'static> {
     Line::from(spans).style(style)
 }
 
-/// Drop the trailing blanks a block renderer leaves, which would open a gap
-/// between every note.
+/// A block renderer leaves trailing blanks, which would gap the next note.
 pub fn trim_blanks(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
     while lines
         .last()

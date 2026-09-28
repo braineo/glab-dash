@@ -1,28 +1,20 @@
 use glab_core::domain::{Issue, Iteration, MergeRequest};
 use glab_core::domain::{ItemKind, Relation};
 
-/// Side-effect descriptors returned from update logic.
+/// Handlers mutate state in place and push these to `self.ui.pending_cmds`;
+/// the event loop drains them through `execute_pending_cmds`, the only place
+/// that performs I/O.
 ///
-/// Update handlers mutate model state in place and push `Cmd` values to
-/// `self.pending_cmds`.  After the handler returns the event loop drains
-/// the queue via `execute_pending_cmds()` — this is the *only* place that
-/// performs I/O (disk, network, browser).
-///
-/// Simple API mutations whose spawn logic is just "call one client method
-/// and send the result" are modelled as `Spawn*` variants.  Complex flows
-/// that need state access for GID lookups, user searches, etc. keep their
-/// `tokio::spawn` in the originating method and only use dirty flags +
-/// `Cmd::Persist*` for the persistence side.
+/// A mutation that is one client call and a result message is a `Spawn*`
+/// variant.  A flow needing state access for gid lookups or user searches
+/// keeps its `tokio::spawn` in the originating method.
 #[derive(Debug)]
 pub enum Cmd {
-    // ── Persistence (targeted SQLite writes) ─────────────────────────
     PersistIssues,
     PersistMrs,
-    /// Persist a snapshot of all issues (open + closed) taken before the
-    /// in-memory open-only filter.  Used by `IssuesLoaded` so closed issues
-    /// accumulate in the DB for shadow-work queries.
+    /// Snapshotted before the in-memory open-only filter, so shadow-work
+    /// queries still have the closed ones.
     PersistIssuesFull(Vec<Issue>),
-    /// Same as `PersistIssuesFull` but for merge requests.
     PersistMrsFull(Vec<MergeRequest>),
     PersistLabels,
     PersistIterations,
@@ -34,12 +26,10 @@ pub enum Cmd {
     PersistLabelUsage,
     PersistLastFetchedAt(u64),
 
-    // ── API fetches ──────────────────────────────────────────────────
     FetchAll,
     FetchAllFull,
     FetchHealthData,
 
-    // ── API mutations (simple spawn-and-forget) ──────────────────────
     SpawnCloseIssue {
         issue_id: String,
     },
@@ -69,7 +59,6 @@ pub enum Cmd {
         gid: String,
     },
 
-    /// Link target to work item by gid
     AddLink {
         gid: String,
         target_gid: String,
@@ -80,7 +69,6 @@ pub enum Cmd {
         target_gid: String,
     },
 
-    /// mention target in merge request with gid
     MentionInMr {
         gid: String,
         target_gid: String,
@@ -95,27 +83,18 @@ pub enum Cmd {
     },
 }
 
-/// Tracks which data domains changed during an update cycle.
-///
-/// After every `handle_key` / `handle_async_msg`, `reconcile()` reads these
-/// flags and runs exactly the downstream refilter/refresh/health calls that
-/// are needed — nothing more, nothing less.
+/// `reconcile` reads these and runs the downstream refilter / refresh / health
+/// calls they imply.
 #[derive(Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Dirty {
-    /// `self.issues` Vec was mutated (items added, removed, or modified).
     pub issues: bool,
-    /// `self.mrs` Vec was mutated.
     pub mrs: bool,
-    /// `self.labels` changed.
     pub labels: bool,
-    /// `self.iterations` changed.
     pub iterations: bool,
-    /// `self.work_item_statuses` changed.
     pub statuses: bool,
-    /// Filter conditions, sort specs, or fuzzy query changed.
+    /// Filter conditions, sort specs or the fuzzy query.
     pub view_state: bool,
-    /// View or selection changed (needs `refresh_focused`).
     pub selection: bool,
 }
 
@@ -131,23 +110,18 @@ impl Dirty {
     }
 }
 
-/// What a view handler writes back after handling a key: the data it dirtied,
-/// the [`Cmd`]s it queued, and whether the frame still needs repainting.  One
-/// borrow instead of three `&mut` threaded through every handler.
+/// What a view handler writes back: the data it dirtied, the [`Cmd`]s it
+/// queued, and whether the frame needs repainting.
 pub struct Effects<'a> {
     pub dirty: &'a mut Dirty,
     pub cmds: &'a mut Vec<Cmd>,
     pub needs_redraw: &'a mut bool,
 }
 
-/// Result of a focus node handling a key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventResult {
-    /// Event was consumed. Stop bubbling.
     Consumed,
-    /// Event was not handled. Parent should try.
     Bubble,
-    /// Application should quit.
     Quit,
 }
 

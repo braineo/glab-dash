@@ -3,10 +3,8 @@ use serde::{Deserialize, Serialize};
 // `VariantArray` is imported as both the derive and the trait carrying `VARIANTS`.
 use strum::{EnumString, IntoStaticStr, VariantArray};
 
-/// A filterable attribute of an issue or merge request.
-///
-/// The snake_case names are what config files, a rendered condition, and the
-/// persisted view state all spell — serde and strum are told the same thing.
+/// The snake_case names are what config files, a rendered condition and the
+/// persisted view state all spell.
 #[derive(
     Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, EnumString, VariantArray,
 )]
@@ -42,10 +40,8 @@ impl Field {
     }
 }
 
-/// A comparison operator.
-///
-/// strum carries the symbol a rendered condition shows; serde carries what a
-/// config file may write, either the symbol or the long form.
+/// strum carries the symbol a rendered condition shows; serde accepts either
+/// the symbol or the long form a config may write.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, IntoStaticStr, VariantArray)]
 pub enum Op {
     #[strum(to_string = "=")]
@@ -131,7 +127,6 @@ pub fn matches_issue(item: &Issue, conditions: &[FilterCondition], me: &str) -> 
                 let w = item.weight.unwrap_or(0).to_string();
                 match_string(&w, &c.op, &value)
             }
-            // Issue doesn't have these fields
             Field::Reviewer | Field::Draft | Field::ApprovedBy | Field::MergeStatus => true,
         }
     })
@@ -193,7 +188,6 @@ pub fn matches_mr(item: &MergeRequest, conditions: &[FilterCondition], me: &str)
             }
             Field::Title => match_string_contains(&item.title, &c.op, &value),
             Field::Project => match_string(item.project_path(), &c.op, &value),
-            // MRs don't have iteration/weight
             Field::Iteration | Field::Weight => true,
         }
     })

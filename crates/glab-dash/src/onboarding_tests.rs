@@ -40,7 +40,6 @@ fn test_generate_toml_roundtrip() {
 
     let toml_str = generate_toml(&config);
 
-    // Parse back and verify
     let parsed: Config = toml::from_str(&toml_str).expect("Generated TOML should be parseable");
     assert_eq!(parsed.gitlab_url, "https://gitlab.example.com");
     assert_eq!(parsed.token, "glpat-test123");
@@ -98,7 +97,6 @@ fn test_default_filter_presets() {
     assert!(names.contains(&"Needs my review"));
     assert!(names.contains(&"Unassigned issues"));
 
-    // Verify "Needs my review" has the right conditions
     let needs_review = presets
         .iter()
         .find(|p| p.name == "Needs my review")
@@ -113,7 +111,6 @@ fn test_default_filter_presets() {
     );
 }
 
-/// The generated file must round-trip the multi-line Lua the default rule is.
 #[test]
 fn test_generate_toml_keeps_the_comment_rule() {
     let config = Config {

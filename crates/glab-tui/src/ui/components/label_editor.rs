@@ -13,8 +13,6 @@ use ratatui::widgets::{Clear, Paragraph};
 use super::chord_popup;
 use crate::ui::{keys, styles};
 
-// ── Public types ──
-
 pub enum LabelEditorAction {
     Continue,
     Confirmed(Vec<String>),
@@ -31,9 +29,9 @@ pub struct LabelEditorState {
     all_labels: Vec<String>,
     selected: Vec<bool>,
     pub mode: LabelEditorMode,
-    /// Indices into `all_labels` shown in chord view.
+    /// Indices into `all_labels`.
     pinned: Vec<usize>,
-    /// Chord codes parallel to `pinned`.
+    /// Parallel to `pinned`.
     chord_codes: Vec<String>,
     max_code_len: usize,
     chord_input: String,
@@ -42,8 +40,6 @@ pub struct LabelEditorState {
     search_cursor: usize,
     matcher: SkimMatcherV2,
 }
-
-// ── Construction ──
 
 impl LabelEditorState {
     pub fn new(
@@ -85,8 +81,6 @@ impl LabelEditorState {
         }
     }
 
-    // ── Input handling ──
-
     pub fn handle_key(&mut self, key: &KeyEvent) -> LabelEditorAction {
         match self.mode {
             LabelEditorMode::Chord => self.handle_chord_key(key),
@@ -107,19 +101,16 @@ impl LabelEditorState {
                 let mut test = self.chord_input.clone();
                 test.push(c);
 
-                // Exact match → toggle
                 if let Some(pos) = self.chord_codes.iter().position(|code| *code == test) {
                     let label_idx = self.pinned[pos];
                     self.toggle_label(label_idx);
                     self.chord_input.clear();
                     return LabelEditorAction::Continue;
                 }
-                // Valid prefix → narrow
                 if self.chord_codes.iter().any(|code| code.starts_with(&test)) {
                     self.chord_input = test;
                     return LabelEditorAction::Continue;
                 }
-                // No match → ignore
                 LabelEditorAction::Continue
             }
             KeyCode::Backspace => {
@@ -178,10 +169,8 @@ impl LabelEditorState {
         }
     }
 
-    // ── Helpers ──
-
-    /// Rebuild pinned list to include all currently selected labels,
-    /// so labels toggled via search become visible in chord mode.
+    /// Pins every selected label, so one toggled in search shows in chord
+    /// mode.
     fn rebuild_pinned(&mut self) {
         for (i, &sel) in self.selected.iter().enumerate() {
             if sel && !self.pinned.contains(&i) {
@@ -199,7 +188,6 @@ impl LabelEditorState {
         self.max_code_len = self.chord_codes.iter().map(String::len).max().unwrap_or(1);
     }
 
-    /// Toggle a label under GitLab's one-label-per-scope rule.
     fn toggle_label(&mut self, idx: usize) {
         label::toggle(&self.all_labels, &mut self.selected, idx);
     }
@@ -234,8 +222,6 @@ impl LabelEditorState {
     }
 }
 
-// ── Pinned label selection ──
-
 fn select_pinned(
     all_labels: &[String],
     current_labels: &[String],
@@ -243,7 +229,6 @@ fn select_pinned(
     issue_labels: &[Vec<String>],
     max_pinned: usize,
 ) -> Vec<usize> {
-    // Currently-applied labels are always pinned
     let mut pinned: Vec<usize> = all_labels
         .iter()
         .enumerate()
@@ -251,9 +236,8 @@ fn select_pinned(
         .map(|(i, _)| i)
         .collect();
 
-    // Effective frequency: how often the label appears on open issues, plus
-    // the times the user applied it themselves.  Both count — explicit usage
-    // alone only ever names labels already on this item.
+    // Both sources count: the user's own history alone only ever names labels
+    // already on this item.
     let mut effective_usage: HashMap<&str, u32> = HashMap::new();
     for labels in issue_labels {
         for label in labels {
@@ -264,7 +248,6 @@ fn select_pinned(
         *effective_usage.entry(name.as_str()).or_insert(0) += count;
     }
 
-    // Sort remaining by usage count descending
     let mut by_usage: Vec<(usize, u32)> = all_labels
         .iter()
         .enumerate()
@@ -277,20 +260,16 @@ fn select_pinned(
     let remaining = max_pinned.saturating_sub(pinned.len());
     pinned.extend(by_usage.iter().take(remaining).map(|(i, _)| *i));
 
-    // Sort so labels with the same scope (e.g. priority::high, priority::low)
-    // are grouped together. Within a scope group, preserve original order.
+    // Groups one scope's labels together, keeping their order within it.
     pinned.sort_by(|&a, &b| scope_key(&all_labels[a]).cmp(scope_key(&all_labels[b])));
 
     pinned
 }
 
-/// The key labels are grouped by when pinned: a scoped label's scope, and an
-/// unscoped label's own name.
+/// A scoped label's scope, an unscoped label's own name.
 fn scope_key(label: &str) -> &str {
     label::scope(label).unwrap_or(label)
 }
-
-// ── Rendering ──
 
 pub fn render(
     frame: &mut Frame,
@@ -311,7 +290,6 @@ fn render_chord_mode(
     label_colors: &styles::LabelColors,
 ) {
     if state.pinned.is_empty() {
-        // No pinned labels — show a hint to search
         let popup = centered_rect(40, 20, area);
         frame.render_widget(Clear, popup);
         let block = styles::overlay_block("Labels");
@@ -331,14 +309,12 @@ fn render_chord_mode(
         return;
     }
 
-    // Measure widths for grid layout
     let max_label_display: usize = state
         .pinned
         .iter()
         .map(|&i| label_display_width(&state.all_labels[i]))
         .max()
         .unwrap_or(8);
-    // checkbox(2) + space + code(max_code_len) + space + label + padding
     let item_width = 2 + 1 + state.max_code_len + 1 + max_label_display + 2;
     let usable_width = usize::from(area.width).saturating_sub(6);
     let cols = (usable_width / item_width).clamp(1, 4);
@@ -373,7 +349,6 @@ fn render_chord_mode(
                 let is_active =
                     state.chord_input.is_empty() || code.starts_with(&state.chord_input);
 
-                // Checkbox
                 let (icon, icon_style) = if is_selected {
                     (
                         styles::ICON_CHECK,
@@ -395,7 +370,6 @@ fn render_chord_mode(
                 };
                 spans.push(Span::styled(format!("{icon} "), icon_style));
 
-                // Chord code (avy-style)
                 chord_popup::render_code(
                     &mut spans,
                     code,
@@ -405,11 +379,9 @@ fn render_chord_mode(
                 );
                 spans.push(Span::raw(" "));
 
-                // Label chip
                 if is_active {
                     let color = label_colors.get(label).map(String::as_str);
                     spans.extend(styles::label_spans(label, color));
-                    // Pad after chip
                     let chip_w = label_display_width(label);
                     let pad = max_label_display.saturating_sub(chip_w) + 1;
                     spans.push(Span::raw(" ".repeat(pad)));
@@ -425,7 +397,6 @@ fn render_chord_mode(
         lines.push(Line::from(spans));
     }
 
-    // Hint line
     let hint_spans = if state.chord_input.is_empty() {
         vec![
             Span::styled("/", styles::overlay_key_style()),
@@ -474,7 +445,6 @@ fn render_search_mode(
 
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).split(popup);
 
-    // Search input
     let search_block = styles::overlay_block("Labels (search)");
     let search_text = if state.search_query.is_empty() {
         Span::styled(
@@ -487,7 +457,6 @@ fn render_search_mode(
     let search = Paragraph::new(Line::from(search_text)).block(search_block);
     frame.render_widget(search, chunks[0]);
 
-    // Filtered list (rendered as Paragraph, no List highlight_style)
     let visible_height = usize::from(chunks[1].height).saturating_sub(3); // borders + hint
     let scroll_offset = state
         .search_cursor
@@ -503,7 +472,6 @@ fn render_search_mode(
 
         let mut spans = Vec::new();
 
-        // Cursor indicator
         if is_focused {
             spans.push(Span::styled(
                 "\u{25B8} ",
@@ -515,14 +483,12 @@ fn render_search_mode(
             spans.push(Span::raw("  "));
         }
 
-        // Label with powerline chip
         let color = label_colors.get(label).map(String::as_str);
         spans.extend(styles::label_spans(label, color));
 
         lines.push(Line::from(spans));
     }
 
-    // Hint line
     lines.push(Line::from(vec![])); // spacer
     lines.push(Line::from(vec![
         Span::styled("Enter", styles::overlay_key_style()),
@@ -537,7 +503,7 @@ fn render_search_mode(
     frame.render_widget(Paragraph::new(lines), list_inner);
 }
 
-/// Visual width of a label chip (segments + powerline arrows).
+/// Arrows included.
 fn label_display_width(label: &str) -> usize {
     let segments: Vec<&str> = label::segments(label).collect();
     let text_w: usize = segments.iter().map(|s| s.len()).sum();
@@ -587,13 +553,11 @@ mod tests {
 
     #[test]
     fn chord_toggle_and_confirm() {
-        // "A" and "B" are current labels → both pinned and pre-selected
         let mut state = make_state(&["A", "B", "C"], &["A", "B"]);
         assert_eq!(state.mode, LabelEditorMode::Chord);
         assert!(state.selected[0], "A starts selected");
         assert!(state.selected[1], "B starts selected");
 
-        // Toggle first pinned label OFF (deselect "A")
         let a_pin_idx = state
             .pinned
             .iter()
@@ -608,7 +572,6 @@ mod tests {
             "A should be deselected after chord toggle"
         );
 
-        // Confirm
         let action = state.handle_key(&key(KeyCode::Enter));
         match action {
             LabelEditorAction::Confirmed(labels) => {
@@ -629,7 +592,6 @@ mod tests {
             .map(std::string::ToString::to_string)
             .collect();
         let current = vec!["A".to_string()];
-        // The user has applied "A" before; "C" is common across open issues.
         let usage = HashMap::from([("A".to_string(), 5)]);
         let issue_labels = vec![vec!["C".to_string()], vec!["C".to_string()]];
 
@@ -653,7 +615,6 @@ mod tests {
         state.handle_key(&key(KeyCode::Char('/')));
         assert_eq!(state.mode, LabelEditorMode::Search);
 
-        // Space should type into the search query, not toggle
         state.handle_key(&key(KeyCode::Char(' ')));
         assert_eq!(state.mode, LabelEditorMode::Search);
         assert_eq!(state.search_query, " ");
@@ -663,12 +624,10 @@ mod tests {
     fn search_enter_selects_and_returns_to_chord() {
         let mut state = make_state(&["Alpha", "Beta", "Gamma"], &[]);
 
-        // Enter search mode
         state.handle_key(&key(KeyCode::Char('/')));
         assert_eq!(state.mode, LabelEditorMode::Search);
         assert_eq!(state.search_filtered.len(), 3);
 
-        // Enter on first item → toggle + back to chord (not confirm)
         let first_idx = state.search_filtered[0];
         let action = state.handle_key(&key(KeyCode::Enter));
         assert!(matches!(action, LabelEditorAction::Continue));
@@ -676,7 +635,6 @@ mod tests {
         assert!(state.selected[first_idx], "Label should be selected");
         assert!(state.pinned.contains(&first_idx), "Label should be pinned");
 
-        // Enter in chord mode confirms
         let action = state.handle_key(&key(KeyCode::Enter));
         match action {
             LabelEditorAction::Confirmed(labels) => {
@@ -691,20 +649,16 @@ mod tests {
     fn search_enter_then_search_again_for_multi_label() {
         let mut state = make_state(&["Alpha", "Beta", "Gamma"], &[]);
 
-        // Search and select Alpha
         state.handle_key(&key(KeyCode::Char('/')));
         state.handle_key(&key(KeyCode::Enter)); // selects Alpha, back to chord
         assert_eq!(state.mode, LabelEditorMode::Chord);
 
-        // Search again and select Beta
         state.handle_key(&key(KeyCode::Char('/')));
         assert_eq!(state.mode, LabelEditorMode::Search);
-        // Navigate down to Beta
         state.handle_key(&key(KeyCode::Down));
         state.handle_key(&key(KeyCode::Enter)); // selects Beta, back to chord
         assert_eq!(state.mode, LabelEditorMode::Chord);
 
-        // Confirm
         let action = state.handle_key(&key(KeyCode::Enter));
         match action {
             LabelEditorAction::Confirmed(labels) => {

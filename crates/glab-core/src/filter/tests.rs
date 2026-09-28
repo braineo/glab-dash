@@ -160,7 +160,6 @@ fn test_filter_me_variable() {
 fn test_filter_multiple_conditions() {
     let issue = make_issue("Important bug", "opened", &["alice"], &["bug"], "org/repo");
 
-    // All conditions must match (AND)
     let conditions = vec![
         FilterCondition {
             field: Field::Assignee,
@@ -180,7 +179,6 @@ fn test_filter_multiple_conditions() {
     ];
     assert!(matches_issue(&issue, &conditions, "me"));
 
-    // One condition fails → doesn't match
     let conditions_fail = vec![
         FilterCondition {
             field: Field::Assignee,
@@ -336,7 +334,6 @@ fn test_filter_project() {
     assert!(!matches_issue(&issue, &wrong_project, "me"));
 }
 
-/// Two teams share one tracker; a third has its own.
 #[test]
 fn a_team_owns_its_namespace_and_its_people_but_not_a_co_tenants_work() {
     use crate::team::Team;
@@ -349,17 +346,12 @@ fn a_team_owns_its_namespace_and_its_people_but_not_a_co_tenants_work() {
     let shared = team("alice", "org/shared");
     let own = team("carol", "org/own");
 
-    // Its own namespace: members' work and unassigned work.
     assert!(shared.owns_issue(&at("org/shared", &["alice"]), "me"));
     assert!(shared.owns_issue(&at("org/shared/widget", &[]), "me")); // descendant project
-    // Sharing a tracker: the co-tenant team's people are filtered out.
     assert!(!shared.owns_issue(&at("org/shared", &["bob"]), "me"));
-    // Another team's board, unassigned — not this team's problem.
     assert!(!own.owns_issue(&at("org/shared", &[]), "me"));
-    // Outside the board, their own work still shows.
     assert!(own.owns_issue(&at("elsewhere/lib", &["carol"]), "me"));
     assert!(!own.owns_issue(&at("elsewhere/lib", &["alice"]), "me"));
-    // Your own work follows you into any team's view.
     assert!(own.owns_issue(&at("elsewhere/lib", &["me"]), "me"));
 }
 
@@ -377,13 +369,10 @@ fn a_team_owns_an_mr_a_member_authored_even_with_no_assignee() {
         mr
     };
 
-    // Outside the board an unassigned MR rides in on its author alone.
     assert!(team.owns_mr(&authored_by("elsewhere/lib", "carol"), "me"));
     assert!(team.owns_mr(&authored_by("elsewhere/lib", "me"), "me"));
     assert!(!team.owns_mr(&authored_by("elsewhere/lib", "alice"), "me"));
 
-    // Inside the board, an outsider's unassigned MR still shows — the
-    // unassigned rule is unchanged by widening to authorship.
     assert!(team.owns_mr(&authored_by("org/own", "alice"), "me"));
 }
 
@@ -398,7 +387,6 @@ fn test_filter_merge_status() {
     }];
     assert!(matches_mr(&mr, &mergeable, "me"));
 
-    // Approved by someone, but a rule or an open thread still blocks the merge.
     mr.detailed_merge_status = Some("discussions_not_resolved".to_string());
     assert!(!matches_mr(&mr, &mergeable, "me"));
 }

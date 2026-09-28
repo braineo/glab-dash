@@ -1,7 +1,3 @@
-//! What the planning views need beyond the issues themselves: a group's
-//! iterations, the statuses a project's issues may hold, and when an issue
-//! entered the iteration it is in.
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -12,14 +8,11 @@ use glab_core::domain::{Iteration, WorkItemStatus};
 use crate::client::GitLabClient;
 use crate::wire::{IterationsQuery, NotesQuery, Response, StatusesQuery};
 
-/// How many activity-note queries run at once in
-/// [`GitLabClient::fetch_iteration_added_dates_batch`]. One request per issue in
-/// an iteration adds up, and GitLab rate-limits a burst.
+/// GitLab rate-limits a burst.
 const NOTES_CONCURRENCY: usize = 5;
 
 impl GitLabClient {
-    /// List the iterations of the group `group_path`, in cadence and due-date
-    /// order.
+    /// In cadence and due-date order.
     pub async fn list_group_iterations(&self, group_path: &str) -> Result<Vec<Iteration>> {
         let query = r"
             query listIterations($path: ID!, $after: String) {
@@ -43,11 +36,8 @@ impl GitLabClient {
         .await
     }
 
-    /// List the statuses an issue in `project` may be set to, in the order the
-    /// project defines them.
-    ///
-    /// Returns an empty list on an instance or tier where issues carry no
-    /// status widget.
+    /// In the order the project defines them; empty on a tier with no status
+    /// widget.
     pub async fn fetch_work_item_statuses(&self, project: &str) -> Result<Vec<WorkItemStatus>> {
         let query = r"
             query fetchStatuses($path: ID!) {
@@ -78,8 +68,7 @@ impl GitLabClient {
         let Some(namespace) = resp.data.namespace else {
             return Ok(Vec::new());
         };
-        // Only the status widget definition carries `allowedStatuses`; the rest
-        // of the array is every other widget the issue type supports.
+        // Only the status widget definition carries `allowedStatuses`.
         let statuses = namespace
             .work_item_types
             .nodes
@@ -92,11 +81,8 @@ impl GitLabClient {
         Ok(statuses.into_iter().map(WorkItemStatus::from).collect())
     }
 
-    /// When the work item `iid` under `namespace` was last added to an
-    /// iteration, or `None` when its activity records no iteration change.
-    ///
-    /// GitLab exposes no field for this, so it is read from the activity notes:
-    /// the most recent system note whose icon is `iteration`.
+    /// GitLab exposes no field for this; it is the most recent system note
+    /// whose icon is `iteration`.
     pub async fn fetch_work_item_iteration_added_at(
         &self,
         namespace: &str,
@@ -146,14 +132,9 @@ impl GitLabClient {
             .max())
     }
 
-    /// Read the "added to iteration" timestamp for many work items at once,
-    /// keyed by the issue id each was requested under.
-    ///
-    /// Each `items` entry is the namespace to look the work item up in, its iid,
-    /// and the issue id to key the result by. An item whose lookup fails or
-    /// records no iteration change is absent from the map: the caller uses this
-    /// to shade a planning view, and one unreadable issue should not fail the
-    /// batch.
+    /// Each `items` entry is a namespace, an iid, and the issue id to key the
+    /// result by.  An item whose lookup fails or records no iteration change is
+    /// absent from the map rather than failing the batch.
     pub async fn fetch_iteration_added_dates_batch(
         &self,
         items: Vec<(String, String, String)>,

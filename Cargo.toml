@@ -43,6 +43,7 @@ glab-store = { path = "crates/glab-store" }
 glab-tui = { path = "crates/glab-tui" }
 mlua = { version = "0.12", features = ["lua54", "vendored"] }
 open = "5"
+palette = { version = "0.7", default-features = false, features = ["std"] }
 ratatui = "0.30"
 reqwest = { version = "0.13", features = ["json", "query"] }
 rpassword = "7"

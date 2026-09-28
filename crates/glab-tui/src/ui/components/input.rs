@@ -5,34 +5,22 @@ use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use crate::ui::styles;
 
-/// What a draft does to the conversation when it is submitted.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CommentTarget {
-    /// Open a new top-level thread.
     NewThread,
-    /// Reply into the thread with this discussion id.
     Reply(String),
-    /// Rewrite the note with this id, which is what the draft started from.
     Edit(u64),
 }
 
-/// Result of handling a key event in the comment input.
 pub enum InputAction {
-    /// User pressed Ctrl+Enter — submit the comment.
     Submit,
-    /// User pressed Esc — cancel input.
     Cancel,
-    /// Key was consumed normally (text edited, cursor moved, etc.).
     Continue,
 }
 
-/// Multi-line comment input backed by `tui-textarea`.
-///
-/// Provides proper grapheme-cluster handling, emacs keybindings, undo/redo,
-/// and word-level navigation out of the box.
 pub struct CommentInput {
     textarea: TextArea<'static>,
-    /// Emacs-style incremental search query, `Some` while isearch is active.
+    /// `Some` while isearch is active.
     isearch: Option<String>,
 }
 
@@ -43,9 +31,6 @@ impl Default for CommentInput {
 }
 
 impl CommentInput {
-    /// A draft that starts from `text`, with the cursor at its end — what an
-    /// edit opens with, so the existing comment is there to change rather than
-    /// retype.
     pub fn with_text(text: &str) -> Self {
         let mut input = Self {
             textarea: TextArea::new(text.lines().map(String::from).collect()),
@@ -58,14 +43,9 @@ impl CommentInput {
         input
     }
 
-    /// Handle a key event. Returns the resulting action.
-    ///
-    /// - **Ctrl+Enter** submits, **Esc** cancels.
-    /// - **Ctrl+Space** sets the mark, **Alt+W** copies the region.
-    /// - **Ctrl+S** starts emacs-style incremental search (see [`Self::handle_isearch_key`]).
-    /// - Everything else is delegated to `tui-textarea`, whose default emacs
-    ///   bindings stay intact — including Enter (newline), Ctrl+J (kill to start
-    ///   of line), Ctrl+K (kill to end), Ctrl+U/Ctrl+R (undo/redo), Ctrl+W (kill word).
+    /// Ctrl+Enter submits, Esc cancels, Ctrl+Space marks, Alt+W copies and
+    /// Ctrl+S starts isearch.  Everything else goes to `tui-textarea`, whose
+    /// emacs bindings stay intact.
     pub fn handle_key(&mut self, key: &KeyEvent) -> InputAction {
         if self.isearch.is_some() {
             return self.handle_isearch_key(key);
@@ -80,7 +60,7 @@ impl CommentInput {
                     self.start_isearch();
                     return InputAction::Continue;
                 }
-                // Ctrl+Space: set the mark, or drop it if one is already set.
+                // Set the mark, or drop one already set.
                 KeyCode::Char(' ') | KeyCode::Null => {
                     if self.textarea.is_selecting() {
                         self.textarea.cancel_selection();
@@ -92,7 +72,7 @@ impl CommentInput {
                 _ => {}
             }
         }
-        // Alt+W: copy the region into the yank buffer (paste with Ctrl+Y).
+        // Copy the region into the yank buffer, pasted with Ctrl+Y.
         if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('w') {
             self.textarea.copy();
             self.textarea.cancel_selection();
@@ -109,13 +89,8 @@ impl CommentInput {
         InputAction::Continue
     }
 
-    /// Keys while incremental search is active:
-    ///
-    /// - **printable chars** extend the query and jump to the nearest match
-    /// - **Ctrl+S** / **Ctrl+R** step to the next match forward / backward
-    /// - **Backspace** shortens the query
-    /// - **anything else** ends the search, leaving the cursor on the match, and is
-    ///   then handled as a normal key (emacs isearch behavior)
+    /// Ctrl+S and Ctrl+R step between matches; anything else ends the search,
+    /// leaves the cursor on the match, and is then handled as a normal key.
     fn handle_isearch_key(&mut self, key: &KeyEvent) -> InputAction {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
@@ -138,8 +113,8 @@ impl CommentInput {
             }
             _ => {
                 self.end_isearch();
-                // A bare Esc or Enter only dismisses the search; every other key
-                // (Ctrl+Enter included) carries on as a normal edit.
+                // A bare Esc or Enter only dismisses the search; every other
+                // key, Ctrl+Enter included, carries on as a normal edit.
                 let dismiss_only =
                     matches!(key.code, KeyCode::Esc | KeyCode::Enter) && key.modifiers.is_empty();
                 if !dismiss_only {
@@ -159,12 +134,11 @@ impl CommentInput {
         let _ = self.textarea.set_search_pattern("");
     }
 
-    /// Push the current query to the textarea as a literal (non-regex) pattern.
     fn apply_isearch(&mut self, match_cursor: bool) {
         let Some(query) = self.isearch.clone() else {
             return;
         };
-        // The textarea searches by regex; isearch is literal, so escape the query.
+        // The textarea searches by regex; isearch is literal.
         if self
             .textarea
             .set_search_pattern(escape_regex(&query))
@@ -174,7 +148,6 @@ impl CommentInput {
         }
     }
 
-    /// The isearch prompt to show in place of the title, if searching.
     pub fn isearch_prompt(&self) -> Option<String> {
         self.isearch.as_ref().map(|q| format!("I-search: {q}"))
     }
@@ -183,19 +156,18 @@ impl CommentInput {
         self.isearch.is_some()
     }
 
-    /// Get the full text content as a single string (lines joined by `\n`).
     pub fn text(&self) -> String {
         self.textarea.lines().join("\n")
     }
 
-    /// Byte offset of the cursor in the flat text returned by [`text()`].
+    /// Into the flat text [`Self::text`] returns, not into a single line.
     pub fn cursor_byte_pos(&self) -> usize {
         let (row, col) = self.textarea.cursor();
         let lines = self.textarea.lines();
         let mut pos: usize = 0;
         for (i, line) in lines.iter().enumerate() {
             if i == row {
-                // `col` is a character index — convert to byte offset within this line.
+                // `col` is a character index.
                 pos += line
                     .char_indices()
                     .nth(col)
@@ -207,9 +179,8 @@ impl CommentInput {
         pos
     }
 
-    /// Replace the `chars` characters before the cursor with `insert`, then
-    /// append a space. Used to accept an autocomplete suggestion; `chars`
-    /// counts the trigger character along with the query.
+    /// Appends a space afterwards.  `chars` counts the trigger character along
+    /// with the query, since a completion brings its own sigil.
     pub fn replace_before_cursor(&mut self, chars: usize, insert: &str) {
         for _ in 0..chars {
             self.textarea.delete_char();
@@ -218,8 +189,7 @@ impl CommentInput {
         self.refresh_highlights();
     }
 
-    /// Paint `@user` and `group/project#123` references so you can see what
-    /// will resolve before submitting. Reruns after each key to follow the text.
+    /// Reruns after each key, so the painting follows the text.
     fn refresh_highlights(&mut self) {
         let spans: Vec<((usize, usize), (usize, usize))> = self
             .textarea
@@ -241,8 +211,8 @@ impl CommentInput {
     }
 }
 
-/// With a mark set, movement extends the region: the textarea only keeps a
-/// selection alive across *shifted* movement, while emacs keeps it across any.
+/// The textarea only keeps a selection alive across *shifted* movement, emacs
+/// across any.
 fn extend_selection(key: &KeyEvent) -> KeyEvent {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -270,7 +240,6 @@ fn extend_selection(key: &KeyEvent) -> KeyEvent {
     key
 }
 
-/// Escape a literal string for use as a regex pattern.
 fn escape_regex(query: &str) -> String {
     let mut out = String::with_capacity(query.len());
     for c in query.chars() {
@@ -282,7 +251,6 @@ fn escape_regex(query: &str) -> String {
     out
 }
 
-/// Byte spans of `@user` / `group/project#123` references within one line.
 fn reference_spans(line: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
     line.split_whitespace().filter_map(|word| {
         if word.split_once(['@', '#', '!'])?.1.is_empty() {
@@ -294,8 +262,6 @@ fn reference_spans(line: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
 }
 
 fn apply_style(textarea: &mut TextArea<'_>) {
-    // Soft-wrap long comments instead of scrolling sideways, and let Ctrl+Z undo
-    // a burst of typing rather than one character.
     textarea.set_wrap_mode(WrapMode::Word);
     textarea.set_undo_coalescing(true);
     textarea.set_placeholder_text("C-⏎ submit · C-s search · C-space mark · M-w copy");
@@ -327,7 +293,6 @@ fn apply_style(textarea: &mut TextArea<'_>) {
 
 pub fn render(frame: &mut Frame, area: Rect, input: &mut CommentInput, title: &str) {
     let title = input.isearch_prompt().unwrap_or_else(|| title.to_string());
-    // Build the block with an owned title so it satisfies TextArea<'static>.
     let block = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
@@ -361,7 +326,6 @@ mod tests {
     fn mark_copy_and_paste_round_trip() {
         let mut input = CommentInput::default();
         type_all(&mut input, "hello");
-        // Ctrl+Space at the end, select back over "llo", Alt+W to copy it.
         input.handle_key(&ctrl(' '));
         for _ in 0..3 {
             input.handle_key(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
@@ -369,7 +333,6 @@ mod tests {
         input.handle_key(&KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT));
         assert_eq!(input.text(), "hello", "copying must not edit the text");
 
-        // Ctrl+Y pastes the yanked region at the cursor.
         input.handle_key(&ctrl('y'));
         assert_eq!(input.text(), "hellollo");
     }
@@ -395,11 +358,10 @@ mod tests {
 
         input.handle_key(&ctrl('s'));
         assert_eq!(input.isearch_prompt().as_deref(), Some("I-search: "));
-        // `+` is a regex metacharacter: searching is literal, so this must match.
+        // `+` is a regex metacharacter, and searching is literal.
         type_all(&mut input, "c++");
         assert_eq!(input.cursor_byte_pos(), 2);
 
-        // Ctrl+S again steps to the next match, and Esc leaves the cursor there.
         input.handle_key(&ctrl('s'));
         assert_eq!(input.cursor_byte_pos(), 12);
         input.handle_key(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));

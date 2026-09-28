@@ -1141,6 +1141,7 @@ dependencies = [
  "glab-core",
  "glab-store",
  "open",
+ "palette",
  "ratatui",
  "reqwest",
  "serde",

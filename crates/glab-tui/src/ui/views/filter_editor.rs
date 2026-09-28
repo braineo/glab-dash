@@ -22,7 +22,7 @@ pub struct FilterEditorState {
     pub value_input: String,
     pub selected_field: Option<Field>,
     pub selected_op: Option<Op>,
-    /// Suggestions for the value step, populated by app.rs based on field.
+    /// Filled in per field by the app, not by this state.
     pub suggestions: Vec<String>,
     filtered_suggestions: Vec<usize>,
     suggestion_state: ListState,
@@ -121,7 +121,7 @@ impl FilterEditorState {
     }
 
     fn handle_value_key(&mut self, key: &KeyEvent) -> FilterEditorAction {
-        // Arrows + Ctrl+N/P for suggestion nav (not j/k since those type chars)
+        // Nav variants only: j and k are typing here.
         if keys::is_nav_up(key) && !self.filtered_suggestions.is_empty() {
             let current = self.suggestion_state.selected().unwrap_or(0);
             self.suggestion_state
@@ -136,11 +136,10 @@ impl FilterEditorState {
         }
         match key.code {
             KeyCode::Esc => {
-                // Cancel directly — field/op are selected via chords, not editor steps
+                // Field and op are picked by chord, so there is no step back.
                 FilterEditorAction::Cancel
             }
             KeyCode::Enter => {
-                // If a suggestion is highlighted, use it
                 let value = if let Some(sel) = self.suggestion_state.selected() {
                     self.filtered_suggestions.get(sel).map_or_else(
                         || self.value_input.clone(),
@@ -161,7 +160,6 @@ impl FilterEditorState {
                 FilterEditorAction::Continue
             }
             KeyCode::Tab => {
-                // Accept highlighted suggestion into input
                 if let Some(sel) = self.suggestion_state.selected()
                     && let Some(&idx) = self.filtered_suggestions.get(sel)
                 {
@@ -323,11 +321,9 @@ pub fn render(
             let has_suggestions = !state.suggestions.is_empty();
 
             if has_suggestions {
-                // Split popup: input at top, suggestions list below
                 let chunks =
                     Layout::vertical([Constraint::Length(5), Constraint::Min(1)]).split(popup);
 
-                // Input area
                 let input_lines = vec![
                     Line::from(""),
                     step_indicator(&state.step),
@@ -355,7 +351,6 @@ pub fn render(
                 let input_para = Paragraph::new(input_lines).block(input_block);
                 frame.render_widget(input_para, chunks[0]);
 
-                // Suggestions list
                 let items: Vec<ListItem> = state
                     .filtered_suggestions
                     .iter()
@@ -376,7 +371,6 @@ pub fn render(
                     .block(styles::overlay_block(&suggestion_title));
                 frame.render_stateful_widget(list, chunks[1], &mut state.suggestion_state);
             } else {
-                // No suggestions: simple input
                 let lines = vec![
                     Line::from(""),
                     step_indicator(&state.step),

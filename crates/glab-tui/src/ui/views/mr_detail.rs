@@ -17,7 +17,7 @@ use glab_core::domain::{MergeRequest, RelatedItem};
 
 binding_group! {
     /// A merge request's relations live in its description, so `L` writes one
-    /// there rather than storing a link — and nothing here drops one.
+    /// there and nothing can drop one.
     pub MR_LINK_GROUP: "Linked Issues" {
         ('L') => AddLink | "L" "Name an issue this closes",
         (key Enter) => OpenLink | "Enter" "Open the linked item",
@@ -26,15 +26,12 @@ binding_group! {
 
 #[derive(Default)]
 pub struct MrDetailState {
-    /// A snapshot, for the same reason an issue's detail holds one.
     pub mr: Option<MergeRequest>,
-    /// The rows and the cursor; the sections only fill them.
     pub body: DetailBody,
     pub conversation: Conversation,
 }
 
 impl MrDetailState {
-    /// Offered to the sections in the order they are drawn.
     pub fn handle_key(
         &mut self,
         action: Option<KeyAction>,
@@ -79,7 +76,6 @@ pub fn render(
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).split(area);
     render_header(frame, chunks[0], item, ctx);
 
-    // What it says, what it settles, then what was said about it.
     let width = usize::from(chunks[1].width);
     state.body.begin();
     state.body.description(item.description.as_deref(), width);
@@ -89,9 +85,6 @@ pub fn render(
     conversation::render_sticky_head(frame, chunks[1], &state.conversation, &state.body);
 }
 
-/// Three filled rows: what it is, where it stands, and who is on it.  A merge
-/// request earns the extra row over an issue's two — its pipeline, its branches
-/// and its approvals are all things a reviewer scans before reading a word.
 fn render_header(
     frame: &mut Frame,
     area: Rect,

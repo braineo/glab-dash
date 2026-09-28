@@ -1,5 +1,3 @@
-//! Fetch-related methods: API calls, incremental fetch helpers, health data.
-
 use glab_core::domain::Item;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,9 +15,8 @@ impl App {
         }
         self.ui.loading = true;
         self.ui.fetch_started_at = Some(Self::now_millis());
-        // Candidate incremental cursor for this cycle. It is only promoted to
-        // `last_fetched_at` once every leg has succeeded — see
-        // `record_fetch_done`.
+        // Promoted to `last_fetched_at` only once every leg has succeeded;
+        // see `record_fetch_done`.
         self.ui.fetch_pending_at = Some(Self::now_secs());
         self.ui.fetch_legs_left = 2; // issues + MRs
         self.ui.fetch_tasks = vec![
@@ -32,16 +29,14 @@ impl App {
         self.ui.fetch_tasks.extend(statuses);
     }
 
-    /// True while any leg of the last cycle is still running. Finished handles
-    /// are dropped here, so no separate counter can drift out of sync.
+    /// Drops finished handles, so no separate counter can drift.
     pub(super) fn fetch_in_flight(&mut self) -> bool {
         self.ui.fetch_tasks.retain(|t| !t.is_finished());
         !self.ui.fetch_tasks.is_empty()
     }
 
-    /// Abort the rest of the cycle. One failed leg already means incomplete
-    /// data, so the remaining requests are wasted work — and dropping the
-    /// handles lets the user retry immediately.
+    /// One failed leg already means incomplete data, and dropping the handles
+    /// lets the user retry immediately.
     pub(super) fn cancel_fetch(&mut self) {
         for task in self.ui.fetch_tasks.drain(..) {
             task.abort();
@@ -50,7 +45,6 @@ impl App {
         self.ui.loading = false;
     }
 
-    /// Fetch work item statuses for each tracking project (for the iteration board).
     fn fetch_statuses_for_board(&self) -> Vec<tokio::task::JoinHandle<()>> {
         let mut tasks = Vec::new();
         for project in self.ctx.config.all_tracking_projects() {
@@ -61,9 +55,8 @@ impl App {
             let tx = self.ctx.async_tx.clone();
             tasks.push(tokio::spawn(async move {
                 let result = client.fetch_work_item_statuses(&project).await;
-                // Reuse StatusesLoaded with sentinel values (issue_id=0, empty
-                // iid) to indicate this is a background fetch, not a chord
-                // popup trigger.
+                // Empty issue id and iid mark this a background fetch rather
+                // than a chord popup trigger.
                 let _ = tx.send(AsyncMsg::StatusesLoaded(
                     result,
                     project,
@@ -76,7 +69,7 @@ impl App {
         tasks
     }
 
-    /// Convert a unix timestamp to ISO 8601 for the GitLab API, with 60s safety buffer.
+    /// Backdated 60s, as a safety margin against clock skew.
     pub(super) fn updated_after_param(ts: u64) -> String {
         let buffered = ts.saturating_sub(60);
         chrono::DateTime::from_timestamp(i64::try_from(buffered).unwrap_or(i64::MAX), 0)
@@ -101,14 +94,8 @@ impl App {
             .unwrap_or(u64::MAX)
     }
 
-    /// Record fetch duration and, once every leg has succeeded, advance the
-    /// incremental cursor. Called by each data handler; the last one to arrive
-    /// captures the total wall-clock time from `fetch_all()`.
-    ///
-    /// The cursor is the fetch *start* time and only moves when the whole cycle
-    /// succeeded: advancing it after a failed or timed-out request would make
-    /// the next incremental fetch skip everything the failure missed. A failed
-    /// leg goes to `cancel_fetch` instead, which drops the candidate.
+    /// Advances the incremental cursor to the fetch *start* time, and only
+    /// once every leg has succeeded: a failed leg goes to `cancel_fetch`.
     pub(super) fn record_fetch_done(&mut self) {
         if let Some(started) = self.ui.fetch_started_at {
             self.ui.last_fetch_ms = Some(Self::now_millis().saturating_sub(started));
@@ -118,8 +105,7 @@ impl App {
             self.ui.last_fetched_at = Some(ts);
             self.ui.pending_cmds.push(Cmd::PersistLastFetchedAt(ts));
         }
-        // Only the last leg clears the spinner: the first one to land used to
-        // clear it, leaving the bar idle while the other leg was still running.
+        // Only the last leg clears the spinner.
         self.ui.loading = self.ui.fetch_legs_left > 0;
     }
 
@@ -132,9 +118,8 @@ impl App {
         let tracking_projects = self.ctx.config.all_tracking_projects();
         let config = self.ctx.config.clone();
 
-        // Collect external projects that have open issues we track, so we can
-        // detect state changes (closed, reassigned) even if those issues are
-        // no longer assigned to a team member.
+        // Issues already tracked outside the namespaces, so a state change
+        // still lands after the issue leaves a member's plate.
         let tracked_ids: std::collections::HashSet<String> =
             self.data.issues.iter().map(|i| i.id.clone()).collect();
         let external_projects: Vec<String> = self
@@ -179,13 +164,12 @@ impl App {
                 (Ok(mut t), Ok(a), Ok(ext)) => {
                     let mut seen: std::collections::HashSet<String> =
                         t.iter().map(|i| i.id.clone()).collect();
-                    // The assigned query is instance-wide; issues inside a
-                    // tracking namespace already came from the walk above.
+                    // The assigned query is instance-wide; the namespace walk
+                    // above already returned what is inside one.
                     t.extend(a.into_iter().filter(|i| {
                         !config.is_tracking_project(i.project_path()) && seen.insert(i.id.clone())
                     }));
-                    // Only merge external issues we already track — don't
-                    // pull in new issues from those projects.
+                    // Only external issues already tracked.
                     t.extend(
                         ext.into_iter()
                             .filter(|i| tracked_ids.contains(&i.id) && seen.insert(i.id.clone())),
@@ -208,9 +192,8 @@ impl App {
         let tx = self.ctx.async_tx.clone();
         let updated_after = self.ui.last_fetched_at.map(Self::updated_after_param);
         let incremental = updated_after.is_some();
-        // A full refresh asks for open merge requests only — the bulk of the
-        // instance is merged history nobody looks at. `merge_mrs` closes out
-        // the cached open ones the walk did not return.
+        // A full refresh asks for open merge requests only; `merge_mrs` closes
+        // out the cached open ones the walk did not return.
         let state = if incremental {
             None
         } else {
@@ -243,8 +226,8 @@ impl App {
             let external = client
                 .list_user_mrs(&members, state, ua)
                 .await
-                // A user's MRs are instance-wide; the ones inside a tracking
-                // project already came from the per-project walk above.
+                // Instance-wide; the per-project walk above already returned
+                // the ones inside a tracking project.
                 .map(|mrs| {
                     mrs.into_iter()
                         .filter(|m| !config.is_tracking_project(m.project_path()))
@@ -321,7 +304,6 @@ impl App {
     pub(super) fn fetch_iterations(&self) -> tokio::task::JoinHandle<()> {
         let client = self.ctx.client.clone();
         let tx = self.ctx.async_tx.clone();
-        // Each team's board reads its own group cadence.
         let group = self
             .ctx
             .config
@@ -333,14 +315,12 @@ impl App {
         })
     }
 
-    /// Fetch "added to iteration" dates for unplanned work detection.
     pub(super) fn fetch_unplanned_work_data(&mut self) {
         let Some(current_iter) = self.ui.views.planning.current_iteration.as_ref() else {
             return;
         };
         let current_id = current_iter.id.clone();
 
-        // Collect issues in the current iteration that we haven't cached yet
         let items: Vec<(String, String, String)> = self
             .data
             .issues
@@ -350,7 +330,6 @@ impl App {
                     && !self.data.unplanned_work_cache.contains_key(&i.id)
             })
             .map(|i| {
-                // Derive namespace from project_path (same as the tracking project ancestor)
                 let namespace = self
                     .ctx
                     .config
@@ -378,7 +357,6 @@ impl App {
         });
     }
 
-    /// Trigger unplanned work fetch if conditions are met.
     pub(super) fn maybe_fetch_health_data(&mut self) {
         if self.ui.views.planning.current_iteration.is_none() {
             return;
@@ -389,8 +367,7 @@ impl App {
     }
 }
 
-/// Account for one succeeded fetch leg, returning the cursor to commit once the
-/// whole cycle is in.
+/// Returns the cursor to commit only once the whole cycle is in.
 fn commit_cursor(pending: &mut Option<u64>, legs_left: &mut u8) -> Option<u64> {
     *legs_left = legs_left.saturating_sub(1);
     if *legs_left == 0 {
@@ -404,7 +381,7 @@ fn commit_cursor(pending: &mut Option<u64>, legs_left: &mut u8) -> Option<u64> {
 mod tests {
     use super::commit_cursor;
 
-    /// `legs` successful legs of a 2-leg cycle; returns the committed cursor.
+    /// `legs` successful legs of a 2-leg cycle.
     fn cycle(legs: u8) -> Option<u64> {
         let mut pending = Some(100);
         let mut left = 2;

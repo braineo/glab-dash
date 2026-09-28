@@ -1,7 +1,4 @@
-//! Merge request reads and writes.
-//!
-//! Listing and the metadata mutations go over GraphQL; approve and merge have
-//! no GraphQL equivalent glab-dash can rely on and go over REST.
+//! Approve and merge go over REST: GraphQL has no equivalent.
 
 use anyhow::{Context, Result};
 use reqwest::Method;
@@ -15,7 +12,6 @@ use urlencoding::encode;
 use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload, join_walks};
 use crate::wire::{ProjectMrsQuery, UserMrsQuery};
 
-/// The selection every merge-request query and mutation shares.
 const MR_FIELDS: &str = r"
     fragment MrFields on MergeRequest {
         id iid title state draft
@@ -38,8 +34,7 @@ const MR_FIELDS: &str = r"
     }
 ";
 
-/// The states a merge-request list query can filter on. `None` asks for every
-/// state.
+/// `None` asks for every state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum MrState {
@@ -48,8 +43,6 @@ pub enum MrState {
     Closed,
 }
 
-/// Which of a user's merge requests to list: the ones they authored, the ones
-/// they are assigned, or the ones they were asked to review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UserMrRole {
     Authored,
@@ -58,7 +51,6 @@ enum UserMrRole {
 }
 
 impl UserMrRole {
-    /// The `User` connection this role reads.
     fn field(self) -> &'static str {
         match self {
             UserMrRole::Authored => "authoredMergeRequests",
@@ -69,8 +61,6 @@ impl UserMrRole {
 }
 
 impl GitLabClient {
-    /// List the merge requests of each project in `projects`, deduplicated by
-    /// id.
     pub async fn list_project_mrs(
         &self,
         projects: &[String],
@@ -121,15 +111,8 @@ impl GitLabClient {
         join_walks(set, |m| &m.id).await
     }
 
-    /// List the merge requests each of `members` authored, is assigned, or was
-    /// asked to review, anywhere on the instance, deduplicated by id.
-    ///
-    /// Authored MRs are included because a project outside the tracking
-    /// namespaces is only reached through its team members, and GitLab does not
-    /// assign an MR to its author.
-    ///
-    /// This is the slowest call in a refresh: three queries per member, each
-    /// paginated, so it traces per-member timings at debug level.
+    /// Three paginated queries per member — the slowest call in a refresh, so
+    /// it traces per-member timings at debug level.
     pub async fn list_user_mrs(
         &self,
         members: &[String],
@@ -143,8 +126,6 @@ impl GitLabClient {
         );
         let overall = std::time::Instant::now();
 
-        // One task per member × role, results merged in spawn order.
-        //
         // ponytail: unbounded fan-out (members × 3). Meter it with a Semaphore
         // if GitLab starts answering 429.
         let mut set = tokio::task::JoinSet::new();
@@ -192,7 +173,6 @@ impl GitLabClient {
         Ok(all)
     }
 
-    /// Walk one user's merge requests in one role to the end.
     async fn user_mrs(
         &self,
         member: &str,
@@ -229,7 +209,6 @@ impl GitLabClient {
         .await
     }
 
-    /// Close the merge request `iid` in `project`.
     pub async fn close_mr(&self, project: &str, iid: &str) -> Result<MergeRequest> {
         self.mr_mutation(
             "mergeRequestUpdate",
@@ -241,7 +220,6 @@ impl GitLabClient {
         .await
     }
 
-    /// Replace the assignees of the merge request `iid` in `project`.
     pub async fn set_mr_assignees(
         &self,
         project: &str,
@@ -258,8 +236,7 @@ impl GitLabClient {
         .await
     }
 
-    /// Replace the labels of the merge request `iid` in `project`. `label_ids`
-    /// are REST numeric label ids, which the mutation wants as global ids.
+    /// `label_ids` are REST numeric ids; the mutation wants global ids.
     pub async fn set_mr_labels(
         &self,
         project: &str,
@@ -280,9 +257,8 @@ impl GitLabClient {
         .await
     }
 
-    /// Run `mutation` against the merge request `iid` in `project` and read the
-    /// merge request back. `input` carries the fields the mutation changes; the
-    /// project path and iid that address it are filled in here.
+    /// `input` carries the fields to change; the project path and iid are
+    /// filled in here.
     pub(crate) async fn mr_mutation(
         &self,
         mutation: &'static str,
@@ -319,7 +295,6 @@ impl GitLabClient {
             .with_context(|| format!("failed to deserialize {mutation} response"))
     }
 
-    /// Approve the merge request `iid` in `project`.
     pub async fn approve_mr(&self, project: &str, iid: &str) -> Result<()> {
         let path = format!("/projects/{}/merge_requests/{iid}/approve", encode(project));
         Self::send::<IgnoredAny>(self.rest(Method::POST, &path))
@@ -327,7 +302,7 @@ impl GitLabClient {
             .map(drop)
     }
 
-    /// Merge the merge request `iid` in `project`, removing its source branch.
+    /// Removes the source branch.
     pub async fn merge_mr(&self, project: &str, iid: &str) -> Result<()> {
         let path = format!("/projects/{}/merge_requests/{iid}/merge", encode(project));
         let request = self
@@ -337,7 +312,6 @@ impl GitLabClient {
     }
 }
 
-/// A state filter as the `MergeRequestState` variable, `null` for every state.
 fn state_value(state: Option<MrState>) -> Value {
     state.map_or(Value::Null, |s| Value::from(<&'static str>::from(s)))
 }

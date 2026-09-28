@@ -1,9 +1,7 @@
 //! `MergeRequest` deserializes a real GraphQL response.
 //!
-//! The fixture is an actual `MrFields` payload from GitLab with identifying
-//! content replaced. It guards the shapes that are easy to get wrong: GIDs
-//! where a `u64` is wanted, a string `iid`, connections that need unwrapping,
-//! and the `SCREAMING_CASE` pipeline status the UI matches lowercase.
+//! The fixture is an `MrFields` payload from GitLab with identifying content
+//! replaced.
 
 use glab_core::domain::Item;
 use glab_core::domain::MergeRequest;
@@ -14,18 +12,15 @@ const RESPONSE: &str = include_str!("mr_graphql_response.json");
 fn deserializes_graphql_response() {
     let mr: MergeRequest = serde_json::from_str(RESPONSE).expect("MrFields payload");
 
-    // `id: ID!` and `iid: String!` are kept as the strings GraphQL sends.
     assert_eq!(mr.id, "gid://gitlab/MergeRequest/80652");
     assert_eq!(mr.iid, "146");
     assert_eq!(mr.author.as_ref().unwrap().id, "gid://gitlab/User/1");
 
-    // Connections unwrap to plain vectors.
     assert!(mr.assignees.is_empty());
     assert_eq!(mr.reviewers.len(), 1);
     assert_eq!(mr.reviewers[0].username, "user2");
     assert_eq!(mr.labels, ["workflow::doing"]);
 
-    // Nested selections stay nested; derived values are computed.
     let stats = mr.diff_stats().expect("diffStatsSummary");
     assert_eq!(
         (stats.additions, stats.deletions, stats.file_count),
@@ -34,10 +29,8 @@ fn deserializes_graphql_response() {
     assert_eq!(mr.unresolved_threads(), 0);
     assert_eq!(mr.notes_count(), 2);
 
-    // GitLab reports SUCCESS; the UI matches and sorts on lowercase.
     assert_eq!(mr.pipeline_status(), Some("success"));
 
-    // detailedMergeStatus is lowercased the same way.
     assert_eq!(mr.detailed_merge_status.as_deref(), Some("not_approved"));
 
     assert_eq!(mr.reference, "group/proj!146");
@@ -46,9 +39,8 @@ fn deserializes_graphql_response() {
     assert!(!mr.draft);
 }
 
-/// The type is also its own storage format: what `glab-db` writes must read
-/// back identically, even though serializing emits plain arrays where GraphQL
-/// sends `{ "nodes": [...] }`.
+/// The type is also its own storage format: serializing emits plain arrays
+/// where GraphQL sends `{ "nodes": [...] }`, and it must read back identically.
 #[test]
 fn round_trips_through_its_own_serialization() {
     let mr: MergeRequest = serde_json::from_str(RESPONSE).unwrap();

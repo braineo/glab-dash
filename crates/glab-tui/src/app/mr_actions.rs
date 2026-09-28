@@ -1,8 +1,5 @@
 //! What a focused merge request answers to differently from an issue; the rest
 //! is in [`item_actions`](super::item_actions).
-//!
-//! `MergeRequest` lives in `glab-core`, so these are hung off it with the
-//! [`MrActions`] extension trait rather than an inherent impl.
 
 use glab_core::domain::{Item, ItemKind, MergeRequest, ProjectLabel, User};
 
@@ -12,12 +9,9 @@ use crate::keybindings::KeyAction;
 use super::item_actions;
 use super::{AppCtx, AppData, Overlay, UiState};
 
-/// Merge-request actions that need the app's context, ui and data. Implemented
-/// for `MergeRequest`, which this crate does not own.
 use crate::binding_group;
 
 binding_group! {
-    /// What a focused merge request answers to, wherever the cursor is on one.
     pub MR_ACTION_GROUP: "MR Actions" {
         ('A') => Approve | "A" "Approve MR",
         ('M') => Merge | "M" "Merge MR",
@@ -30,7 +24,6 @@ binding_group! {
 }
 
 pub trait MrActions {
-    /// Handle a key press against the MR-action bindings.
     fn handle_action_key(
         &self,
         action: KeyAction,
@@ -38,7 +31,6 @@ pub trait MrActions {
         data: &AppData,
         ui: &mut UiState,
     ) -> EventResult;
-    /// Replace the MR's labels and push the change to the API.
     fn update_labels(
         &mut self,
         labels: &[String],
@@ -46,9 +38,7 @@ pub trait MrActions {
         ctx: &AppCtx,
         ui: &mut UiState,
     );
-    /// Assign the MR to `username`, optimistically updating in place.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState);
-    /// Resolve or reopen the thread the detail view's cursor is on.
     fn resolve_thread(&self, ctx: &AppCtx, ui: &mut UiState);
 }
 
@@ -126,9 +116,6 @@ impl MrActions for MergeRequest {
         EventResult::Consumed
     }
 
-    // ── Mutations (called from overlay completion handlers) ──────────
-
-    /// Replace labels via `mergeRequestSetLabels`.
     fn update_labels(
         &mut self,
         labels: &[String],
@@ -139,8 +126,7 @@ impl MrActions for MergeRequest {
         self.labels = labels.to_vec();
         let project = self.project_path().to_string();
         let iid = self.iid.clone();
-        // The mutation takes label GIDs, so resolve each title against the
-        // project's label list; a title with no match is dropped.
+        // The mutation takes label GIDs; a title with no match is dropped.
         let label_ids: Vec<u64> = labels
             .iter()
             .filter_map(|name| all_labels.iter().find(|l| l.name == *name).map(|l| l.id))
@@ -154,8 +140,7 @@ impl MrActions for MergeRequest {
         ui.dirty.mrs = true;
     }
 
-    /// Replace assignees via `mergeRequestSetAssignees`, which takes usernames
-    /// directly — no `search_users` round-trip needed.
+    /// `mergeRequestSetAssignees` takes usernames, so no lookup is needed.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState) {
         self.assignees = vec![User {
             id: String::new(),
@@ -174,8 +159,8 @@ impl MrActions for MergeRequest {
         ui.dirty.mrs = true;
     }
 
-    /// Resolve or reopen the thread the detail view's cursor is on, then
-    /// re-list the threads so the view shows what the server settled on.
+    /// Re-lists the threads afterwards, so the view shows what the server
+    /// settled on.
     fn resolve_thread(&self, ctx: &AppCtx, ui: &mut UiState) {
         let Some(thread) = ui
             .views

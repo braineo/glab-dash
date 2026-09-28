@@ -17,8 +17,7 @@ use glab_core::domain::RelatedItem;
 use glab_core::domain::{Issue, Item};
 
 binding_group! {
-    /// An issue only, so it sits ahead of the shared conversation group rather
-    /// than inside it.
+    /// Ahead of the shared conversation group, which both details compose.
     pub ISSUE_LINK_GROUP: "Linked Issues" {
         ('L') => AddLink | "L" "Link an issue",
         ('d') => RemoveLink | "d" "Unlink (on a link row)",
@@ -28,16 +27,14 @@ binding_group! {
 
 #[derive(Default)]
 pub struct IssueDetailState {
-    /// A snapshot, not keys to look one up by: every refresh drops a closed
-    /// issue from `data.issues` while its detail is still on screen.
+    /// A snapshot, not keys to look one up by: a refresh drops a closed issue
+    /// from `data.issues` while its detail is still on screen.
     pub issue: Option<Issue>,
-    /// The rows and the cursor; the sections only fill them.
     pub body: DetailBody,
     pub conversation: Conversation,
 }
 
 impl IssueDetailState {
-    /// Offered to the sections in the order they are drawn.
     pub fn handle_key(
         &mut self,
         action: Option<KeyAction>,
@@ -82,7 +79,6 @@ pub fn render(
     let chunks = Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).split(area);
     render_header(frame, chunks[0], item, ctx);
 
-    // What it says, what holds it up, then what was said about it.
     let width = usize::from(chunks[1].width);
     state.body.begin();
     state.body.description(item.description.as_deref(), width);
@@ -92,9 +88,7 @@ pub fn render(
     conversation::render_sticky_head(frame, chunks[1], &state.conversation, &state.body);
 }
 
-/// The item's identity in two filled rows: what it is, then its state and the
-/// people and labels on it as chips.  A field with nothing to say is left out
-/// rather than printed as "none", which is what keeps this to two rows.
+/// A field with nothing to say is left out rather than printed as "none".
 fn render_header(frame: &mut Frame, area: Rect, item: &Issue, ctx: &crate::ui::RenderCtx<'_>) {
     let (icon, text, style) = if let Some(status) = item.status_name() {
         (

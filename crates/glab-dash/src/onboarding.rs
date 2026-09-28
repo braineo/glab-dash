@@ -28,10 +28,8 @@ pub async fn run_onboarding() -> Result<Config> {
     println!("{LOGO}");
     println!("  Welcome to glab-dash! Let's set up your configuration.\n");
 
-    // Step 1: GitLab URL
     let gitlab_url = prompt_with_default("GitLab instance URL", "https://gitlab.com")?;
 
-    // Step 2: Personal access token
     println!();
     println!("  Create a personal access token at:");
     println!("    {gitlab_url}/-/user_settings/personal_access_tokens");
@@ -39,7 +37,6 @@ pub async fn run_onboarding() -> Result<Config> {
     println!();
     let token = prompt_password("Personal access token (glpat-...)")?;
 
-    // Step 3: Validate connection
     print!("\n  Validating connection... ");
     io::stdout().flush()?;
     let client = GitLabClient::new(&gitlab_url, &token).context("Failed to create client")?;
@@ -66,7 +63,6 @@ pub async fn run_onboarding() -> Result<Config> {
         }
     };
 
-    // Step 4: Username
     println!();
     let me = if detected_username.is_empty() {
         prompt_required("Your GitLab username")?
@@ -74,7 +70,6 @@ pub async fn run_onboarding() -> Result<Config> {
         prompt_with_default("Your GitLab username", &detected_username)?
     };
 
-    // Step 5: Teams
     println!();
     println!("  Now let's set up your teams. You can add more later in the config file.");
     println!("  Each team names the projects it tracks; teams sharing a board name the same ones.");
@@ -108,7 +103,6 @@ pub async fn run_onboarding() -> Result<Config> {
             continue;
         }
 
-        // Most teams share the previous one's board, so offer it as the default.
         let previous = teams.last().map(|t| t.tracking_projects.join(", "));
         let prompt =
             format!("  Projects '{team_name}' tracks (comma-separated, e.g. myorg/team-tracker)");
@@ -140,7 +134,6 @@ pub async fn run_onboarding() -> Result<Config> {
         });
     }
 
-    // Step 6: Generate config
     let config = Config {
         gitlab_url: gitlab_url.clone(),
         token: token.clone(),
@@ -154,7 +147,6 @@ pub async fn run_onboarding() -> Result<Config> {
         hide_comment: Some(glab_core::comment_filter::DEFAULT.to_string()),
     };
 
-    // Step 7: Write config file
     let config_path = config_path()?;
     let toml_str = generate_toml(&config);
 
@@ -190,7 +182,6 @@ pub fn generate_toml(config: &Config) -> String {
     toml::to_string_pretty(config).expect("Config should be serializable to TOML")
 }
 
-/// One condition of a preset, spelled in the domain's own vocabulary.
 fn condition(field: Field, op: Op, value: &str) -> FilterCondition {
     FilterCondition {
         field,
@@ -251,7 +242,6 @@ pub fn default_filter_presets() -> Vec<FilterPreset> {
 }
 
 async fn fetch_current_user(client: &GitLabClient) -> Result<String> {
-    // Use the /user endpoint to get the authenticated user
     let user: serde_json::Value = client.get_authenticated_user().await?;
     user.get("username")
         .and_then(|v| v.as_str())

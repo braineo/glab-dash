@@ -1,7 +1,3 @@
-//! Folding a work item's heterogeneous `widgets` array into the flat
-//! `Issue` shape — the one place a GitLab response does not map field for
-//! field onto the domain type.
-
 use glab_api::GitLabClient;
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
@@ -88,7 +84,7 @@ async fn an_issue_with_no_widgets_set_keeps_its_own_fields() {
 #[tokio::test]
 async fn work_item_state_is_normalized_to_the_rest_spelling() {
     // `workItems` answers OPEN/CLOSED where the root `issues` query and the
-    // database both use opened/closed; the two result sets get merged.
+    // database both use opened/closed.
     let opened = issue_from(base(&json!([]))).await;
     assert_eq!(opened.state, "opened");
 

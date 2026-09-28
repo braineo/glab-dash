@@ -1,13 +1,3 @@
-//! The client itself: how a request is addressed, sent, logged and read back.
-//!
-//! Two transports live here. [`GitLabClient::rest`] builds a REST v4 URL and
-//! hands back a `reqwest` builder the caller finishes; [`GitLabClient::graphql`]
-//! posts one document and surfaces GitLab's top-level `errors` array as a
-//! failure. Above them sit the two shapes every caller needs and nobody should
-//! rewrite: [`GitLabClient::paginate`] follows a connection's cursor to the end,
-//! and [`mutation_payload`] rejects a mutation that reported errors in its
-//! payload rather than its HTTP status.
-
 use anyhow::{Context, Result};
 use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::de::DeserializeOwned;
@@ -18,7 +8,6 @@ use urlencoding::encode;
 
 use crate::wire::{Page, Paged, Response};
 
-/// An authenticated connection to one GitLab instance.
 #[derive(Clone)]
 pub struct GitLabClient {
     http: reqwest::Client,
@@ -26,8 +15,6 @@ pub struct GitLabClient {
 }
 
 impl GitLabClient {
-    /// Build a client for the instance at `gitlab_url`, authenticating every
-    /// request with `token` as a personal access token.
     pub fn new(gitlab_url: &str, token: &str) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -38,8 +25,6 @@ impl GitLabClient {
 
         let http = reqwest::Client::builder()
             .default_headers(headers)
-            // Without this a stalled connection never returns, and the caller's
-            // fetch task never finishes — which wedges every later refresh.
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
@@ -56,8 +41,7 @@ impl GitLabClient {
             .request(method, format!("{}/api/v4{path}", self.base_url))
     }
 
-    /// Post one GraphQL document and return its response body, retried when the
-    /// request fails. Reads go through here; a mutation uses `graphql_once`.
+    /// Retried on failure, so a mutation uses `graphql_once` instead.
     pub(crate) async fn graphql(
         &self,
         op: &'static str,
@@ -67,9 +51,8 @@ impl GitLabClient {
         with_retry(op, || self.graphql_once(op, query, variables.clone())).await
     }
 
-    /// Post one GraphQL document, once. `op` names the operation for the trace
-    /// log only; a top-level `errors` array fails the call, since GitLab reports
-    /// a malformed or unauthorized query there with a 200 status.
+    /// A top-level `errors` array fails the call: GitLab reports a malformed
+    /// or unauthorized query there with a 200 status.
     pub(crate) async fn graphql_once(
         &self,
         op: &'static str,
@@ -105,13 +88,10 @@ impl GitLabClient {
         Ok(json)
     }
 
-    /// Follow a GraphQL connection's cursor to the end, collecting every node.
-    ///
-    /// `variables` is called once per page with the cursor to resume from —
-    /// `None` for the first — and the response is read as `D`, which names the
-    /// connection through [`Paged`]. A `D` whose path to the connection is
-    /// absent (an unknown project, a user the token cannot see) ends the walk
-    /// with what has been collected rather than failing.
+    /// `variables` is called once per page with the cursor to resume from,
+    /// `None` for the first.  A response whose path to the connection is absent
+    /// — an unknown project, a user the token cannot see — ends the walk with
+    /// what has been collected rather than failing.
     pub(crate) async fn paginate<T, D>(
         &self,
         op: &'static str,
@@ -146,8 +126,8 @@ impl GitLabClient {
         Ok(all)
     }
 
-    /// Send a REST read, retried when the request fails. A write uses `send`:
-    /// retrying it can write twice.
+    /// Retried on failure, so a write uses `send` instead: this can send
+    /// twice.
     pub(crate) async fn fetch<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> Result<T> {
         with_retry("rest", || async {
             let request = request
@@ -173,11 +153,8 @@ impl GitLabClient {
     }
 }
 
-/// The payload of mutation `mutation`, or the errors it reported.
-///
 /// A GitLab mutation answers 200 with its failures in the payload's `errors`
-/// array, so a caller that only checks the HTTP status silently accepts a
-/// rejected write.
+/// array, so the HTTP status alone accepts a rejected write.
 pub(crate) fn get_mutation_payload<'a>(json: &'a Value, mutation: &str) -> Result<&'a Value> {
     let payload = json
         .pointer(&format!("/data/{mutation}"))
@@ -191,9 +168,8 @@ pub(crate) fn get_mutation_payload<'a>(json: &'a Value, mutation: &str) -> Resul
     Ok(payload)
 }
 
-/// Join the messages of an error array. A mutation's errors are bare strings,
-/// so `field` is `None`; a top-level GraphQL error is an object carrying its
-/// text under the named field.
+/// A mutation's errors are bare strings (`field` is `None`); a top-level
+/// GraphQL error is an object carrying its text under the named field.
 fn join_messages(errors: &[Value], field: Option<&str>) -> String {
     errors
         .iter()
@@ -205,9 +181,8 @@ fn join_messages(errors: &[Value], field: Option<&str>) -> String {
         .join(", ")
 }
 
-/// The REST route for `tail` under the item `iid` in `project`.  Both kinds
-/// hang their sub-collections off the same shape, under the segment naming the
-/// kind — which is the whole of what a REST route needs to know about it.
+/// Both kinds hang their sub-collections off the same shape, under the segment
+/// naming the kind.
 pub(crate) fn item_path(kind: ItemKind, project: &str, iid: &str, tail: &str) -> String {
     let segment = match kind {
         ItemKind::Issue => "issues",
@@ -216,22 +191,18 @@ pub(crate) fn item_path(kind: ItemKind, project: &str, iid: &str, tail: &str) ->
     format!("/projects/{}/{segment}/{iid}/{tail}", encode(project))
 }
 
-/// The user selection every other fragment spreads in turn.
 const USER_FIELDS: &str = r"
     fragment UserFields on User {
         id username name webUrl
     }
 ";
 
-/// Page size for every paginated list query.
 pub(crate) const PAGE_SIZE: u32 = 100;
 
-/// How many times a read is asked for before it fails.
 const ATTEMPTS: u32 = 3;
 
-/// An error GitLab answered with in the response body rather than in the
-/// transport: a malformed query, a field the token may not read. Permanent, so
-/// [`with_retry`] hands it back instead of asking again.
+/// An error in the response body rather than the transport: a malformed query,
+/// a field the token may not read.  Permanent, so [`with_retry`] gives up.
 #[derive(Debug)]
 struct ResponseErrors(String);
 
@@ -243,11 +214,7 @@ impl std::fmt::Display for ResponseErrors {
 
 impl std::error::Error for ResponseErrors {}
 
-/// Run `attempt` again when it fails, backing off between tries.
-///
-/// A read is idempotent and a fetch cycle is expensive: one blip would
-/// otherwise discard every page already walked and cancel every sibling walk.
-/// A [`ResponseErrors`] is permanent and is handed back on the first answer.
+/// Reads only — an `attempt` that writes can write twice.
 ///
 /// ponytail: retries any transport failure, a permanent 404 included. Classify
 /// the status if a wrong path starts costing a second and a half to fail.
@@ -271,12 +238,11 @@ async fn with_retry<T, Fut: Future<Output = Result<T>>>(
     }
 }
 
-/// Join concurrent walks, restoring the order they were spawned in, and flatten
-/// them with duplicates dropped: the same issue or merge request is reachable
-/// from more than one namespace, project or member. The first walk to hold it
-/// wins, so the result does not depend on which request came back first.
+/// Duplicates are dropped — the same item is reachable from more than one
+/// namespace, project or member — and spawn order is restored, so the result
+/// does not depend on which request answered first.
 ///
-/// The first failed walk returns, dropping the set — which aborts the rest.
+/// The first failed walk returns, dropping the set, which aborts the rest.
 pub(crate) async fn join_walks<T: Send + 'static>(
     mut set: tokio::task::JoinSet<(usize, Result<Vec<T>>)>,
     id: impl Fn(&T) -> &str,
@@ -296,8 +262,8 @@ pub(crate) async fn join_walks<T: Send + 'static>(
         .collect())
 }
 
-/// `doc` followed by the fragments it spreads: `fields` itself, and the
-/// `UserFields` every one of them spreads in turn.
+/// `doc` followed by the fragments it spreads: `fields`, and the `UserFields`
+/// that in turn spreads.
 pub(crate) fn document(doc: &str, fields: &str) -> String {
     format!("{doc}{fields}{USER_FIELDS}")
 }
