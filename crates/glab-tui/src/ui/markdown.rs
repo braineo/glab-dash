@@ -103,6 +103,7 @@ fn render_node<'a>(
         // a row wider than the pane is clipped instead.
         NodeValue::CodeBlock(cb) => {
             let code_bg = styles::code_bg();
+            let panel = styles::theme().code_bg;
             if cb.info.is_empty() {
                 lines.push(Line::from(vec![
                     Span::raw(indent.to_string()),
@@ -119,7 +120,7 @@ fn render_node<'a>(
             }
             let body = cb.literal.trim_end();
             let rail = Span::styled("│ ", Style::default().fg(styles::border()));
-            match highlight::code_lines(&cb.info, body, styles::theme_name(), code_bg) {
+            match highlight::code_lines(&cb.info, body, styles::theme_name(), panel) {
                 Some(rows) => {
                     for row in rows {
                         let mut spans = vec![Span::raw(indent.to_string()), rail.clone()];

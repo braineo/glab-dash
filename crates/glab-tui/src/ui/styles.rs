@@ -1,3 +1,5 @@
+use palette::color_difference::Wcag21RelativeContrast;
+use palette::{FromColor, Mix, Oklch, Srgb};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -10,68 +12,45 @@ use syntect::highlighting::Highlighter;
 use syntect::parsing::ScopeStack;
 
 use crate::ui::color::{
-    self, DIM_CONTRAST, Rgb, TEXT_CONTRAST, color, contrast, hue_distance, luminance, mix,
-    readable, shift,
+    BLACK, DIM_CONTRAST, Rgb, TEXT_CONTRAST, WHITE, color, fit_gamut, hue_distance, readable,
 };
 use crate::ui::highlight;
 
-// ── Themes ──
-
-/// Every color the interface paints with, derived from one syntax theme.
-///
-/// Nothing here is hand-authored per theme.  A tmTheme names only a handful of
-/// editor colors — the background, the default text, the selection, the line
-/// wash — and colors its syntax scopes; everything else the dashboard needs is
-/// derived from those, so a theme is a name plus the file bat already ships and
-/// adding one costs no code at all.
 pub struct Theme {
-    /// The name the config file and the theme picker use, which is also the
-    /// name of the syntax theme code blocks are colored in.
     pub name: String,
-    /// Whether the backgrounds sit darker than the text.  The label chips need
-    /// to know to choose their own lightness.
     pub dark: bool,
-    // Backgrounds (layered: base < surface < overlay)
-    pub base: Color,
-    pub surface: Color,
-    pub overlay: Color,
-    pub highlight: Color,
-    // Foregrounds
-    pub text: Color,
-    pub text_dim: Color,
-    pub text_bright: Color,
-    /// Foreground carrying WCAG AA contrast against `overlay`, for modal text.
-    pub overlay_text: Color,
-    pub overlay_text_dim: Color,
-    // Accents
-    pub blue: Color,
-    pub cyan: Color,
-    pub green: Color,
-    pub red: Color,
-    pub yellow: Color,
-    pub magenta: Color,
-    pub orange: Color,
-    pub teal: Color,
-    // Borders
-    pub border: Color,
-    pub border_active: Color,
-    // Tinted backgrounds
-    pub filter_chip_bg: Color,
-    pub sort_chip_bg: Color,
-    pub row_alt_bg: Color,
-    pub code_bg: Color,
-    /// The unbound-key gray in the chord popup.
-    pub chord_dim: Color,
+    // Layered: base < surface < overlay.
+    pub base: Rgb,
+    pub surface: Rgb,
+    pub overlay: Rgb,
+    pub highlight: Rgb,
+    pub text: Rgb,
+    pub text_dim: Rgb,
+    pub text_bright: Rgb,
+    /// Carries WCAG AA against `overlay`, which `text` does not.
+    pub overlay_text: Rgb,
+    pub overlay_text_dim: Rgb,
+    pub blue: Rgb,
+    pub cyan: Rgb,
+    pub green: Rgb,
+    pub red: Rgb,
+    pub yellow: Rgb,
+    pub magenta: Rgb,
+    pub orange: Rgb,
+    pub teal: Rgb,
+    pub border: Rgb,
+    pub border_active: Rgb,
+    pub filter_chip_bg: Rgb,
+    pub sort_chip_bg: Rgb,
+    pub row_alt_bg: Rgb,
+    pub code_bg: Rgb,
+    pub chord_dim: Rgb,
 }
 
-/// The theme every palette falls back to, and the one the picker opens on.
 pub const DEFAULT_THEME: &str = "TwoDark";
 
-/// Every bundled theme, derived once and held for the life of the process.
-///
-/// All of them are built up front rather than on demand: the picker previews a
-/// theme on every cursor move, so deriving lazily would put the work on the
-/// keystroke instead of the startup, and the whole set costs about 11ms.
+/// Derived up front (~11ms for the set): the picker previews a theme on every
+/// cursor move, so deriving lazily would put the work on the keystroke.
 static THEMES: LazyLock<Vec<Theme>> = LazyLock::new(|| {
     highlight::theme_names()
         .into_iter()
@@ -82,21 +61,15 @@ static THEMES: LazyLock<Vec<Theme>> = LazyLock::new(|| {
         .collect()
 });
 
-/// Which theme every color accessor reads from.  A global rather than a value
-/// threaded through render: every widget already reaches for its colors by
-/// name, and switching a theme repaints the whole frame anyway.
 static ACTIVE: LazyLock<AtomicUsize> = LazyLock::new(|| {
     let idx = THEMES.iter().position(|t| t.name == DEFAULT_THEME);
     AtomicUsize::new(idx.unwrap_or(0))
 });
 
-/// The theme in effect.
 pub fn theme() -> &'static Theme {
     &THEMES[ACTIVE.load(Ordering::Relaxed)]
 }
 
-/// Switch to the theme named `name`, or report `false` when no bundled theme
-/// goes by it and leave the current one alone.
 pub fn set_theme(name: &str) -> bool {
     match THEMES.iter().position(|t| t.name == name) {
         Some(idx) => {
@@ -107,87 +80,89 @@ pub fn set_theme(name: &str) -> bool {
     }
 }
 
-/// The name of the theme in effect.
 pub fn theme_name() -> &'static str {
     &theme().name
 }
 
-/// Every bundled theme's name, for the picker.
 pub fn theme_names() -> Vec<String> {
     THEMES.iter().map(|t| t.name.clone()).collect()
 }
 
 impl Theme {
-    /// Derive the whole interface palette from syntax theme `syntax`.
-    ///
-    /// The background and text are the theme's own.  The layered backgrounds
-    /// are its selection and line wash where it names them and blends of the
-    /// background toward the text where it does not, so the layering holds its
-    /// shape on a theme that specifies almost nothing.  The accents are taken
-    /// from the theme's own syntax colors by hue, so each theme keeps its
-    /// character, and every one is lifted to a legible contrast against the
-    /// background it will be drawn on.
     fn derive(name: String, syntax: &syntect::highlighting::Theme) -> Self {
         let set = &syntax.settings;
-        let base = set.background.map_or((26, 27, 38), opaque);
-        // Alpha on a background wash means "blend me into the page" and is
-        // composited; alpha on a foreground is noise no renderer honors, and
-        // compositing it turned gruvbox's cream text to mud.
-        let text = set.foreground.map_or((169, 177, 214), opaque);
-        let dark = luminance(base) < 0.5;
+        let base = set
+            .background
+            .map_or_else(|| hex(0x1A_1B_26), highlight::opaque);
+        // Alpha on a tmTheme background means "blend me into the page"; on a
+        // foreground it means nothing, and compositing it muddies the text.
+        let text = set
+            .foreground
+            .map_or_else(|| hex(0xA9_B1_D6), highlight::opaque);
+        let dark = base.relative_luminance().luma < 0.5;
 
         let accents = Accents::of(syntax, base);
-        // The layered backgrounds are blends of the theme's own two anchors
-        // rather than its named colors.  A tmTheme picks its selection to sit
-        // behind a few words, and some pick a vivid one — Sublime Snazzy's is
-        // bright cyan — which reads as a highlighter pen when it is stretched
-        // behind a whole modal.  Blending keeps every theme's panels calm and
-        // in its own hue family.
-        let surface = mix(base, text, 0.07);
-        let overlay = mix(base, text, 0.16);
-        // The selected row is the one place a selection color belongs, since
-        // that is what the theme chose it for.  A vivid one is still refused:
-        // the row keeps its own foreground, which a loud wash would bury.
+        // Blends of the two anchors, not the theme's named selection color: a
+        // tmTheme picks that to sit behind a few words, and a vivid one reads
+        // as a highlighter pen behind a whole modal.
+        let surface = lift(base, text, 0.07);
+        let overlay = lift(base, text, 0.16);
+        // A vivid selection is still refused: the row keeps its own
+        // foreground, which a loud wash would bury.
         let selection = set
             .selection
             .or(set.line_highlight)
             .map(|c| composite(c, base))
-            .filter(|c| contrast(*c, base) <= 2.5);
-        let dim = mix(text, base, 0.45);
+            .filter(|c| c.relative_contrast(base) <= 2.5);
+        let dim = text.mix(base, 0.45);
 
         Self {
             dark,
-            base: color(base),
-            surface: color(surface),
-            overlay: color(overlay),
-            highlight: color(selection.unwrap_or_else(|| mix(base, text, 0.12))),
-            text: color(readable(text, base, TEXT_CONTRAST)),
-            text_dim: color(readable(dim, base, DIM_CONTRAST)),
-            text_bright: color(shift(text, dark, 0.35)),
-            overlay_text: color(readable(text, overlay, TEXT_CONTRAST)),
-            overlay_text_dim: color(readable(dim, overlay, DIM_CONTRAST)),
-            blue: color(accents.blue),
-            cyan: color(accents.cyan),
-            green: color(accents.green),
-            red: color(accents.red),
-            yellow: color(accents.yellow),
-            magenta: color(accents.magenta),
-            orange: color(accents.orange),
-            teal: color(accents.teal),
-            border: color(mix(base, text, 0.28)),
-            border_active: color(accents.blue),
-            filter_chip_bg: color(mix(base, accents.yellow, 0.20)),
-            sort_chip_bg: color(mix(base, accents.magenta, 0.20)),
-            row_alt_bg: color(mix(base, text, 0.05)),
-            code_bg: color(mix(base, text, 0.08)),
-            chord_dim: color(readable(mix(text, overlay, 0.5), overlay, DIM_CONTRAST)),
+            base,
+            surface,
+            overlay,
+            highlight: selection.unwrap_or_else(|| lift(base, text, 0.12)),
+            text: readable(text, base, TEXT_CONTRAST),
+            text_dim: readable(dim, base, DIM_CONTRAST),
+            text_bright: text.mix(if dark { WHITE } else { BLACK }, 0.35),
+            overlay_text: readable(text, overlay, TEXT_CONTRAST),
+            overlay_text_dim: readable(dim, overlay, DIM_CONTRAST),
+            blue: accents.blue,
+            cyan: accents.cyan,
+            green: accents.green,
+            red: accents.red,
+            yellow: accents.yellow,
+            magenta: accents.magenta,
+            orange: accents.orange,
+            teal: accents.teal,
+            border: lift(base, text, 0.28),
+            border_active: accents.blue,
+            filter_chip_bg: base.mix(accents.yellow, 0.20),
+            sort_chip_bg: base.mix(accents.magenta, 0.20),
+            row_alt_bg: lift(base, text, 0.05),
+            code_bg: lift(base, text, 0.08),
+            chord_dim: readable(text.mix(overlay, 0.5), overlay, DIM_CONTRAST),
             name,
         }
     }
 }
 
-/// The eight semantic accents, each carrying a meaning the dashboard relies on:
-/// green passes, red fails, magenta is merged.
+/// A rung on the background ladder, as a blend of the two anchors scaled so it
+/// does not depend on how far apart this theme put them.
+///
+/// Blending by a fixed ratio lifts the row stripe 0.158 in Oklch lightness on
+/// DarkNeon against 0.019 on Solarized, an eightfold spread.  Stepping by a
+/// fixed Oklch lightness instead is not representable: from `#000000` the
+/// smallest 8-bit step, `#010101`, is already 0.067, so the three finest rungs
+/// quantize back onto the base.  So the blend stays, normalized by the gap.
+fn lift(base: Rgb, text: Rgb, ratio: f64) -> Rgb {
+    /// The median gap between the two anchors over the bundled themes; a theme
+    /// at exactly this gap keeps the ratio it is given.
+    const MEDIAN_GAP: f64 = 0.48;
+    let gap = (Oklch::from_color(text).l - Oklch::from_color(base).l).abs();
+    base.mix(text, (ratio * MEDIAN_GAP / gap.max(0.1)).clamp(0.0, 1.0))
+}
+
 struct Accents {
     blue: Rgb,
     cyan: Rgb,
@@ -199,9 +174,6 @@ struct Accents {
     teal: Rgb,
 }
 
-/// The scopes an accent is harvested from.  Between them these cover the colors
-/// a tmTheme actually spends its palette on, so a theme's own reds and greens
-/// are found rather than approximated.
 const ACCENT_SCOPES: &[&str] = &[
     "keyword",
     "keyword.control",
@@ -226,39 +198,40 @@ const ACCENT_SCOPES: &[&str] = &[
     "markup.deleted",
 ];
 
-/// The hue each accent aims at, in degrees, with the fallback used when the
-/// theme has nothing near it.  The fallbacks are the base16-ocean accents.
-const ACCENT_TARGETS: &[(f64, Rgb)] = &[
-    (0.0, (191, 97, 106)),    // red
-    (25.0, (208, 135, 112)),  // orange
-    (48.0, (235, 203, 139)),  // yellow
-    (120.0, (163, 190, 140)), // green
-    (172.0, (150, 181, 180)), // teal
-    (192.0, (125, 207, 255)), // cyan
-    (215.0, (143, 161, 179)), // blue
-    (290.0, (187, 154, 247)), // magenta
+/// Oklch hue in degrees, each named color's sRGB angle taken at a mid-tone.
+/// These are the one thing not taken from the theme, because the interface
+/// spends them on meaning: `red` is a closed issue and a failed pipeline.
+const ACCENT_HUES: [f64; 8] = [
+    24.0,  // red
+    54.0,  // orange
+    95.0,  // yellow
+    143.0, // green
+    183.0, // teal
+    217.0, // cyan
+    257.0, // blue
+    320.0, // magenta
 ];
 
+fn hex(rgb: u32) -> Rgb {
+    Srgb::<u8>::from(rgb).into_format()
+}
+
 impl Accents {
-    /// Harvest the theme's syntax colors and sort them into the accent slots by
-    /// hue, so a theme's own green becomes the color that means "passing".
-    ///
-    /// A slot with no candidate within [`HUE_TOLERANCE`] keeps its fallback
-    /// hue, and every accent — harvested or not — is lifted until it is legible
-    /// on the theme's background.
     fn of(syntax: &syntect::highlighting::Theme, base: Rgb) -> Self {
-        /// How far, in degrees, a theme color may sit from an accent's target
-        /// hue and still stand in for it.  Wide enough to catch a theme's one
-        /// green, narrow enough that its red never becomes that green.
-        const HUE_TOLERANCE: f64 = 26.0;
-        /// The saturation a candidate needs before it counts as a color rather
-        /// than one more shade of gray.
-        const MIN_SATURATION: f64 = 0.22;
-        /// The lightness band a candidate has to sit in.  A theme's cream body
-        /// text is technically a yellow, and gruvbox's very nearly became the
-        /// one meaning "draft"; the ceiling keeps a near-white out of a slot
-        /// whose whole job is to stand apart from the text.
-        const LIGHTNESS: std::ops::RangeInclusive<f64> = 0.12..=0.85;
+        /// Past this the fill rate stops improving, and a window would reach
+        /// beyond the nearest neighbouring target, 30 degrees away.
+        const HUE_TOLERANCE: f64 = 30.0;
+        /// A theme's grays top out at 0.048; the one real accent this costs is
+        /// Nord's `#81a1c1` at 0.059.
+        ///
+        /// ponytail: slots rank on hue distance alone, so a washed-out
+        /// candidate inside the window beats a vivid one — at 0.05 gruvbox's
+        /// near-white `#fbf1c7` took the yellow slot from its `#fabd2f`.
+        /// Weight the distance by chroma to lower this floor.
+        const MIN_CHROMA: f64 = 0.06;
+        /// Only GitHub trips this: its `#003300` diff marker is a legible green
+        /// that reads as black beside the `#4f824a` the theme actually spends.
+        const MIN_LIGHTNESS: f64 = 0.35;
 
         let highlighter = Highlighter::new(syntax);
         let mut candidates: Vec<(f64, Rgb)> = ACCENT_SCOPES
@@ -266,26 +239,30 @@ impl Accents {
             .filter_map(|name| {
                 let stack = ScopeStack::from_str(name).ok()?;
                 let fg = highlighter.style_for_stack(stack.as_slice()).foreground;
+                // A scope the theme gives no rule answers with the body
+                // foreground, which is not one of its accents.
+                if syntax.settings.foreground == Some(fg) {
+                    return None;
+                }
                 let rgb = composite(fg, base);
-                let (h, s, l) = color::rgb_to_hsl(rgb);
-                (s >= MIN_SATURATION && LIGHTNESS.contains(&l)).then_some((h, rgb))
+                let oklch = Oklch::from_color(rgb);
+                (oklch.chroma >= MIN_CHROMA && oklch.l >= MIN_LIGHTNESS)
+                    .then_some((oklch.hue.into_positive_degrees(), rgb))
             })
             .collect();
-        // Several scopes commonly share one color; keeping duplicates would let
-        // two slots claim the same color through different scopes.
-        candidates.sort_unstable_by_key(|a| a.1);
-        candidates.dedup_by_key(|(_, rgb)| *rgb);
+        // Several scopes commonly share one color, and two slots must not
+        // claim it through different scopes.
+        let rendered = |rgb: &Rgb| rgb.into_format::<u8>().into_components();
+        candidates.sort_unstable_by_key(|(_, rgb)| rendered(rgb));
+        candidates.dedup_by_key(|(_, rgb)| rendered(rgb));
 
-        // Slots and colors are matched best-fit-first rather than in slot
-        // order.  Many themes carry one blue-green that both the cyan and blue
-        // targets sit within, and letting the earlier slot take it left the
-        // theme's signature blue standing in for cyan while blue fell back to a
-        // generic slate.  Sorting every pairing by how well it fits and handing
-        // out the closest first gives each color to the slot that wants it most.
-        let mut pairings: Vec<(f64, usize, usize)> = ACCENT_TARGETS
+        // Best fit first, not slot order: many themes carry one blue-green
+        // that both the cyan and blue targets sit within, and the earlier slot
+        // taking it leaves the other on a fallback.
+        let mut pairings: Vec<(f64, usize, usize)> = ACCENT_HUES
             .iter()
             .enumerate()
-            .flat_map(|(slot, (target, _))| {
+            .flat_map(|(slot, target)| {
                 candidates
                     .iter()
                     .enumerate()
@@ -297,20 +274,27 @@ impl Accents {
             .collect();
         pairings.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
 
-        let mut chosen: [Option<Rgb>; ACCENT_TARGETS.len()] = [None; ACCENT_TARGETS.len()];
+        let mut chosen: [Option<f64>; ACCENT_HUES.len()] = [None; ACCENT_HUES.len()];
         let mut taken = vec![false; candidates.len()];
         for (_, slot, cand) in pairings {
             if chosen[slot].is_none() && !taken[cand] {
-                chosen[slot] = Some(candidates[cand].1);
+                chosen[slot] = Some(candidates[cand].0);
                 taken[cand] = true;
             }
         }
 
-        // A slot the theme has no color for keeps its fallback hue, and every
-        // accent is lifted until it is legible on this theme's background.
+        // Only the hue is the theme's.  A tmTheme never meant these eight as a
+        // set, so taking their lightness and chroma too gives eight unrelated
+        // colors; at one register they read as a family and still carry the
+        // theme's own angles — Solarized's green stays olive.
+        let (lightness, chroma) = register(candidates.iter().map(|(_, c)| *c));
         let at = |slot: usize| {
-            let (_, fallback) = ACCENT_TARGETS[slot];
-            readable(chosen[slot].unwrap_or(fallback), base, TEXT_CONTRAST)
+            let hue = chosen[slot].unwrap_or(ACCENT_HUES[slot]);
+            readable(
+                fit_gamut(Oklch::new(lightness, chroma, hue)),
+                base,
+                TEXT_CONTRAST,
+            )
         };
         Self {
             red: at(0),
@@ -325,24 +309,14 @@ impl Accents {
     }
 }
 
-/// Drop a syntect color's alpha by blending it over `bg`, which is what the
-/// alpha means in a tmTheme: a wash laid over the background rather than a
-/// color in its own right.
+/// In a tmTheme, alpha means a wash laid over the background.
 fn composite(c: syntect::highlighting::Color, bg: Rgb) -> Rgb {
-    let t = f64::from(c.a) / 255.0;
-    mix(bg, (c.r, c.g, c.b), t)
+    bg.mix(highlight::opaque(c), f64::from(c.a) / 255.0)
 }
 
-/// A syntect color with its alpha ignored.
-const fn opaque(c: syntect::highlighting::Color) -> Rgb {
-    (c.r, c.g, c.b)
-}
-
-/// One accessor per theme color, so a call site names the color it wants and
-/// gets it from whichever theme is active.
 macro_rules! color_accessors {
     ($($name:ident),* $(,)?) => {
-        $(pub fn $name() -> Color { theme().$name })*
+        $(pub fn $name() -> Color { color(theme().$name) })*
     };
 }
 
@@ -373,35 +347,28 @@ color_accessors!(
     chord_dim,
 );
 
-/// Type alias for label name → hex color map (e.g. "#428BCA").
+/// Label name → GitLab's own hex color.
 pub type LabelColors = HashMap<String, String>;
 
-// ── Icons ──
-
-// State
 pub const ICON_OPEN: &str = "●";
 pub const ICON_CLOSED: &str = "✗";
 pub const ICON_MERGED: &str = "◆";
 pub const ICON_DRAFT: &str = "◌";
 
-// Pipeline
 pub const ICON_PIPELINE_OK: &str = "✓";
 pub const ICON_PIPELINE_FAIL: &str = "✗";
 pub const ICON_PIPELINE_RUN: &str = "⟳";
 pub const ICON_PIPELINE_WAIT: &str = "◷";
 
-// Status (work items)
 pub const ICON_REVIEW: &str = "◉";
 pub const ICON_BLOCKED: &str = "⊘";
 pub const ICON_PROGRESS: &str = "▶";
 
-// Tab / view
 pub const ICON_DASHBOARD: &str = "◈";
 pub const ICON_ISSUES: &str = "◉";
 pub const ICON_MRS: &str = "⑂";
 pub const ICON_PLANNING: &str = "▦";
 
-// General
 pub const ICON_SELECTOR: &str = " ▸ ";
 pub const ICON_SEPARATOR: &str = " │ ";
 pub const ICON_SECTION: &str = "◆";
@@ -409,8 +376,6 @@ pub const ICON_ARROW: &str = "→";
 pub const ICON_CHECK: &str = "✓";
 pub const ICON_UNCHECK: &str = "○";
 pub const ICON_LOADING: &str = "⟳";
-
-// ── Block Helpers ──
 
 pub fn block(title: &str) -> Block<'_> {
     Block::default()
@@ -431,123 +396,86 @@ pub fn overlay_block(title: &str) -> Block<'_> {
         .style(Style::default().bg(overlay()))
 }
 
-// ── Color Helpers ──
-
-/// Powerline right-arrow separator (requires Nerd Font / Powerline-patched font).
+/// Needs a Powerline-patched font.
 const PL: &str = "\u{E0B0}";
 
+/// Not a `DefaultHasher`: its seed changes between runs, so a label would not
+/// keep its color across restarts.
 fn djb2(text: &str) -> u32 {
     text.bytes().fold(5381u32, |h, b| {
         h.wrapping_mul(33).wrapping_add(u32::from(b))
     })
 }
 
-/// How many colors label chips are drawn from.
-///
-/// Twelve, not the sixteen a curated palette carried: at chip size the eye can
-/// only tell so many hues apart, and sixteen at one lightness meant several
-/// pairs no one could name apart.  Twelve is the classic wheel — thirty degrees
-/// a step — and collisions past it cost little, since the label's own text is
-/// what identifies it and the color only groups.
+/// Past twelve at one lightness the hues stop telling apart.
 const CHIP_COUNT: usize = 12;
 
-/// The theme's own eight accents.
 fn accents() -> [Rgb; 8] {
     let t = theme();
     [
         t.red, t.orange, t.yellow, t.green, t.teal, t.cyan, t.blue, t.magenta,
     ]
-    .map(color::channels)
 }
 
-/// The perceptual register the theme paints its accents in: the median
-/// lightness and chroma of the eight.
-///
-/// The median rather than any one accent, because a theme's own accents are
-/// all over the place — its yellow is far lighter than its blue — and a chip
-/// set built on that unevenness is what stops looking like a set.  Taking the
-/// middle of the theme's spread puts every chip in the same register the theme
-/// already works in, and does it without asking whether the theme is dark: a
-/// light theme's accents are simply darker, so its median is too.
-fn register() -> (f64, f64) {
-    let mut ls = [0.0; 8];
-    let mut cs = [0.0; 8];
-    for (i, accent) in accents().into_iter().enumerate() {
-        let (l, c, _) = color::rgb_to_oklch(accent);
-        ls[i] = l;
-        cs[i] = c;
+/// Oklch lightness and chroma, as medians: a theme's yellow is far lighter than
+/// its blue, and a set built on one color's numbers stops looking like a set.
+fn register(colors: impl IntoIterator<Item = Rgb>) -> (f64, f64) {
+    let mut ls = Vec::new();
+    let mut cs = Vec::new();
+    for c in colors {
+        let oklch = Oklch::from_color(c);
+        ls.push(oklch.l);
+        cs.push(oklch.chroma);
     }
-    let median = |mut v: [f64; 8]| {
-        v.sort_unstable_by(f64::total_cmp);
-        f64::midpoint(v[3], v[4])
+    let median = |mut v: Vec<f64>| match v.len() {
+        0 => 0.0,
+        n => {
+            v.sort_unstable_by(f64::total_cmp);
+            if n % 2 == 0 {
+                f64::midpoint(v[n / 2 - 1], v[n / 2])
+            } else {
+                v[n / 2]
+            }
+        }
     };
     (median(ls), median(cs))
 }
 
-/// The chip colors: `CHIP_COUNT` hues spaced evenly around the wheel, all at
-/// the theme's own lightness and chroma.
-///
-/// Evenly in Oklch, so the steps are evenly spaced to the eye rather than to
-/// the arithmetic — sRGB and HSL crowd several distinct-looking colors into the
-/// blues and stretch one green across a third of the wheel.  The ring starts at
-/// the theme's own blue, so two themes with the same register still get
-/// different chips.
+/// Even steps in Oklch, so they are even to the eye as sRGB and HSL are not.
+/// Starting at the theme's own blue, so two themes sharing a register still
+/// get different chips.
 fn chip_palette() -> [Rgb; CHIP_COUNT] {
-    let (l, c) = register();
-    let start = color::rgb_to_oklch(color::channels(theme().blue)).2;
+    let (l, c) = register(accents());
+    let start = Oklch::from_color(theme().blue).hue;
     #[allow(clippy::cast_precision_loss)]
     std::array::from_fn(|i| {
-        color::oklch_to_rgb((l, c, start + 360.0 * i as f64 / CHIP_COUNT as f64))
+        fit_gamut(Oklch::new(
+            l,
+            c,
+            start + 360.0 * i as f64 / CHIP_COUNT as f64,
+        ))
     })
 }
 
-/// The (fg, bg) pair for a chip colored `accent`.
-///
-/// The chip is the theme's backdrop tinted toward the color, with the color
-/// itself as the text, lifted only as far as the tint costs it — the same
-/// recipe the filter and sort chips already use, so labels sit in the same
-/// visual register as the rest of the interface.
 fn chip(accent: Rgb) -> (Color, Color) {
-    let bg = mix(color::channels(theme().base), accent, 0.22);
+    let bg = theme().base.mix(accent, 0.22);
     (color(readable(accent, bg, TEXT_CONTRAST)), color(bg))
 }
 
-/// Pick one of the theme's chip colors for `text`, deterministically.
 fn palette_color(text: &str) -> (Color, Color) {
     chip(chip_palette()[djb2(text) as usize % CHIP_COUNT])
 }
 
-/// Parse "#FF0000" → (255, 0, 0).
-fn parse_hex_color(hex: &str) -> Option<Rgb> {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 {
-        return None;
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some((r, g, b))
-}
-
-/// Derive a chip from a server-provided hex label color.
-///
-/// GitLab's hue is kept — a red label stays red — but the lightness and chroma
-/// come from the theme's register, so the color arrives as one of the family
-/// instead of dropping a raw web color into it.  A label colored gray has no
-/// hue worth keeping and becomes a neutral chip.
 fn color_pair_from_hex(hex: &str) -> Option<(Color, Color)> {
-    let (_, chroma, hue) = color::rgb_to_oklch(parse_hex_color(hex)?);
-    if chroma < 0.03 {
-        return Some(chip(color::channels(theme().text_dim)));
+    let server = Oklch::from_color(Rgb::from_str(hex).ok()?);
+    // A gray label has no hue worth keeping, and re-registering one invents it.
+    if server.chroma < 0.03 {
+        return Some(chip(theme().text_dim));
     }
-    let (l, c) = register();
-    Some(chip(color::oklch_to_rgb((l, c, hue))))
+    let (l, c) = register(accents());
+    Some(chip(fit_gamut(Oklch::new(l, c, server.hue))))
 }
 
-// ── Label Rendering ──
-
-/// Resolve the (fg, bg) for each segment of a label.
-/// First segment uses server color when available; rest come from the theme.
 fn segment_colors(segments: &[&str], server_color: Option<&str>) -> Vec<(Color, Color)> {
     segments
         .iter()
@@ -564,9 +492,7 @@ fn segment_colors(segments: &[&str], server_color: Option<&str>) -> Vec<(Color, 
         .collect()
 }
 
-/// Render a label as powerline-style chip spans.
-/// Scoped labels (`a::b::c`) become colored segments joined by powerline arrows.
-/// Non-scoped labels use server color when available, else the theme's palette.
+/// A scoped label (`a::b::c`) becomes one colored segment per part.
 pub fn label_spans(label: &str, server_color: Option<&str>) -> Vec<Span<'static>> {
     let segments: Vec<&str> = glab_core::label::segments(label).collect();
     let colors = segment_colors(&segments, server_color);
@@ -575,7 +501,6 @@ pub fn label_spans(label: &str, server_color: Option<&str>) -> Vec<Span<'static>
         let (fg, bg) = colors[0];
         return vec![
             Span::styled(label.to_string(), Style::default().fg(fg).bg(bg)),
-            // Trailing arrow tapers into surrounding background
             Span::styled(PL, Style::default().fg(bg)),
         ];
     }
@@ -591,26 +516,22 @@ pub fn label_spans(label: &str, server_color: Option<&str>) -> Vec<Span<'static>
         spans.push(Span::styled((*seg).to_string(), style));
 
         if i < segments.len() - 1 {
-            // Powerline arrow: prev_bg → next_bg
             let next_bg = colors[i + 1].1;
             spans.push(Span::styled(PL, Style::default().fg(bg).bg(next_bg)));
         } else {
-            // Trailing arrow tapers into surrounding background
             spans.push(Span::styled(PL, Style::default().fg(bg)));
         }
     }
     spans
 }
 
-/// Visual width of a label chip (segments + powerline separators).
+/// Separators included.
 fn label_chip_width(label: &str) -> usize {
     let n: Vec<&str> = glab_core::label::segments(label).collect();
     let text: usize = n.iter().map(|s| s.len()).sum();
-    // Each segment boundary + trailing arrow
     text + n.len()
 }
 
-/// Render labels as chip-style spans for table cells, truncating to fit width.
 pub fn labels_compact(labels: &[String], max_width: usize, colors: &LabelColors) -> Line<'static> {
     if labels.is_empty() {
         return Line::from("");
@@ -644,8 +565,6 @@ pub fn labels_compact(labels: &[String], max_width: usize, colors: &LabelColors)
     }
     Line::from(spans)
 }
-
-// ── Styles ──
 
 pub fn title_style() -> Style {
     Style::default().fg(cyan()).add_modifier(Modifier::BOLD)
@@ -717,7 +636,6 @@ pub fn status_style(status: &str) -> Style {
     }
 }
 
-/// Icon for work item custom status.
 pub fn status_icon(status: &str) -> &'static str {
     let lower = status.to_lowercase();
     if lower.contains("done") {
@@ -756,7 +674,6 @@ pub fn help_desc_style() -> Style {
     Style::default().fg(text_dim())
 }
 
-// Overlay-specific help styles (higher contrast for WCAG AA on overlay() bg)
 pub fn overlay_key_style() -> Style {
     Style::default().fg(cyan()).add_modifier(Modifier::BOLD)
 }
@@ -792,8 +709,6 @@ pub fn row_alt_style() -> Style {
     Style::default().bg(row_alt_bg())
 }
 
-/// The separator between two metadata chips in a compact header: dim enough to
-/// group the chips without competing with them.
 pub fn chip_sep() -> Span<'static> {
     Span::styled("  \u{00B7}  ", Style::default().fg(border()))
 }
@@ -802,24 +717,23 @@ pub fn section_header_style() -> Style {
     Style::default().fg(magenta()).add_modifier(Modifier::BOLD)
 }
 
-/// Serializes the tests that read or flip the active palette.  The palette is
-/// process-wide, and the test harness runs a binary's tests in parallel, so
-/// without this a test that switches themes could recolor another mid-assert.
+/// The active palette is process-wide and the harness runs tests in parallel,
+/// so a test that switches themes would recolor another mid-assert.
 #[cfg(test)]
 pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_THEME, TEST_LOCK, THEMES, contrast, label_spans, set_theme, text, theme,
-        theme_name, theme_names,
+        DEFAULT_THEME, Rgb, TEST_LOCK, THEMES, label_spans, set_theme, text, theme, theme_name,
+        theme_names,
     };
+    use palette::Srgb;
+    use palette::color_difference::Wcag21RelativeContrast;
 
-    /// Turn a ratatui color back into channels, so a test can do contrast math
-    /// on what a theme actually exposes.
-    fn rgb(c: ratatui::style::Color) -> (u8, u8, u8) {
+    fn rgb(c: ratatui::style::Color) -> Rgb {
         match c {
-            ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+            ratatui::style::Color::Rgb(r, g, b) => Srgb::new(r, g, b).into_format(),
             other => panic!("theme colors are always RGB, got {other:?}"),
         }
     }
@@ -835,12 +749,9 @@ mod tests {
             THEMES.len()
         );
         for theme in THEMES.iter() {
-            let base = rgb(theme.base);
-            let overlay = rgb(theme.overlay);
+            let (base, overlay) = (theme.base, theme.overlay);
             let name = &theme.name;
 
-            // Body text and every accent have to clear AA on the background
-            // they are drawn over, whatever the theme itself specified.
             for (label, color) in [
                 ("text", theme.text),
                 ("red", theme.red),
@@ -852,20 +763,19 @@ mod tests {
                 ("orange", theme.orange),
                 ("teal", theme.teal),
             ] {
-                let ratio = contrast(rgb(color), base);
+                let ratio = color.relative_contrast(base);
                 assert!(ratio >= 4.4, "{name}: {label} is {ratio:.2}:1 on the base");
             }
-            let dim = contrast(rgb(theme.text_dim), base);
+            let dim = theme.text_dim.relative_contrast(base);
             assert!(dim >= 2.9, "{name}: dim text is {dim:.2}:1 on the base");
-            let modal = contrast(rgb(theme.overlay_text), overlay);
+            let modal = theme.overlay_text.relative_contrast(overlay);
             assert!(
                 modal >= 4.4,
                 "{name}: modal text is {modal:.2}:1 on overlay"
             );
 
-            // A modal that does not separate from the page is not a modal.
             assert!(
-                contrast(overlay, base) >= 1.12,
+                overlay.relative_contrast(base) >= 1.12,
                 "{name}: the overlay does not lift off the base"
             );
         }
@@ -879,8 +789,6 @@ mod tests {
         let light = THEMES.iter().filter(|t| !t.dark).count();
         assert!(light >= 3, "the light themes should be recognized as light");
 
-        // Solarized's palette is nothing like Dracula's; deriving from each
-        // theme's own syntax colors has to show that.
         assert!(set_theme("Solarized (dark)"));
         let solarized = text();
         assert!(set_theme("Dracula"));
@@ -900,8 +808,6 @@ mod tests {
         assert!(set_theme("Catppuccin Latte"));
         assert!(!theme().dark);
         assert_ne!(text(), dark_text);
-        // The chips are tinted from the theme's own backdrop, so a new theme
-        // repaints them.
         assert_ne!(label_spans("backend", None)[0].style.bg, dark_chip);
 
         assert!(!set_theme("no such theme"));
@@ -913,33 +819,31 @@ mod tests {
 
     #[test]
     fn the_chip_ring_is_one_register_and_even_hue_steps() {
-        use crate::ui::color::rgb_to_oklch;
+        use palette::{FromColor, Oklch};
 
         let _guard = TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for name in theme_names() {
             assert!(set_theme(&name));
-            let ring = super::chip_palette().map(rgb_to_oklch);
+            let ring = super::chip_palette().map(Oklch::<f64>::from_color);
+            let hue = |c: Oklch<f64>| c.hue.into_positive_degrees();
 
-            // The whole point of building the ring in Oklch: every chip is a
-            // sibling of the others, at one perceptual lightness.  Chroma may
-            // fall short of the register where sRGB cannot show it, but never
-            // to gray, or the hue stops reading.
-            for &(l, c, _) in &ring {
+            // Chroma may fall short of the register where sRGB cannot show it,
+            // but never to gray, or the hue stops reading.
+            for chip in &ring {
                 assert!(
-                    (l - ring[0].0).abs() < 0.02,
-                    "{name}: chip lightness {l:.3} drifts from {:.3}",
-                    ring[0].0
+                    (chip.l - ring[0].l).abs() < 0.02,
+                    "{name}: chip lightness {:.3} drifts from {:.3}",
+                    chip.l,
+                    ring[0].l
                 );
-                assert!(c > 0.02, "{name}: a chip came out gray at {c:.3}");
+                assert!(chip.chroma > 0.02, "{name}: a chip came out gray");
             }
 
-            // Evenly spaced to the eye, which is what sRGB and HSL cannot do:
-            // every step around the ring is the same size.
-            let step = (ring[1].2 - ring[0].2).rem_euclid(360.0);
+            let step = (hue(ring[1]) - hue(ring[0])).rem_euclid(360.0);
             for pair in ring.windows(2) {
-                let gap = (pair[1].2 - pair[0].2).rem_euclid(360.0);
+                let gap = (hue(pair[1]) - hue(pair[0])).rem_euclid(360.0);
                 assert!(
                     (gap - step).abs() < 8.0,
                     "{name}: hue step {gap:.1}° is not the ring's {step:.1}°"
@@ -956,32 +860,25 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for name in theme_names() {
             assert!(set_theme(&name));
-            // A hashed label, a saturated server color and a gray one.
             for (label, color) in [
                 ("backend", None),
                 ("priority::high", Some("#D9534F")),
                 ("stale", Some("#666666")),
             ] {
                 let span = &label_spans(label, color)[0];
-                let ratio = contrast(rgb(span.style.fg.unwrap()), rgb(span.style.bg.unwrap()));
+                let ratio =
+                    rgb(span.style.fg.unwrap()).relative_contrast(rgb(span.style.bg.unwrap()));
                 assert!(ratio >= 4.4, "{name}: chip {label} is {ratio:.2}:1");
             }
         }
         assert!(set_theme(DEFAULT_THEME));
     }
 
-    /// Every token in a code block stays at least as readable on the panel
-    /// `derive` lifts off the theme's background as the theme made it on that
-    /// background itself.
-    ///
-    /// Lives here rather than in `highlight` because the panel is `code_bg`,
-    /// and a test that re-derived it would drift the moment the recipe changed.
     /// The theme's own choice is the floor, not a fixed ratio: a comment is
-    /// meant to recede, and forcing it to body-text contrast would be as wrong
-    /// as letting it vanish.
+    /// meant to recede, and forcing it to body contrast would be as wrong as
+    /// letting it vanish.
     #[test]
     fn no_token_reads_worse_on_the_code_panel_than_the_theme_intended() {
-        use crate::ui::color::channels;
         use crate::ui::highlight::code_lines;
 
         const SAMPLE: &str = "// a comment\nlet s = \"text\";\nfn f(x: u32) -> u32 { x + 1 }";
@@ -991,7 +888,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for name in theme_names() {
             assert!(set_theme(&name));
-            let (base, panel) = (super::base(), super::code_bg());
+            let (base, panel) = (theme().base, theme().code_bg);
             let on_base = code_lines("rust", SAMPLE, &name, base).expect("rust is known");
             let on_panel = code_lines("rust", SAMPLE, &name, panel).expect("rust is known");
 
@@ -999,8 +896,8 @@ mod tests {
                 if want.content.trim().is_empty() {
                     continue;
                 }
-                let intended = contrast(channels(want.style.fg.unwrap()), channels(base)).min(4.5);
-                let actual = contrast(channels(got.style.fg.unwrap()), channels(panel));
+                let intended = rgb(want.style.fg.unwrap()).relative_contrast(base).min(4.5);
+                let actual = rgb(got.style.fg.unwrap()).relative_contrast(panel);
                 assert!(
                     actual >= intended - 0.05,
                     "{name}: {:?} reads at {actual:.2}:1 on the panel, \
@@ -1029,10 +926,7 @@ mod dump {
     #[test]
     #[ignore = "a review aid: prints every derived palette for a human to look at"]
     fn palettes() {
-        let h = |c: ratatui::style::Color| match c {
-            ratatui::style::Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
-            _ => unreachable!(),
-        };
+        let h = |c: super::Rgb| format!("#{:x}", c.into_format::<u8>());
         for t in super::THEMES.iter() {
             println!(
                 "{:<24} {} base={} text={} ovl={} | r={} g={} y={} b={} m={} c={}",
@@ -1054,7 +948,10 @@ mod dump {
 
 #[cfg(test)]
 mod code_contrast {
-    use super::{THEMES, contrast};
+    use super::THEMES;
+    use crate::ui::highlight::opaque;
+    use palette::Srgb;
+    use palette::color_difference::Wcag21RelativeContrast;
     use std::str::FromStr;
     use syntect::highlighting::Highlighter;
     use syntect::parsing::ScopeStack;
@@ -1062,10 +959,6 @@ mod code_contrast {
     #[test]
     #[ignore = "probe"]
     fn comment_over_code_bg() {
-        let rgb = |c: ratatui::style::Color| match c {
-            ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
-            _ => unreachable!(),
-        };
         let mut worst: Vec<(f64, f64, String)> = Vec::new();
         for t in THEMES.iter() {
             let syntax = crate::ui::highlight::theme(&t.name).unwrap();
@@ -1073,19 +966,40 @@ mod code_contrast {
             let base = syntax
                 .settings
                 .background
-                .map_or((0, 0, 0), |c| (c.r, c.g, c.b));
+                .map_or_else(|| Srgb::new(0.0, 0.0, 0.0), opaque);
             for scope in ["comment", "string", "keyword"] {
                 let st = ScopeStack::from_str(scope).unwrap();
-                let fg = h.style_for_stack(st.as_slice()).foreground;
-                let fg = (fg.r, fg.g, fg.b);
-                let on_theme = contrast(fg, base);
-                let on_code = contrast(fg, rgb(t.code_bg));
+                let fg = opaque(h.style_for_stack(st.as_slice()).foreground);
+                let on_theme = fg.relative_contrast(base);
+                let on_code = fg.relative_contrast(t.code_bg);
                 worst.push((on_code, on_theme, format!("{} {scope}", t.name)));
             }
         }
         worst.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (on_code, on_theme, what) in worst.iter().take(12) {
             println!("{on_code:5.2} on code_bg (was {on_theme:5.2} on theme bg)  {what}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod probe7 {
+    #[test]
+    #[ignore = "probe"]
+    fn raw_settings() {
+        for name in crate::ui::highlight::theme_names() {
+            let s = &crate::ui::highlight::theme(&name).unwrap().settings;
+            let f = |c: Option<syntect::highlighting::Color>| match c {
+                Some(c) => format!("#{:02x}{:02x}{:02x}/a{:02x}", c.r, c.g, c.b, c.a),
+                None => "        NONE  ".to_string(),
+            };
+            println!(
+                "{:<24} bg={} fg={} sel={}",
+                name,
+                f(s.background),
+                f(s.foreground),
+                f(s.selection)
+            );
         }
     }
 }
