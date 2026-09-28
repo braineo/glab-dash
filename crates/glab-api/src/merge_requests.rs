@@ -13,7 +13,7 @@ use glab_core::domain::MergeRequest;
 use urlencoding::encode;
 
 use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload, join_walks};
-use crate::wire::{GqlProjectMrs, GqlUserMrs};
+use crate::wire::{project_mrs, user_mrs};
 
 /// The selection every merge-request query and mutation shares.
 const MR_FIELDS: &str = r"
@@ -105,15 +105,19 @@ impl GitLabClient {
             let updated_after = updated_after.map(str::to_string);
             set.spawn(async move {
                 let mrs = client
-                    .paginate::<MergeRequest, GqlProjectMrs>("listProjectMrs", &query, |after| {
-                        serde_json::json!({
-                            "projectPath": project,
-                            "state": state_value(state),
-                            "updatedAfter": updated_after,
-                            "after": after,
-                            "first": PAGE_SIZE,
-                        })
-                    })
+                    .paginate::<MergeRequest, project_mrs::Query>(
+                        "listProjectMrs",
+                        &query,
+                        |after| {
+                            serde_json::json!({
+                                "projectPath": project,
+                                "state": state_value(state),
+                                "updatedAfter": updated_after,
+                                "after": after,
+                                "first": PAGE_SIZE,
+                            })
+                        },
+                    )
                     .await;
                 (idx, mrs)
             });
@@ -217,7 +221,7 @@ impl GitLabClient {
             MR_FIELDS,
         );
 
-        self.paginate::<MergeRequest, GqlUserMrs>("listUserMrs", &query, |after| {
+        self.paginate::<MergeRequest, user_mrs::Query>("listUserMrs", &query, |after| {
             serde_json::json!({
                 "username": member,
                 "state": state_value(state),
@@ -283,7 +287,7 @@ impl GitLabClient {
     /// Run `mutation` against the merge request `iid` in `project` and read the
     /// merge request back. `input` carries the fields the mutation changes; the
     /// project path and iid that address it are filled in here.
-    async fn mr_mutation(
+    pub(crate) async fn mr_mutation(
         &self,
         mutation: &'static str,
         input_type: &str,

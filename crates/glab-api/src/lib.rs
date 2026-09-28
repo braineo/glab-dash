@@ -6,7 +6,7 @@
 //! cover (notes, discussions, related items, approvals, merges, labels, user
 //! search). Wire
 //! shapes stay inside: a caller passes plain arguments and gets
-//! [`glab_core::domain`] types back, so the `Gql*` structs, the query documents
+//! [`glab_core::domain`] types back, so the `wire` shapes, the query documents
 //! and GitLab's own error envelopes never reach the layers above.
 //!
 //! The client owns one round-trip per method, plus the cursor pagination a

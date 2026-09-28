@@ -106,8 +106,8 @@ pub trait Item {
 
 pub(super) const STATE_OPENED: &str = "opened";
 
-/// How one item stands to another, named from the holder's side:
-/// [`Relation::Blocks`] means the item holding this blocks the one it names.
+/// How one item stands to another, named from the item's own side:
+/// [`Relation::Blocks`] means the item carrying this blocks the one it names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Relation {
@@ -122,7 +122,7 @@ pub enum Relation {
 }
 
 impl Relation {
-    /// What the links endpoint accepts; GitLab derives the rest.
+    /// What `workItemAddLinkedItems` accepts; GitLab derives the rest.
     pub const LINKABLE: [Relation; 3] =
         [Relation::BlockedBy, Relation::Blocks, Relation::RelatesTo];
 
@@ -149,14 +149,13 @@ impl Relation {
     }
 }
 
-/// A relation and enough of the item it names to show a row without fetching
+/// A relation and enough of the item it names to show it without fetching
 /// it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelatedItem {
     pub relation: Relation,
-    /// The link's own id, which is what a delete addresses.  `None` when
-    /// GitLab derives the relation, leaving nothing to delete.
-    pub link_id: Option<u64>,
+    /// The related item's id
+    pub gid: String,
     pub item: ItemRef,
     pub title: String,
     pub state: String,
@@ -176,6 +175,13 @@ impl RelatedItem {
     /// By relation, and within one, open before settled.
     pub fn rank(&self) -> (u8, bool) {
         (self.relation.rank(), !self.is_open())
+    }
+
+    /// Whether relation can be removed
+    pub fn is_unlinkable(&self, item_kind: ItemKind) -> bool {
+        item_kind == ItemKind::Issue
+            && self.item.kind == ItemKind::Issue
+            && Relation::LINKABLE.contains(&self.relation)
     }
 }
 
@@ -201,7 +207,7 @@ mod tests {
     fn blockers_sort_above_everything_and_open_above_settled() {
         let related = |relation, state: &str| RelatedItem {
             relation,
-            link_id: Some(1),
+            gid: "gid://gitlab/WorkItem/1".to_string(),
             item: ItemRef::issue("g/p", "1"),
             title: String::new(),
             state: state.to_string(),

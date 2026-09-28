@@ -1,13 +1,23 @@
-use glab_core::domain::{ItemRef, RelatedItem};
+use glab_core::domain::{Item, ItemKind, RelatedItem};
 
 use crate::app::View;
 use crate::binding_group;
 use crate::keybindings::BindingGroup;
 
-/// What a detail view needs from `AppData` to answer a key.
 pub struct DetailCtx<'a> {
-    pub item: ItemRef,
+    pub kind: ItemKind,
+    pub gid: String,
     pub related: &'a [RelatedItem],
+}
+
+impl<'a> DetailCtx<'a> {
+    pub fn of(item: &impl Item, related: &'a [RelatedItem]) -> Self {
+        Self {
+            kind: item.kind(),
+            gid: item.gid().to_string(),
+            related,
+        }
+    }
 }
 
 binding_group! {

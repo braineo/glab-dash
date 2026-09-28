@@ -3,9 +3,10 @@
 //!
 //! What a relation means, how it sorts and whether it can be dropped are the
 //! domain's answers; this spends them on icons, colors and keys.
+use std::collections::HashMap;
 
 use glab_core::domain::{Issue, Item, MergeRequest};
-use glab_core::domain::{ItemKind, ItemRef, RelatedItem, Relation};
+use glab_core::domain::{ItemKind, RelatedItem, Relation};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
@@ -31,15 +32,15 @@ pub fn handle_key(
     fx: &mut Effects<'_>,
 ) -> EventResult {
     match action {
-        KeyAction::AddLink => *overlay = pick_relation(cx.item.clone()),
+        KeyAction::AddLink => *overlay = pick_relation(cx.kind, cx.gid.clone()),
         KeyAction::RemoveLink => {
-            // Off the section, or a derived relation with no link to delete.
-            let Some(link_id) = at_cursor(cx.related, body).and_then(|r| r.link_id) else {
+            let Some(target) = at_cursor(cx.related, body).filter(|r| r.is_unlinkable(cx.kind))
+            else {
                 return EventResult::Bubble;
             };
             fx.cmds.push(Cmd::RemoveLink {
-                item: cx.item.clone(),
-                link_id,
+                gid: cx.gid.clone(),
+                target_gid: target.gid.clone(),
             });
         }
         _ => return EventResult::Bubble,
@@ -162,8 +163,8 @@ fn choices(kind: ItemKind) -> Vec<(&'static str, Choice)> {
 }
 
 /// `L`, first half: which relation, which also decides what is picked from.
-fn pick_relation(item: ItemRef) -> Overlay {
-    let choices = choices(item.kind);
+fn pick_relation(kind: ItemKind, gid: String) -> Overlay {
+    let choices = choices(kind);
     let labels: Vec<String> = choices
         .iter()
         .map(|(label, _)| (*label).to_string())
@@ -174,102 +175,103 @@ fn pick_relation(item: ItemRef) -> Overlay {
             let Some(&(label, choice)) = choices.iter().find(|(l, _)| *l == picked) else {
                 return;
             };
-            let item = item.clone();
+            let gid = gid.clone();
             app.ui.overlay = match choice {
-                Choice::Link(relation) => pick_target(
-                    label,
-                    issue_rows(&app.data.issues, &item),
-                    move |item, target| Cmd::AddLink {
-                        item,
-                        target,
+                Choice::Link(relation) => {
+                    let rows = issue_rows(&app.data.issues, &gid);
+                    pick_target(label, rows, move |picked| Cmd::AddLink {
+                        gid: gid.clone(),
+                        target_gid: picked.gid,
                         relation,
-                    },
-                    item,
-                ),
+                    })
+                }
                 // Whichever side is the merge request holds the line, so an
                 // issue picks a merge request and a merge request an issue.
                 Choice::Mention(relation) => {
-                    let rows = match item.kind {
-                        ItemKind::Issue => mr_rows(&app.data.mrs, &item),
-                        ItemKind::MergeRequest => issue_rows(&app.data.issues, &item),
+                    let rows = match kind {
+                        ItemKind::Issue => mr_rows(&app.data.mrs, &gid),
+                        ItemKind::MergeRequest => issue_rows(&app.data.issues, &gid),
                     };
-                    pick_target(
-                        label,
-                        rows,
-                        move |item, picked| mention(item, picked, relation),
-                        item,
-                    )
+                    pick_target(label, rows, move |picked| {
+                        mention(kind, gid.clone(), picked.gid, relation)
+                    })
                 }
             };
         }),
     }
 }
 
-/// Whichever side is the merge request holds the line; the other is what it
-/// names.  `item` is the view that asked, and so the one that re-reads.
-fn mention(item: ItemRef, picked: ItemRef, relation: Relation) -> Cmd {
-    let (mr, target) = if item.kind == ItemKind::MergeRequest {
-        (item.clone(), picked)
+/// Whichever side is the merge request carries the line; the other is what it
+/// names.  `kind` and `view_gid` are the view that asked, `picked` the other
+/// side of the pair.
+fn mention(kind: ItemKind, view_gid: String, picked: String, relation: Relation) -> Cmd {
+    let (gid, target_gid) = if kind == ItemKind::MergeRequest {
+        (view_gid, picked)
     } else {
-        (picked, item.clone())
+        (picked, view_gid)
     };
     Cmd::MentionInMr {
-        item,
-        mr,
-        target,
+        gid,
+        target_gid,
         relation,
     }
 }
 
-/// `L`, second half: which item.  The reference leads each row, so the pick
-/// alone says which item it was.
+/// What the picker shows for one item, and the gid of the item that row is.
+/// They travel together so a pick never has to be read back out of its label.
+#[derive(Clone)]
+struct TargetRow {
+    label: String,
+    subtitle: String,
+    gid: String,
+}
+
+/// `L`, second half: which item.
 fn pick_target(
     label: &str,
-    (items, subtitles): (Vec<String>, Vec<String>),
-    cmd: impl Fn(ItemRef, ItemRef) -> Cmd + 'static,
-    item: ItemRef,
+    rows: Vec<TargetRow>,
+    cmd: impl Fn(TargetRow) -> Cmd + 'static,
 ) -> Overlay {
+    let mut labels = Vec::with_capacity(rows.len());
+    let mut subtitles = Vec::with_capacity(rows.len());
+    let mut by_label = HashMap::with_capacity(rows.len());
+    for row in rows {
+        labels.push(row.label.clone());
+        subtitles.push(row.subtitle.clone());
+        by_label.insert(row.label.clone(), row);
+    }
     Overlay::Picker {
-        state: PickerState::new(&format!("Link \u{2014} {label}"), items, false)
+        state: PickerState::new(&format!("Link \u{2014} {label}"), labels, false)
             .with_subtitles(subtitles),
         on_complete: Box::new(move |values, app| {
-            let target = values
-                .first()
-                .and_then(|picked| picked.split_whitespace().next())
-                .and_then(ItemRef::parse);
-            let Some(target) = target else {
+            let Some(picked) = values.first().and_then(|label| by_label.get(label)) else {
                 return;
             };
-            app.ui.pending_cmds.push(cmd(item.clone(), target));
+            app.ui.pending_cmds.push(cmd(picked.clone()));
         }),
     }
 }
 
 /// An issue's own name for its state beats the raw one, which is what the rest
 /// of the app shows.
-fn issue_rows(issues: &[Issue], self_ref: &ItemRef) -> (Vec<String>, Vec<String>) {
-    rows(issues, self_ref, |i| {
+fn issue_rows(issues: &[Issue], self_gid: &str) -> Vec<TargetRow> {
+    rows(issues, self_gid, |i| {
         i.status_name().unwrap_or(&i.state).to_string()
     })
 }
 
-fn mr_rows(mrs: &[MergeRequest], self_ref: &ItemRef) -> (Vec<String>, Vec<String>) {
-    rows(mrs, self_ref, |m| m.state.clone())
+fn mr_rows(mrs: &[MergeRequest], self_gid: &str) -> Vec<TargetRow> {
+    rows(mrs, self_gid, |m| m.state.clone())
 }
 
 /// One row per item, the item itself left out: nothing relates to itself.
 ///
 /// ponytail: offers only what has been fetched; naming something outside the
 /// team's scope needs free text in the picker.
-fn rows<T: Item>(
-    items: &[T],
-    self_ref: &ItemRef,
-    state: impl Fn(&T) -> String,
-) -> (Vec<String>, Vec<String>) {
-    let self_reference = self_ref.reference();
+fn rows<T: Item>(items: &[T], self_gid: &str, state: impl Fn(&T) -> String) -> Vec<TargetRow> {
     items
         .iter()
-        .filter(|i| i.reference() != self_reference)
+        .filter(|i| i.gid() != self_gid)
         .map(|i| {
             let assignees: Vec<&str> = i.assignees().iter().map(|a| a.username.as_str()).collect();
             let who = if assignees.is_empty() {
@@ -277,9 +279,13 @@ fn rows<T: Item>(
             } else {
                 format!("  @{}", assignees.join(" @"))
             };
-            (format!("{}  {}", i.reference(), i.title()), state(i) + &who)
+            TargetRow {
+                label: format!("{}  {}", i.reference(), i.title()),
+                subtitle: state(i) + &who,
+                gid: i.gid().to_string(),
+            }
         })
-        .unzip()
+        .collect()
 }
 
 #[cfg(test)]
@@ -294,10 +300,10 @@ mod tests {
     use crate::ui::views::DetailCtx;
     use glab_core::domain::ItemKind;
 
-    fn related(relation: Relation, link_id: Option<u64>, iid: &str) -> RelatedItem {
+    fn related(relation: Relation, gid: &str, iid: &str) -> RelatedItem {
         RelatedItem {
             relation,
-            link_id,
+            gid: gid.to_string(),
             item: ItemRef::issue("team/infra", iid),
             title: "a related issue".to_string(),
             state: "opened".to_string(),
@@ -316,9 +322,9 @@ mod tests {
     #[test]
     fn every_related_row_answers_with_its_own_relation() {
         let items = vec![
-            related(Relation::BlockedBy, Some(1), "11"),
-            related(Relation::Blocks, Some(2), "12"),
-            related(Relation::RelatesTo, Some(3), "13"),
+            related(Relation::BlockedBy, "gid://gitlab/WorkItem/1", "11"),
+            related(Relation::Blocks, "gid://gitlab/WorkItem/2", "12"),
+            related(Relation::RelatesTo, "gid://gitlab/WorkItem/3", "13"),
         ];
         let mut body = body(&items);
 
@@ -327,12 +333,12 @@ mod tests {
 
         for row in 0..body.rows().len() {
             let expected = match body.rows()[row] {
-                Row::Related(i) => items[i].link_id,
+                Row::Related(i) => Some(items[i].gid.clone()),
                 _ => None,
             };
             body.set_cursor(row);
             assert_eq!(
-                at_cursor(&items, &body).and_then(|r| r.link_id),
+                at_cursor(&items, &body).map(|r| r.gid.clone()),
                 expected,
                 "row {row}"
             );
@@ -343,23 +349,23 @@ mod tests {
     /// same merge request.
     #[test]
     fn a_mention_is_written_to_whichever_side_is_the_merge_request() {
-        let issue = ItemRef::issue("team/app", "1");
-        let mr = ItemRef::merge_request("team/app", "7");
+        const MR: &str = "gid://gitlab/MergeRequest/7";
+        const ISSUE: &str = "gid://gitlab/Issue/1";
 
-        for (item, picked) in [(issue.clone(), mr.clone()), (mr.clone(), issue.clone())] {
-            let asked = item.clone();
+        for (kind, view, picked) in [
+            (ItemKind::Issue, ISSUE, MR),
+            (ItemKind::MergeRequest, MR, ISSUE),
+        ] {
             let Cmd::MentionInMr {
-                item: refreshed,
-                mr: written,
-                target,
+                gid,
+                target_gid,
                 relation,
-            } = mention(item, picked, Relation::Closes)
+            } = mention(kind, view.to_string(), picked.to_string(), Relation::Closes)
             else {
                 panic!("a mention is a mention");
             };
-            assert_eq!(written, mr);
-            assert_eq!(target, issue);
-            assert_eq!(refreshed, asked, "the view that asked re-reads");
+            assert_eq!(gid, MR, "the merge request is the side written");
+            assert_eq!(target_gid, ISSUE);
             assert_eq!(relation, Relation::Closes);
         }
     }
@@ -388,20 +394,28 @@ mod tests {
     }
 
     #[test]
-    fn a_derived_relation_refuses_to_be_unlinked() {
+    fn only_a_stored_link_between_two_issues_can_be_unlinked() {
         let items = vec![
-            related(Relation::ClosedBy, None, "11"),
-            related(Relation::RelatesTo, Some(7), "12"),
+            related(Relation::ClosedBy, "gid://gitlab/MergeRequest/11", "11"),
+            RelatedItem {
+                relation: Relation::RelatesTo,
+                gid: "gid://gitlab/MergeRequest/9".to_string(),
+                item: ItemRef::merge_request("team/infra", "9"),
+                title: "a related merge request".to_string(),
+                state: "opened".to_string(),
+                web_url: String::new(),
+            },
+            related(Relation::RelatesTo, "gid://gitlab/WorkItem/7", "12"),
         ];
         let mut body = body(&items);
         let mut overlay = Overlay::None;
         let mut dirty = Dirty::default();
-        let mut cmds = Vec::new();
         let mut redraw = false;
 
-        let mut unlink = |body: &DetailBody, cmds: &mut Vec<Cmd>| {
+        let mut unlink = |kind: ItemKind, body: &DetailBody, cmds: &mut Vec<Cmd>| {
             let cx = DetailCtx {
-                item: ItemRef::issue("team/app", "1"),
+                kind,
+                gid: "gid://gitlab/WorkItem/1".to_string(),
                 related: &items,
             };
             let mut fx = Effects {
@@ -415,15 +429,38 @@ mod tests {
         let rows: Vec<usize> = (0..body.rows().len())
             .filter(|&r| matches!(body.rows()[r], Row::Related(_)))
             .collect();
+        let mut cmds = Vec::new();
 
         body.set_cursor(rows[0]);
-        assert!(!unlink(&body, &mut cmds), "a derived relation has no link");
-        assert!(cmds.is_empty(), "{cmds:?}");
+        assert!(
+            !unlink(ItemKind::Issue, &body, &mut cmds),
+            "a derived relation has no link"
+        );
 
         body.set_cursor(rows[1]);
-        assert!(unlink(&body, &mut cmds), "a stored link can be dropped");
         assert!(
-            matches!(cmds.as_slice(), [Cmd::RemoveLink { link_id: 7, .. }]),
+            !unlink(ItemKind::Issue, &body, &mut cmds),
+            "a merge request is not a work item the mutation can name"
+        );
+
+        body.set_cursor(rows[2]);
+        assert!(
+            !unlink(ItemKind::MergeRequest, &body, &mut cmds),
+            "a merge request holds no stored link to drop"
+        );
+        assert!(cmds.is_empty(), "{cmds:?}");
+
+        assert!(
+            unlink(ItemKind::Issue, &body, &mut cmds),
+            "a stored link between two issues can be dropped"
+        );
+        assert!(
+            matches!(
+                cmds.as_slice(),
+                [Cmd::RemoveLink { gid, target_gid }]
+                    if gid == "gid://gitlab/WorkItem/1"
+                        && target_gid == "gid://gitlab/WorkItem/7"
+            ),
             "{cmds:?}"
         );
     }

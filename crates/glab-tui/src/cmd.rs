@@ -1,5 +1,5 @@
 use glab_core::domain::{Issue, Iteration, MergeRequest};
-use glab_core::domain::{ItemRef, Relation};
+use glab_core::domain::{ItemKind, Relation};
 
 /// Side-effect descriptors returned from update logic.
 ///
@@ -63,24 +63,27 @@ pub enum Cmd {
         target_gid: Option<String>,
         old_iteration: Option<Iteration>,
     },
-    /// Read what `item` is related to; the writes below re-read it too.
-    FetchRelated(ItemRef),
+
+    FetchRelated {
+        kind: ItemKind,
+        gid: String,
+    },
+
+    /// Link target to work item by gid
     AddLink {
-        item: ItemRef,
-        target: ItemRef,
+        gid: String,
+        target_gid: String,
         relation: Relation,
     },
     RemoveLink {
-        item: ItemRef,
-        link_id: u64,
+        gid: String,
+        target_gid: String,
     },
-    /// Name `target` in `mr`'s description, which is how GitLab records an
-    /// issue as related to or closed by a merge request.  `item` is the detail
-    /// view that re-reads once it is written — either side of the pair.
+
+    /// mention target in merge request with gid
     MentionInMr {
-        item: ItemRef,
-        mr: ItemRef,
-        target: ItemRef,
+        gid: String,
+        target_gid: String,
         relation: Relation,
     },
     SpawnSetStatus {

@@ -13,7 +13,7 @@ use crate::ui::components::detail_body::DetailBody;
 use crate::ui::components::related;
 use crate::ui::styles;
 use crate::ui::views::DetailCtx;
-use glab_core::domain::{ItemRef, MergeRequest, RelatedItem};
+use glab_core::domain::{MergeRequest, RelatedItem};
 
 binding_group! {
     /// A merge request's relations live in its description, so `L` writes one
@@ -26,19 +26,14 @@ binding_group! {
 
 #[derive(Default)]
 pub struct MrDetailState {
-    pub project: String,
-    pub iid: String,
+    /// A snapshot, for the same reason an issue's detail holds one.
+    pub mr: Option<MergeRequest>,
     /// The rows and the cursor; the sections only fill them.
     pub body: DetailBody,
     pub conversation: Conversation,
 }
 
 impl MrDetailState {
-    /// What its keys act on.
-    pub fn item(&self) -> ItemRef {
-        ItemRef::merge_request(&self.project, &self.iid)
-    }
-
     /// Offered to the sections in the order they are drawn.
     pub fn handle_key(
         &mut self,
@@ -61,16 +56,14 @@ impl MrDetailState {
     }
 
     pub fn reset(&mut self) {
-        self.project.clear();
-        self.iid.clear();
+        self.mr = None;
         self.body = DetailBody::default();
         self.conversation.reset();
     }
 
-    pub fn open(&mut self, project: &str, iid: &str) {
+    pub fn open(&mut self, mr: MergeRequest) {
         self.reset();
-        self.project = project.to_string();
-        self.iid = iid.to_string();
+        self.mr = Some(mr);
         self.conversation.loading = true;
     }
 }

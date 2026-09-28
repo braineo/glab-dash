@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use glab_api::GitLabClient;
-use glab_core::domain::ItemRef;
+use glab_core::domain::ItemKind;
 
 use crate::cmd::Cmd;
 
@@ -118,7 +118,7 @@ impl App {
                 let tx = self.ctx.async_tx.clone();
                 tokio::spawn(async move {
                     let result = client.close_mr(&project, &iid).await;
-                    let _ = tx.send(AsyncMsg::MrUpdated(result, project));
+                    let _ = tx.send(AsyncMsg::MrUpdated(result));
                 });
             }
             Cmd::SpawnApproveMr { project, iid } => {
@@ -159,31 +159,38 @@ impl App {
             }
             // GitLab owns the link ids, so a write re-reads rather than
             // patching — which also picks up anyone else's change.
-            Cmd::FetchRelated(item) => {
-                self.refresh_related(item, |_, _| async { Ok(()) });
+            Cmd::FetchRelated { kind, gid } => {
+                self.refresh_related(vec![(kind, gid)], |_| async { Ok(()) });
             }
             Cmd::AddLink {
-                item,
-                target,
+                gid,
+                target_gid,
                 relation,
             } => {
-                self.refresh_related(item, move |client, item| async move {
-                    client.add_link(&item, &target, relation).await
+                let item_gid = gid.clone();
+                self.refresh_related(vec![(ItemKind::Issue, gid)], move |client| async move {
+                    client.add_link(&item_gid, &target_gid, relation).await
                 });
             }
+            // The line lands in the merge request, but the issue's own list is
+            // GitLab's reading of that same line, so both sides re-read.
             Cmd::MentionInMr {
-                item,
-                mr,
-                target,
+                gid,
+                target_gid,
                 relation,
             } => {
-                self.refresh_related(item, move |client, _| async move {
-                    client.mention_in_mr(&mr, &target, relation).await
+                let reads = vec![
+                    (ItemKind::MergeRequest, gid.clone()),
+                    (ItemKind::Issue, target_gid.clone()),
+                ];
+                self.refresh_related(reads, move |client| async move {
+                    client.mention_in_mr(&gid, &target_gid, relation).await
                 });
             }
-            Cmd::RemoveLink { item, link_id } => {
-                self.refresh_related(item, move |client, item| async move {
-                    client.remove_link(&item, link_id).await
+            Cmd::RemoveLink { gid, target_gid } => {
+                let item_gid = gid.clone();
+                self.refresh_related(vec![(ItemKind::Issue, gid)], move |client| async move {
+                    client.unlink(&item_gid, &target_gid).await
                 });
             }
             Cmd::SpawnSetStatus {
@@ -206,21 +213,28 @@ impl App {
         }
     }
 
-    /// A read alone passes a `write` that does nothing.
-    fn refresh_related<F, Fut>(&self, item: ItemRef, write: F)
+    /// Run `write`, then re-read the related list of every item in `reads`:
+    /// one write can change both sides of a pair.  A read alone passes a
+    /// `write` that does nothing.
+    fn refresh_related<F, Fut>(&self, reads: Vec<(ItemKind, String)>, write: F)
     where
-        F: FnOnce(GitLabClient, ItemRef) -> Fut + Send + 'static,
+        F: FnOnce(GitLabClient) -> Fut + Send + 'static,
         Fut: Future<Output = Result<()>> + Send,
     {
         let client = self.ctx.client.clone();
         let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
-            let result = async {
-                write(client.clone(), item.clone()).await?;
-                client.list_related(&item).await
+            let mut reads = reads.into_iter();
+            if let Err(e) = write(client.clone()).await {
+                if let Some((_, gid)) = reads.next() {
+                    let _ = tx.send(AsyncMsg::RelatedLoaded(Err(e), gid));
+                }
+                return;
             }
-            .await;
-            let _ = tx.send(AsyncMsg::RelatedLoaded(result, item));
+            for (kind, gid) in reads {
+                let result = client.list_related(kind, &gid).await;
+                let _ = tx.send(AsyncMsg::RelatedLoaded(result, gid));
+            }
         });
     }
 }

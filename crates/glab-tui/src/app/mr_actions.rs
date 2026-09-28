@@ -149,7 +149,7 @@ impl MrActions for MergeRequest {
         let tx = ctx.async_tx.clone();
         tokio::spawn(async move {
             let result = client.set_mr_labels(&project, &iid, &label_ids).await;
-            let _ = tx.send(super::AsyncMsg::MrUpdated(result, project));
+            let _ = tx.send(super::AsyncMsg::MrUpdated(result));
         });
         ui.dirty.mrs = true;
     }
@@ -169,7 +169,7 @@ impl MrActions for MergeRequest {
         let usernames = vec![username.to_string()];
         tokio::spawn(async move {
             let result = client.set_mr_assignees(&project, &iid, &usernames).await;
-            let _ = tx.send(super::AsyncMsg::MrUpdated(result, project));
+            let _ = tx.send(super::AsyncMsg::MrUpdated(result));
         });
         ui.dirty.mrs = true;
     }

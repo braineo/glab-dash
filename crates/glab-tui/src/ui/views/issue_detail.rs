@@ -13,8 +13,8 @@ use crate::ui::components::detail_body::DetailBody;
 use crate::ui::components::related;
 use crate::ui::styles;
 use crate::ui::views::DetailCtx;
+use glab_core::domain::RelatedItem;
 use glab_core::domain::{Issue, Item};
-use glab_core::domain::{ItemRef, RelatedItem};
 
 binding_group! {
     /// An issue only, so it sits ahead of the shared conversation group rather
@@ -28,20 +28,15 @@ binding_group! {
 
 #[derive(Default)]
 pub struct IssueDetailState {
-    pub id: String,
-    pub project: String,
-    pub iid: String,
+    /// A snapshot, not keys to look one up by: every refresh drops a closed
+    /// issue from `data.issues` while its detail is still on screen.
+    pub issue: Option<Issue>,
     /// The rows and the cursor; the sections only fill them.
     pub body: DetailBody,
     pub conversation: Conversation,
 }
 
 impl IssueDetailState {
-    /// What its keys act on.
-    pub fn item(&self) -> ItemRef {
-        ItemRef::issue(&self.project, &self.iid)
-    }
-
     /// Offered to the sections in the order they are drawn.
     pub fn handle_key(
         &mut self,
@@ -64,17 +59,14 @@ impl IssueDetailState {
     }
 
     pub fn reset(&mut self) {
-        self.project.clear();
-        self.iid.clear();
+        self.issue = None;
         self.body = DetailBody::default();
         self.conversation.reset();
     }
 
-    pub fn open(&mut self, id: &str, project: &str, iid: &str) {
+    pub fn open(&mut self, issue: Issue) {
         self.reset();
-        self.id = id.to_string();
-        self.project = project.to_string();
-        self.iid = iid.to_string();
+        self.issue = Some(issue);
         self.conversation.loading = true;
     }
 }

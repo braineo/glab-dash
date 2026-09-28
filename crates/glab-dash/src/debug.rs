@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use glab_api::{GitLabClient, IssueState, MrState};
 use glab_config::Config;
+use glab_core::domain::Item;
 use glab_store::Db;
 use glab_tui::app::App;
 use tokio::sync::mpsc;
@@ -19,14 +20,14 @@ pub async fn run() -> Result<()> {
         projects = %config.all_tracking_projects().join(", "),
         "debug: fetching tracking issues"
     );
-    match client
+    let tracking_issues = client
         .list_namespace_issues(
             &config.all_tracking_projects(),
             Some(IssueState::Opened),
             None,
         )
-        .await
-    {
+        .await;
+    match &tracking_issues {
         Ok(issues) => tracing::info!(count = issues.len(), "debug: tracking issues ✓"),
         Err(e) => tracing::error!(error = ?e, "debug: tracking issues ✗"),
     }
@@ -65,6 +66,26 @@ pub async fn run() -> Result<()> {
     {
         Ok(statuses) => tracing::info!(count = statuses.len(), "debug: statuses ✓"),
         Err(e) => tracing::error!(error = ?e, "debug: statuses ✗"),
+    }
+
+    tracing::info!("debug: fetching related items");
+    if let Some(issue) = tracking_issues.ok().as_ref().and_then(|i| i.first()) {
+        let item = issue.item_ref();
+        match client.list_related(item.kind, issue.gid()).await {
+            Ok(related) => tracing::info!(
+                item = %item.reference(),
+                count = related.len(),
+                relations = %related
+                    .iter()
+                    .map(|r| format!("{} {}", r.relation.label(), r.item.reference()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                "debug: related items ✓"
+            ),
+            Err(e) => tracing::error!(error = ?e, "debug: related items ✗"),
+        }
+    } else {
+        tracing::warn!("debug: no issue to fetch related items for");
     }
 
     // Simulate what the app does: store issues, refilter, check count

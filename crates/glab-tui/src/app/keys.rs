@@ -146,21 +146,27 @@ impl App {
             View::IssueList => ui.views.issue_list.handle_key(key, action, &mut fx),
             View::MrList => ui.views.mr_list.handle_key(key, action, &mut fx),
             View::IssueDetail => {
-                let item = ui.views.issue_detail.item();
-                let cx = DetailCtx {
-                    related: data.related_by_item.get(&item).map_or(&[], Vec::as_slice),
-                    item,
+                let Some(issue) = ui.views.issue_detail.issue.as_ref() else {
+                    return EventResult::Bubble;
                 };
+                let related = data
+                    .related_by_gid
+                    .get(issue.gid())
+                    .map_or(&[][..], Vec::as_slice);
+                let cx = DetailCtx::of(issue, related);
                 ui.views
                     .issue_detail
                     .handle_key(action, &cx, &mut ui.overlay, &mut fx)
             }
             View::MrDetail => {
-                let item = ui.views.mr_detail.item();
-                let cx = DetailCtx {
-                    related: data.related_by_item.get(&item).map_or(&[], Vec::as_slice),
-                    item,
+                let Some(mr) = ui.views.mr_detail.mr.as_ref() else {
+                    return EventResult::Bubble;
                 };
+                let related = data
+                    .related_by_gid
+                    .get(mr.gid())
+                    .map_or(&[][..], Vec::as_slice);
+                let cx = DetailCtx::of(mr, related);
                 ui.views
                     .mr_detail
                     .handle_key(action, &cx, &mut ui.overlay, &mut fx)

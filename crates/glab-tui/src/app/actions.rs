@@ -1,7 +1,7 @@
 //! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
+use glab_core::domain::ItemKind;
 use glab_core::domain::{Issue, Item, MergeRequest, StatusValue};
-use glab_core::domain::{ItemKind, ItemRef};
 
 use crate::ui::components::related;
 
@@ -134,32 +134,35 @@ impl App {
 
     /// Look up the issue shown in the detail view by its stored gid.
     pub(super) fn current_detail_issue(&self) -> Option<&Issue> {
-        super::issue_by_id(&self.data, &self.ui.views.issue_detail.id)
+        self.ui.views.issue_detail.issue.as_ref()
     }
 
     /// Look up the MR shown in the detail view by its stored (project, iid).
     pub(super) fn current_detail_mr(&self) -> Option<&MergeRequest> {
-        let d = &self.ui.views.mr_detail;
-        if d.project.is_empty() {
-            return None;
-        }
-        self.data
-            .mrs
-            .iter()
-            .find(|m| m.iid == d.iid && m.project_path() == d.project)
+        self.ui.views.mr_detail.mr.as_ref()
     }
 
     pub(super) fn action_open_detail(&mut self) {
         match self.ui.focused.clone() {
-            Some(FocusedItem::Issue { id, project, iid }) => {
-                self.open_issue_detail(&id, &project, &iid);
-                self.ui.view_stack.push(self.ui.view);
-                self.ui.view = View::IssueDetail;
+            Some(FocusedItem::Issue { id, .. }) => {
+                let Some(issue) = super::issue_by_id(&self.data, &id).cloned() else {
+                    return;
+                };
+                self.open_issue_detail(issue);
+                self.enter_detail(View::IssueDetail);
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                self.open_mr_detail(&project, &iid);
-                self.ui.view_stack.push(self.ui.view);
-                self.ui.view = View::MrDetail;
+                let Some(mr) = self
+                    .data
+                    .mrs
+                    .iter()
+                    .find(|m| m.iid == iid && m.project_path() == project)
+                    .cloned()
+                else {
+                    return;
+                };
+                self.open_mr_detail(mr);
+                self.enter_detail(View::MrDetail);
             }
             None => {}
         }
@@ -167,24 +170,28 @@ impl App {
     }
 
     /// Does not switch the view: the caller decides what to stack.
-    pub(super) fn open_issue_detail(&mut self, id: &str, project: &str, iid: &str) {
-        self.ui.views.issue_detail.open(id, project, iid);
-        self.fetch_notes_for_issue(project, iid);
-        self.ui
-            .pending_cmds
-            .push(crate::cmd::Cmd::FetchRelated(ItemRef::issue(project, iid)));
+    pub(super) fn open_issue_detail(&mut self, issue: Issue) {
+        let item = issue.item_ref();
+        let gid = issue.gid().to_string();
+        self.ui.views.issue_detail.open(issue);
+        self.fetch_notes_for_issue(&item.project, &item.iid);
+        self.ui.pending_cmds.push(crate::cmd::Cmd::FetchRelated {
+            kind: ItemKind::Issue,
+            gid,
+        });
         self.ui.dirty.selection = true;
     }
 
     /// Does not switch the view: the caller decides what to stack.
-    pub(super) fn open_mr_detail(&mut self, project: &str, iid: &str) {
-        self.ui.views.mr_detail.open(project, iid);
-        self.fetch_notes_for_mr(project, iid);
-        self.ui
-            .pending_cmds
-            .push(crate::cmd::Cmd::FetchRelated(ItemRef::merge_request(
-                project, iid,
-            )));
+    pub(super) fn open_mr_detail(&mut self, mr: MergeRequest) {
+        let item = mr.item_ref();
+        let gid = mr.gid().to_string();
+        self.ui.views.mr_detail.open(mr);
+        self.fetch_notes_for_mr(&item.project, &item.iid);
+        self.ui.pending_cmds.push(crate::cmd::Cmd::FetchRelated {
+            kind: ItemKind::MergeRequest,
+            gid,
+        });
         self.ui.dirty.selection = true;
     }
 
@@ -204,12 +211,8 @@ impl App {
                     let _ = open::that_detached(&target.web_url);
                     return;
                 };
-                let (id, project, iid) = (
-                    issue.id.clone(),
-                    issue.project_path().to_string(),
-                    issue.iid.clone(),
-                );
-                self.open_issue_detail(&id, &project, &iid);
+                let issue = issue.clone();
+                self.open_issue_detail(issue);
                 self.enter_detail(View::IssueDetail);
             }
             ItemKind::MergeRequest => {
@@ -217,8 +220,8 @@ impl App {
                     let _ = open::that_detached(&target.web_url);
                     return;
                 };
-                let (project, iid) = (mr.project_path().to_string(), mr.iid.clone());
-                self.open_mr_detail(&project, &iid);
+                let mr = mr.clone();
+                self.open_mr_detail(mr);
                 self.enter_detail(View::MrDetail);
             }
         }
@@ -226,18 +229,18 @@ impl App {
 
     /// Whichever detail view is open, the relation its cursor sits on.
     fn related_at_cursor(&self) -> Option<glab_core::domain::RelatedItem> {
-        let (item, body) = match self.ui.view {
-            View::IssueDetail => {
-                let d = &self.ui.views.issue_detail;
-                (d.item(), &d.body)
-            }
-            View::MrDetail => {
-                let d = &self.ui.views.mr_detail;
-                (d.item(), &d.body)
-            }
+        let (gid, body) = match self.ui.view {
+            View::IssueDetail => (
+                self.current_detail_issue()?.gid(),
+                &self.ui.views.issue_detail.body,
+            ),
+            View::MrDetail => (
+                self.current_detail_mr()?.gid(),
+                &self.ui.views.mr_detail.body,
+            ),
             _ => return None,
         };
-        related::at_cursor(self.data.related_by_item.get(&item)?, body).cloned()
+        related::at_cursor(self.data.related_by_gid.get(gid)?, body).cloned()
     }
 
     /// Crossing from one kind of detail to the other stacks what it left, so

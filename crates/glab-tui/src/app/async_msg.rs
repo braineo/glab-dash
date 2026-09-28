@@ -18,6 +18,7 @@ impl App {
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
+                    self.sync_detail_snapshots();
                     self.data.issues.retain(Issue::is_open);
                     self.ui.error = None;
                     self.record_fetch_done();
@@ -38,6 +39,7 @@ impl App {
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
+                    self.sync_detail_snapshots();
                     self.data.mrs.retain(MergeRequest::is_open);
                     self.record_fetch_done();
                     self.ui.error = None;
@@ -72,10 +74,10 @@ impl App {
                     }
                 }
             }
-            AsyncMsg::RelatedLoaded(result, item) => match result {
+            AsyncMsg::RelatedLoaded(result, gid) => match result {
                 Ok(mut related) => {
                     related.sort_by_key(RelatedItem::rank);
-                    self.data.related_by_item.insert(item, related);
+                    self.data.related_by_gid.insert(gid, related);
                 }
                 Err(e) => self.show_error(format!("Related: {e:#}")),
             },
@@ -103,6 +105,7 @@ impl App {
                         self.ui
                             .pending_cmds
                             .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
+                        self.sync_detail_snapshots();
                         self.data.issues.retain(Issue::is_open);
                         self.ui.error = None;
                         self.ui.dirty.issues = true;
@@ -110,15 +113,14 @@ impl App {
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
             }
-            AsyncMsg::MrUpdated(result, project_path) => {
+            AsyncMsg::MrUpdated(result) => {
                 self.ui.loading = false;
                 match result {
                     Ok(mr) => {
-                        if let Some(pos) = self
-                            .data
-                            .mrs
-                            .iter()
-                            .position(|e| e.iid == mr.iid && e.project_path() == project_path)
+                        if let Some(pos) =
+                            self.data.mrs.iter().position(|e| {
+                                e.iid == mr.iid && e.project_path() == mr.project_path()
+                            })
                         {
                             self.data.mrs[pos] = mr;
                         }
@@ -328,6 +330,28 @@ impl App {
             }
             new_mrs.extend(closed);
             self.data.mrs = new_mrs;
+        }
+    }
+
+    /// Refresh what the detail views hold from the freshly merged data, before
+    /// closed items are dropped from it — so closing an issue updates its
+    /// detail rather than emptying it.
+    fn sync_detail_snapshots(&mut self) {
+        if let Some(id) = self
+            .ui
+            .views
+            .issue_detail
+            .issue
+            .as_ref()
+            .map(|i| i.id.clone())
+            && let Some(fresh) = self.data.issues.iter().find(|i| i.id == id).cloned()
+        {
+            self.ui.views.issue_detail.issue = Some(fresh);
+        }
+        if let Some(item) = self.ui.views.mr_detail.mr.as_ref().map(Item::item_ref)
+            && let Some(fresh) = self.data.mrs.iter().find(|m| m.item_ref() == item).cloned()
+        {
+            self.ui.views.mr_detail.mr = Some(fresh);
         }
     }
 }
