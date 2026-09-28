@@ -5,6 +5,7 @@
 //! where a `u64` is wanted, a string `iid`, connections that need unwrapping,
 //! and the `SCREAMING_CASE` pipeline status the UI matches lowercase.
 
+use glab_core::domain::Item;
 use glab_core::domain::MergeRequest;
 
 const RESPONSE: &str = include_str!("mr_graphql_response.json");
@@ -52,7 +53,7 @@ fn deserializes_graphql_response() {
 fn round_trips_through_its_own_serialization() {
     let mr: MergeRequest = serde_json::from_str(RESPONSE).unwrap();
     let stored = serde_json::to_string(&mr).unwrap();
-    let back: MergeRequest = serde_json::from_str(&stored).expect("cached row");
+    let back: MergeRequest = serde_json::from_str(&stored).expect("the cached form");
 
     assert_eq!(back.id, mr.id);
     assert_eq!(back.iid, mr.iid);

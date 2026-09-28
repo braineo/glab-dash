@@ -160,16 +160,13 @@ impl Config {
     }
 
     pub fn team_members(&self, team_idx: usize) -> Vec<String> {
-        self.teams
-            .get(team_idx)
-            .map(|t| {
-                let mut m = t.members.clone();
-                if !m.contains(&self.me) {
-                    m.push(self.me.clone());
-                }
-                m
-            })
-            .unwrap_or_default()
+        self.teams.get(team_idx).map_or_default(|t| {
+            let mut m = t.members.clone();
+            if !m.contains(&self.me) {
+                m.push(self.me.clone());
+            }
+            m
+        })
     }
 }
 

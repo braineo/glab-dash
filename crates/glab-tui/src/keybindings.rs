@@ -62,6 +62,14 @@ pub enum KeyAction {
     /// Jump back to the previous one.
     PrevUnresolved,
 
+    // --- Linked issues (issue detail only) ---
+    /// Link another issue to this one.
+    AddLink,
+    /// Drop the link the cursor is on.
+    RemoveLink,
+    /// Open the linked issue the cursor is on.
+    OpenLink,
+
     // --- Board / column navigation (Dashboard & Planning) ---
     ColumnLeft,
     ColumnRight,

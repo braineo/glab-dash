@@ -2,11 +2,11 @@
 //!
 //! The fixture is an actual `IssueFields` payload from the root `issues` query
 //! with identifying content replaced. It guards what the removed
-//! `GqlRootIssue` conversion used to do by hand: a GID reduced to its numeric
+//! `root_issues` conversion used to do by hand: a GID reduced to its numeric
 //! tail, an `iid` left as the string GraphQL sends, connections unwrapped, and
 //! the nullable iteration title that auto-generated iterations have.
 
-use glab_core::domain::Issue;
+use glab_core::domain::{Issue, Item, StatusCategory};
 
 const RESPONSE: &str = include_str!("issue_graphql_response.json");
 
@@ -27,7 +27,7 @@ fn deserializes_graphql_response() {
 
     // Nested status, reached through the accessors the UI uses.
     assert_eq!(issue.status_name(), Some("Backlog"));
-    assert_eq!(issue.status_category(), Some("to_do"));
+    assert_eq!(issue.status_category(), Some(StatusCategory::ToDo));
 
     // Auto-generated iterations have no title.
     let iter = issue.iteration.as_ref().expect("iteration");
@@ -69,7 +69,7 @@ fn both_queries_yield_the_same_id() {
 fn round_trips_through_its_own_serialization() {
     let issue: Issue = serde_json::from_str(RESPONSE).unwrap();
     let stored = serde_json::to_string(&issue).unwrap();
-    let back: Issue = serde_json::from_str(&stored).expect("cached row");
+    let back: Issue = serde_json::from_str(&stored).expect("the cached form");
 
     assert_eq!(back.id, issue.id);
     assert_eq!(back.iid, issue.iid);

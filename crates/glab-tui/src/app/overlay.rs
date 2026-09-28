@@ -3,13 +3,34 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::cmd::EventResult;
-use crate::ui::components::{chord_popup, input, label_editor, picker};
+use crate::ui::components::{chord_popup, conversation::Conversation, input, label_editor, picker};
 use crate::ui::keys;
 use crate::ui::views::filter_editor;
 
-use super::{App, Overlay};
+use super::{App, Overlay, View};
 
 impl App {
+    /// Who `@` completes to in a comment draft: the configured teams, plus
+    /// whoever is already talking on the open item — a reviewer or reporter
+    /// from outside every team is exactly who a reply needs to name.
+    fn comment_mention_pool(&self) -> Vec<String> {
+        let conversation = match self.ui.view {
+            View::IssueDetail => Some(&self.ui.views.issue_detail.conversation),
+            View::MrDetail => Some(&self.ui.views.mr_detail.conversation),
+            _ => None,
+        };
+        let mut members = self.ctx.config.all_members();
+        members.extend(
+            conversation
+                .into_iter()
+                .flat_map(Conversation::participants)
+                .map(str::to_string),
+        );
+        members.sort();
+        members.dedup();
+        members
+    }
+
     /// Overlay focus: if an overlay is active, it handles the key and
     /// returns Consumed.  Returns Bubble only when no overlay is active.
     pub(super) fn dispatch_overlay(&mut self, key: &KeyEvent) -> EventResult {
@@ -159,7 +180,7 @@ impl App {
                         input::InputAction::Continue => {
                             let text = input.text();
                             let cursor = input.cursor_byte_pos();
-                            let members = self.ctx.config.all_members();
+                            let members = self.comment_mention_pool();
                             autocomplete.update(
                                 &text,
                                 cursor,

@@ -4,6 +4,7 @@ mod execute;
 mod fetch;
 mod filter;
 mod issue_actions;
+mod item_actions;
 mod keys;
 mod mr_actions;
 mod overlay;
@@ -20,7 +21,8 @@ use crate::ui::views::{dashboard, filter_editor};
 use glab_api::GitLabClient;
 use glab_config::Config;
 use glab_core::comment_filter::CommentFilter;
-use glab_core::domain::{Issue, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
+use glab_core::domain::{Issue, Item, Iteration, MergeRequest, ProjectLabel, WorkItemStatus};
+use glab_core::domain::{ItemRef, RelatedItem};
 use glab_core::filter::FilterCondition;
 use glab_core::sort::SortSpec;
 use glab_store::Db;
@@ -90,16 +92,27 @@ pub enum FocusedItem {
     },
 }
 
+impl FocusedItem {
+    pub fn item_ref(&self) -> ItemRef {
+        match self {
+            FocusedItem::Issue { project, iid, .. } => ItemRef::issue(project, iid),
+            FocusedItem::Mr { project, iid } => ItemRef::merge_request(project, iid),
+        }
+    }
+}
+
 /// Messages from async operations
 pub enum AsyncMsg {
     IssuesLoaded(Result<Vec<Issue>>, bool),
     MrsLoaded(Result<(Vec<MergeRequest>, Vec<MergeRequest>)>, bool),
     DiscussionsLoaded(Result<Vec<glab_core::domain::Discussion>>),
+    /// What the item whose gid it names is related to, across every collection.
+    RelatedLoaded(Result<Vec<RelatedItem>>, String),
     ActionDone(Result<String>),
     /// An issue was mutated; carry the updated object.
     IssueUpdated(Result<Issue>),
-    /// A merge request was mutated; carry the updated object and project path.
-    MrUpdated(Result<MergeRequest>, String),
+    /// A merge request was mutated; carry the updated object.
+    MrUpdated(Result<MergeRequest>),
     /// Issue custom status changed: (`project_path`, iid, `new_status_name`).
     IssueStatusUpdated(Result<(String, String, String)>),
     LabelsLoaded(Result<Vec<ProjectLabel>>),
@@ -149,6 +162,8 @@ pub struct AppData {
     pub label_color_map: crate::ui::styles::LabelColors,
     pub iterations: Vec<Iteration>,
     pub work_item_statuses: std::collections::HashMap<String, Vec<WorkItemStatus>>,
+    /// Filled as items are opened, so one never opened is absent.
+    pub related_by_gid: std::collections::HashMap<String, Vec<RelatedItem>>,
     pub label_usage: std::collections::HashMap<String, u32>,
     pub board_issues: Vec<Issue>,
     pub shadow_work_cache: Vec<Issue>,
@@ -240,6 +255,7 @@ impl App {
                 label_color_map: std::collections::HashMap::new(),
                 iterations: Vec::new(),
                 work_item_statuses: std::collections::HashMap::new(),
+                related_by_gid: std::collections::HashMap::new(),
                 label_usage: std::collections::HashMap::new(),
                 board_issues: Vec::new(),
                 shadow_work_cache: Vec::new(),

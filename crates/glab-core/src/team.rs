@@ -1,7 +1,7 @@
 //! Who is on a team and which namespaces its board tracks — the two facts that
 //! decide what work belongs to that team.
 
-use crate::domain::{Issue, MergeRequest, User};
+use crate::domain::{Issue, Item, MergeRequest, User};
 use serde::{Deserialize, Serialize};
 
 /// A team, as written in the config and as used to slice the cache.

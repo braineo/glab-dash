@@ -190,6 +190,11 @@ impl PlanningViewState {
     /// Partition issues into columns based on iteration (prefilter),
     /// then apply each column's fuzzy search and sort.
     pub fn partition_issues(&mut self, issues: &[Issue], label_orders: &LabelOrders) {
+        let anchors: Vec<_> = self
+            .columns
+            .iter()
+            .map(|col| col.list.anchor(issues))
+            .collect();
         for col in &mut self.columns {
             col.list.indices.clear();
         }
@@ -226,7 +231,7 @@ impl PlanningViewState {
         }
 
         // Step 2: per-column fuzzy filter and sort
-        for col in &mut self.columns {
+        for (col, anchor) in self.columns.iter_mut().zip(&anchors) {
             col.list.indices.retain(|&i| {
                 let item = &issues[i];
                 let mut haystack = item.title.to_lowercase();
@@ -246,7 +251,7 @@ impl PlanningViewState {
                 &col.filter.sort_specs,
                 label_orders,
             );
-            col.list.clamp_selection();
+            col.list.restore(issues, anchor.as_deref());
         }
     }
 }
@@ -432,7 +437,7 @@ fn render_column(
                 .map_or(styles::ICON_UNCHECK, styles::status_icon);
             let iid = format!("#{}", item.iid);
             let assignee = item.assignees.first().map_or("-", |u| u.username.as_str());
-            let weight = item.weight.map(|w| format!("{w}w")).unwrap_or_default();
+            let weight = item.weight.map_or_default(|w| format!("{w}w"));
 
             let title = &item.title;
 

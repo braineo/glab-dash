@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, BorderType, Borders, TableState};
 use crate::keybindings::KeyAction;
 use crate::ui::keys;
 use crate::ui::styles;
+use glab_core::domain::Item;
 use glab_core::filter::FilterCondition;
 use glab_core::sort::SortSpec;
 
@@ -143,7 +144,16 @@ impl<T> ItemList<T> {
         Some(self.cursor().apply(op))
     }
 
+    /// Re-home the cursor after a rebuild changed `indices`.
+    ///
+    /// The scroll offset has to go with it: a shrunken list under a stale
+    /// offset makes ratatui clamp the viewport top to that offset and render
+    /// a near-empty table, which is how filtered-in rows went missing.
+    /// Starting at the top lets it scroll down to the cursor instead.
     pub fn clamp_selection(&mut self) {
+        // ponytail: offset 0 parks a deep cursor at the viewport bottom;
+        // centering it would need the row height plumbed in here.
+        *self.table_state.offset_mut() = 0;
         if self.indices.is_empty() {
             self.table_state.select(None);
         } else if self.table_state.selected().is_none() {
@@ -153,6 +163,29 @@ impl<T> ItemList<T> {
         {
             self.table_state.select(Some(self.indices.len() - 1));
         }
+    }
+}
+
+impl<T: Item> ItemList<T> {
+    /// Name the item under the cursor, before a rebuild invalidates `indices`.
+    pub fn anchor(&self, items: &[T]) -> Option<String> {
+        self.selected_item(items)
+            .map(|item| item.reference().to_string())
+    }
+
+    /// Put the cursor back on `anchor` after a rebuild.  An item that is gone
+    /// — filtered out, closed — leaves the cursor on whichever row inherited
+    /// its index, so closing the item under the cursor steps to its successor.
+    pub fn restore(&mut self, items: &[T], anchor: Option<&str>) {
+        let pos = anchor.and_then(|reference| {
+            self.indices
+                .iter()
+                .position(|&i| items[i].reference() == reference)
+        });
+        if let Some(pos) = pos {
+            self.table_state.select(Some(pos));
+        }
+        self.clamp_selection();
     }
 }
 

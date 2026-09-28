@@ -13,7 +13,10 @@ use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::wire::{GqlPage, GqlResponse, Paged};
+use glab_core::domain::ItemKind;
+use urlencoding::encode;
+
+use crate::wire::{Page, Paged, Response};
 
 /// An authenticated connection to one GitLab instance.
 #[derive(Clone)]
@@ -97,7 +100,7 @@ impl GitLabClient {
         if let Some(errors) = json.get("errors").and_then(Value::as_array)
             && !errors.is_empty()
         {
-            return Err(GqlError(join_messages(errors, Some("message"))).into());
+            return Err(ResponseErrors(join_messages(errors, Some("message"))).into());
         }
         Ok(json)
     }
@@ -124,10 +127,10 @@ impl GitLabClient {
             let json = self
                 .graphql(op, query, variables(cursor.as_deref()))
                 .await?;
-            let resp: GqlResponse<D> = serde_json::from_value(json)
+            let resp: Response<D> = serde_json::from_value(json)
                 .with_context(|| format!("failed to deserialize {op} response"))?;
 
-            let Some(GqlPage { nodes, page_info }) = resp.data.page() else {
+            let Some(Page { nodes, page_info }) = resp.data.page() else {
                 break;
             };
             all.extend(nodes);
@@ -202,6 +205,17 @@ fn join_messages(errors: &[Value], field: Option<&str>) -> String {
         .join(", ")
 }
 
+/// The REST route for `tail` under the item `iid` in `project`.  Both kinds
+/// hang their sub-collections off the same shape, under the segment naming the
+/// kind — which is the whole of what a REST route needs to know about it.
+pub(crate) fn item_path(kind: ItemKind, project: &str, iid: &str, tail: &str) -> String {
+    let segment = match kind {
+        ItemKind::Issue => "issues",
+        ItemKind::MergeRequest => "merge_requests",
+    };
+    format!("/projects/{}/{segment}/{iid}/{tail}", encode(project))
+}
+
 /// The user selection every other fragment spreads in turn.
 const USER_FIELDS: &str = r"
     fragment UserFields on User {
@@ -219,21 +233,21 @@ const ATTEMPTS: u32 = 3;
 /// transport: a malformed query, a field the token may not read. Permanent, so
 /// [`with_retry`] hands it back instead of asking again.
 #[derive(Debug)]
-struct GqlError(String);
+struct ResponseErrors(String);
 
-impl std::fmt::Display for GqlError {
+impl std::fmt::Display for ResponseErrors {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "GraphQL: {}", self.0)
     }
 }
 
-impl std::error::Error for GqlError {}
+impl std::error::Error for ResponseErrors {}
 
 /// Run `attempt` again when it fails, backing off between tries.
 ///
 /// A read is idempotent and a fetch cycle is expensive: one blip would
 /// otherwise discard every page already walked and cancel every sibling walk.
-/// A [`GqlError`] is permanent and is handed back on the first answer.
+/// A [`ResponseErrors`] is permanent and is handed back on the first answer.
 ///
 /// ponytail: retries any transport failure, a permanent 404 included. Classify
 /// the status if a wrong path starts costing a second and a half to fail.
@@ -246,7 +260,7 @@ async fn with_retry<T, Fut: Future<Output = Result<T>>>(
     loop {
         match attempt().await {
             Ok(value) => return Ok(value),
-            Err(e) if tries >= ATTEMPTS || e.is::<GqlError>() => return Err(e),
+            Err(e) if tries >= ATTEMPTS || e.is::<ResponseErrors>() => return Err(e),
             Err(e) => {
                 tracing::warn!(op, tries, error = ?e, ?delay, "retrying");
                 tokio::time::sleep(delay).await;

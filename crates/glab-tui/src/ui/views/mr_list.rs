@@ -9,7 +9,7 @@ use crate::cmd::{Cmd, Effects, EventResult};
 use crate::keybindings::KeyAction;
 use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
 use crate::ui::{components, styles};
-use glab_core::domain::MergeRequest;
+use glab_core::domain::{Item, MergeRequest};
 use glab_core::filter::matches_mr;
 use glab_core::sort;
 use glab_core::sort::label_order::LabelOrders;
@@ -76,6 +76,7 @@ impl MrListState {
     // ── Filtering ───────────────────────────────────────────────────
 
     pub fn apply_filters(&mut self, mrs: &[MergeRequest], me: &str, label_orders: &LabelOrders) {
+        let anchor = self.list.anchor(mrs);
         self.list.indices = mrs
             .iter()
             .enumerate()
@@ -102,7 +103,7 @@ impl MrListState {
             label_orders,
         );
 
-        self.list.clamp_selection();
+        self.list.restore(mrs, anchor.as_deref());
     }
 
     pub fn selected_mr<'a>(&self, mrs: &'a [MergeRequest]) -> Option<&'a MergeRequest> {
@@ -186,7 +187,7 @@ pub fn render(
                         Style::default().fg(styles::red()),
                     ),
                 ])),
-                None => Cell::default(),
+                None => Cell::from(""),
             };
 
             // Approval: green check, red uncheck
@@ -203,7 +204,7 @@ pub fn render(
                     styles::ICON_CHECK,
                     Style::default().fg(styles::green()),
                 )),
-                None => Cell::default(),
+                None => Cell::from(""),
             };
 
             // Threads: unresolved in orange, total in dim
@@ -220,7 +221,7 @@ pub fn render(
                     format!("{n}"),
                     Style::default().fg(styles::text_dim()),
                 )),
-                _ => Cell::default(),
+                _ => Cell::from(""),
             };
 
             let age = list_model::format_age(&item.updated_at, now);

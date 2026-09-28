@@ -1,4 +1,5 @@
 use glab_core::domain::{Issue, Iteration, MergeRequest};
+use glab_core::domain::{ItemKind, Relation};
 
 /// Side-effect descriptors returned from update logic.
 ///
@@ -61,6 +62,29 @@ pub enum Cmd {
         issue_id: String,
         target_gid: Option<String>,
         old_iteration: Option<Iteration>,
+    },
+
+    FetchRelated {
+        kind: ItemKind,
+        gid: String,
+    },
+
+    /// Link target to work item by gid
+    AddLink {
+        gid: String,
+        target_gid: String,
+        relation: Relation,
+    },
+    RemoveLink {
+        gid: String,
+        target_gid: String,
+    },
+
+    /// mention target in merge request with gid
+    MentionInMr {
+        gid: String,
+        target_gid: String,
+        relation: Relation,
     },
     SpawnSetStatus {
         project: String,

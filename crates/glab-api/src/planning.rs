@@ -10,7 +10,7 @@ use std::sync::Arc;
 use glab_core::domain::{Iteration, WorkItemStatus};
 
 use crate::client::GitLabClient;
-use crate::wire::{GqlGroupIterations, GqlResponse, GqlStatusesData, GqlWorkItemNotes};
+use crate::wire::{IterationsQuery, NotesQuery, Response, StatusesQuery};
 
 /// How many activity-note queries run at once in
 /// [`GitLabClient::fetch_iteration_added_dates_batch`]. One request per issue in
@@ -35,7 +35,7 @@ impl GitLabClient {
                 }
             }
         ";
-        self.paginate::<Iteration, GqlGroupIterations>(
+        self.paginate::<Iteration, IterationsQuery>(
             "listIterations",
             query,
             |after| serde_json::json!({ "path": group_path, "after": after }),
@@ -72,7 +72,7 @@ impl GitLabClient {
                 serde_json::json!({ "path": project }),
             )
             .await?;
-        let resp: GqlResponse<GqlStatusesData> =
+        let resp: Response<StatusesQuery> =
             serde_json::from_value(json).context("failed to deserialize work item statuses")?;
 
         let Some(namespace) = resp.data.namespace else {
@@ -128,7 +128,7 @@ impl GitLabClient {
                 serde_json::json!({ "fullPath": namespace, "iid": iid }),
             )
             .await?;
-        let resp: GqlResponse<GqlWorkItemNotes> =
+        let resp: Response<NotesQuery> =
             serde_json::from_value(json).context("failed to deserialize work item activity")?;
 
         let Some(work_item) = resp.data.workspace.and_then(|w| w.work_item) else {

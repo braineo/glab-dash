@@ -1,8 +1,10 @@
 //! Fetch-related methods: API calls, incremental fetch helpers, health data.
 
+use glab_core::domain::Item;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use glab_api::{Issuable, MrState};
+use glab_api::MrState;
+use glab_core::domain::ItemKind;
 
 use crate::cmd::Cmd;
 
@@ -297,7 +299,7 @@ impl App {
         let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
             let result = client
-                .list_discussions(Issuable::Issue, &project, &iid)
+                .list_discussions(ItemKind::Issue, &project, &iid)
                 .await;
             let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
         });
@@ -310,7 +312,7 @@ impl App {
         let tx = self.ctx.async_tx.clone();
         tokio::spawn(async move {
             let result = client
-                .list_discussions(Issuable::MergeRequest, &project, &iid)
+                .list_discussions(ItemKind::MergeRequest, &project, &iid)
                 .await;
             let _ = tx.send(AsyncMsg::DiscussionsLoaded(result));
         });

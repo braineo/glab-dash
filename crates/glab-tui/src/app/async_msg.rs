@@ -1,7 +1,8 @@
 //! TEA handle phase for async messages: process results from background tasks.
 
 use crate::cmd::Cmd;
-use glab_core::domain::{Issue, MergeRequest, StatusValue};
+use glab_core::domain::RelatedItem;
+use glab_core::domain::{Issue, Item, MergeRequest, StatusValue};
 
 use super::issue_actions;
 use super::{App, AsyncMsg, FetchState, View};
@@ -17,7 +18,8 @@ impl App {
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
-                    self.data.issues.retain(|i| i.state == "opened");
+                    self.sync_detail_snapshots();
+                    self.data.issues.retain(Issue::is_open);
                     self.ui.error = None;
                     self.record_fetch_done();
                     self.ui.dirty.issues = true;
@@ -37,7 +39,8 @@ impl App {
                     self.ui
                         .pending_cmds
                         .push(Cmd::PersistMrsFull(self.data.mrs.clone()));
-                    self.data.mrs.retain(|m| m.state == "opened");
+                    self.sync_detail_snapshots();
+                    self.data.mrs.retain(MergeRequest::is_open);
                     self.record_fetch_done();
                     self.ui.error = None;
                     self.ui.dirty.mrs = true;
@@ -71,6 +74,13 @@ impl App {
                     }
                 }
             }
+            AsyncMsg::RelatedLoaded(result, gid) => match result {
+                Ok(mut related) => {
+                    related.sort_by_key(RelatedItem::rank);
+                    self.data.related_by_gid.insert(gid, related);
+                }
+                Err(e) => self.show_error(format!("Related: {e:#}")),
+            },
             AsyncMsg::ActionDone(result) => {
                 self.ui.loading = false;
                 match result {
@@ -95,22 +105,22 @@ impl App {
                         self.ui
                             .pending_cmds
                             .push(Cmd::PersistIssuesFull(self.data.issues.clone()));
-                        self.data.issues.retain(|i| i.state == "opened");
+                        self.sync_detail_snapshots();
+                        self.data.issues.retain(Issue::is_open);
                         self.ui.error = None;
                         self.ui.dirty.issues = true;
                     }
                     Err(e) => self.show_error(format!("{e:#}")),
                 }
             }
-            AsyncMsg::MrUpdated(result, project_path) => {
+            AsyncMsg::MrUpdated(result) => {
                 self.ui.loading = false;
                 match result {
                     Ok(mr) => {
-                        if let Some(pos) = self
-                            .data
-                            .mrs
-                            .iter()
-                            .position(|e| e.iid == mr.iid && e.project_path() == project_path)
+                        if let Some(pos) =
+                            self.data.mrs.iter().position(|e| {
+                                e.iid == mr.iid && e.project_path() == mr.project_path()
+                            })
                         {
                             self.data.mrs[pos] = mr;
                         }
@@ -302,7 +312,7 @@ impl App {
                 .data
                 .mrs
                 .iter()
-                .filter(|m| m.state == "opened" && !returned.contains(&m.id))
+                .filter(|m| m.is_open() && !returned.contains(&m.id))
                 .map(|m| MergeRequest {
                     state: "closed".to_string(),
                     ..m.clone()
@@ -321,5 +331,24 @@ impl App {
             new_mrs.extend(closed);
             self.data.mrs = new_mrs;
         }
+    }
+
+    /// Refresh what the detail views hold from the freshly merged data, before
+    /// closed items are dropped from it — so closing an issue updates its
+    /// detail rather than emptying it.
+    fn sync_detail_snapshots(&mut self) {
+        sync_snapshot(&mut self.ui.views.issue_detail.issue, &self.data.issues);
+        sync_snapshot(&mut self.ui.views.mr_detail.mr, &self.data.mrs);
+    }
+}
+
+/// Replace `snapshot` with the item of the same gid in `items`, leaving it
+/// alone when `items` no longer carries that item.
+fn sync_snapshot<T: Item + Clone>(snapshot: &mut Option<T>, items: &[T]) {
+    let Some(gid) = snapshot.as_ref().map(|s| s.gid().to_string()) else {
+        return;
+    };
+    if let Some(fresh) = items.iter().find(|i| i.gid() == gid) {
+        *snapshot = Some(fresh.clone());
     }
 }

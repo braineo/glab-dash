@@ -1,13 +1,14 @@
 //! Key dispatch: handle_key entry point and binding group dispatch.
 
 use crossterm::event::KeyEvent;
+use glab_core::domain::Item;
 
 use crate::binding_group;
 use crate::cmd::{Cmd, Effects, EventResult};
 use crate::keybindings::BindingGroup;
 use crate::keybindings::{self, KeyAction};
 use crate::ui::components::picker;
-use crate::ui::views::Views;
+use crate::ui::views::{DetailCtx, Views};
 
 use super::issue_actions::{self, IssueActions};
 use super::mr_actions::{self, MrActions};
@@ -135,7 +136,7 @@ impl App {
     /// Dispatch to the active view's key handler.  Views handle their own
     /// navigation, fuzzy search, and filter bar.  Unhandled keys bubble.
     fn dispatch_view(&mut self, key: &KeyEvent, action: Option<KeyAction>) -> EventResult {
-        let ui = &mut self.ui;
+        let Self { ui, data, .. } = self;
         let mut fx = Effects {
             dirty: &mut ui.dirty,
             cmds: &mut ui.pending_cmds,
@@ -144,8 +145,32 @@ impl App {
         match ui.view {
             View::IssueList => ui.views.issue_list.handle_key(key, action, &mut fx),
             View::MrList => ui.views.mr_list.handle_key(key, action, &mut fx),
-            View::IssueDetail => ui.views.issue_detail.handle_key(action, &mut ui.overlay),
-            View::MrDetail => ui.views.mr_detail.handle_key(action, &mut ui.overlay),
+            View::IssueDetail => {
+                let Some(issue) = ui.views.issue_detail.issue.as_ref() else {
+                    return EventResult::Bubble;
+                };
+                let related = data
+                    .related_by_gid
+                    .get(issue.gid())
+                    .map_or(&[][..], Vec::as_slice);
+                let cx = DetailCtx::of(issue, related);
+                ui.views
+                    .issue_detail
+                    .handle_key(action, &cx, &mut ui.overlay, &mut fx)
+            }
+            View::MrDetail => {
+                let Some(mr) = ui.views.mr_detail.mr.as_ref() else {
+                    return EventResult::Bubble;
+                };
+                let related = data
+                    .related_by_gid
+                    .get(mr.gid())
+                    .map_or(&[][..], Vec::as_slice);
+                let cx = DetailCtx::of(mr, related);
+                ui.views
+                    .mr_detail
+                    .handle_key(action, &cx, &mut ui.overlay, &mut fx)
+            }
             View::Dashboard => {
                 ui.views
                     .board
@@ -232,6 +257,7 @@ impl App {
                 }
             }
             KeyAction::OpenDetail => self.action_open_detail(),
+            KeyAction::OpenLink => self.action_open_related(),
             KeyAction::Refresh => self.ui.pending_cmds.push(crate::cmd::Cmd::FetchAll),
             KeyAction::FullRefresh => self.ui.pending_cmds.push(crate::cmd::Cmd::FetchAllFull),
             KeyAction::FilterMenu => self.action_show_filter_menu(),
@@ -408,9 +434,11 @@ mod tests {
                     "{view:?} / {c}"
                 );
             }
+            let expected =
+                matches!(view, View::IssueDetail | View::MrDetail).then_some(KeyAction::OpenLink);
             assert_eq!(
                 keybindings::resolve(&groups, &code(KeyCode::Enter)),
-                None,
+                expected,
                 "{view:?} / Enter"
             );
         }

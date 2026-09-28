@@ -1,4 +1,4 @@
-use crate::domain::{Issue, MergeRequest};
+use crate::domain::{Issue, Item, MergeRequest};
 use serde::{Deserialize, Serialize};
 // `VariantArray` is imported as both the derive and the trait carrying `VARIANTS`.
 use strum::{EnumString, IntoStaticStr, VariantArray};

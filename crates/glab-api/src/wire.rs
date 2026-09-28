@@ -1,41 +1,47 @@
 //! The shapes GitLab's GraphQL responses arrive in, and how they fold into the
 //! [`glab_core::domain`] types the rest of glab-dash works with.
 //!
-//! Most selections deserialize straight into a domain type. The exception is a
-//! work item, whose fields arrive as a heterogeneous `widgets` array that
-//! [`Issue`] flattens: `GqlWorkItem` mirrors that array and the `From` impl
-//! folds it.
+//! Types are named for the schema type they select, prefixed with the document
+//! that selects it where the same schema type is selected differently by more
+//! than one — every document's root is its `<Document>Query`.
 
 use chrono::{DateTime, FixedOffset, Utc};
 use serde::Deserialize;
 
-use glab_core::domain::{
-    Issue, Iteration, MergeRequest, Milestone, StatusValue, User, WorkItemStatus,
-};
+use glab_core::domain::{self, Issue, Iteration, MergeRequest, Milestone, StatusValue, User};
+
+/// GraphQL answers `OPEN`/`CLOSED` where the rest of glab-dash spells the same
+/// states `opened`/`closed`.
+pub(crate) fn normalize_state(state: &str) -> String {
+    match state.to_lowercase().as_str() {
+        "open" => "opened".to_string(),
+        other => other.to_string(),
+    }
+}
 
 /// A GraphQL response envelope. Errors are handled before deserialization, so
 /// only `data` is read here.
 #[derive(Deserialize)]
-pub(crate) struct GqlResponse<T> {
+pub(crate) struct Response<T> {
     pub data: T,
 }
 
 /// A connection selected without `pageInfo`, read for its nodes alone.
 #[derive(Deserialize)]
-pub(crate) struct GqlNodes<T> {
+pub(crate) struct Nodes<T> {
     pub nodes: Vec<T>,
 }
 
 /// One page of a cursor-paginated connection.
 #[derive(Deserialize)]
-pub(crate) struct GqlPage<T> {
+pub(crate) struct Page<T> {
     pub nodes: Vec<T>,
     #[serde(rename = "pageInfo")]
-    pub page_info: GqlPageInfo,
+    pub page_info: PageInfo,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlPageInfo {
+pub(crate) struct PageInfo {
     #[serde(rename = "hasNextPage")]
     pub has_next_page: bool,
     #[serde(rename = "endCursor")]
@@ -48,35 +54,32 @@ pub(crate) struct GqlPageInfo {
 /// unknown project, a user the token cannot see — which `None` reports as an
 /// empty walk rather than an error.
 pub(crate) trait Paged<T> {
-    fn page(self) -> Option<GqlPage<T>>;
-}
-
-// ── Work items (namespace.workItems, workItemUpdate) ──
-
-#[derive(Deserialize)]
-pub(crate) struct GqlNamespaceWorkItems {
-    pub namespace: Option<GqlNamespace>,
+    fn page(self) -> Option<Page<T>>;
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlNamespace {
+pub(crate) struct WorkItemsQuery {
+    pub namespace: Option<WorkItemsNamespace>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WorkItemsNamespace {
     #[serde(rename = "workItems")]
-    pub work_items: GqlPage<GqlWorkItem>,
+    pub work_items: Page<WorkItem>,
 }
 
-impl Paged<Issue> for GqlNamespaceWorkItems {
-    fn page(self) -> Option<GqlPage<Issue>> {
+impl Paged<Issue> for WorkItemsQuery {
+    fn page(self) -> Option<Page<Issue>> {
         let page = self.namespace?.work_items;
-        Some(GqlPage {
+        Some(Page {
             nodes: page.nodes.into_iter().map(Issue::from).collect(),
             page_info: page.page_info,
         })
     }
 }
 
-/// A work item as `WorkItemFields` selects it.
 #[derive(Deserialize)]
-pub(crate) struct GqlWorkItem {
+pub(crate) struct WorkItem {
     id: String,
     iid: String,
     title: String,
@@ -91,26 +94,20 @@ pub(crate) struct GqlWorkItem {
     #[serde(rename = "webUrl")]
     web_url: String,
     reference: String,
-    widgets: Vec<GqlWidget>,
+    widgets: Vec<WorkItemWidget>,
 }
 
 #[derive(Deserialize)]
-struct GqlLabel {
+struct Label {
     title: String,
 }
 
-/// One entry of a work item's `widgets` array, flattened across every widget
-/// type the selection asks for.
-///
-/// Each element carries only the fields of its own type, so every field here is
-/// genuinely absent on most elements: the `default`s answer the union's shape,
-/// not a distrust of the schema.
 #[derive(Deserialize, Default)]
-struct GqlWidget {
+struct WorkItemWidget {
     #[serde(default)]
-    assignees: Option<GqlNodes<User>>,
+    assignees: Option<Nodes<User>>,
     #[serde(default)]
-    labels: Option<GqlNodes<GqlLabel>>,
+    labels: Option<Nodes<Label>>,
     #[serde(default)]
     milestone: Option<Milestone>,
     #[serde(default)]
@@ -123,8 +120,8 @@ struct GqlWidget {
     weight: Option<u32>,
 }
 
-impl From<GqlWorkItem> for Issue {
-    fn from(w: GqlWorkItem) -> Self {
+impl From<WorkItem> for Issue {
+    fn from(w: WorkItem) -> Self {
         let mut assignees = Vec::new();
         let mut labels = Vec::new();
         let mut milestone = None;
@@ -161,11 +158,7 @@ impl From<GqlWorkItem> for Issue {
             id: w.id,
             iid: w.iid,
             title: w.title,
-            // workItems returns OPEN/CLOSED; normalize to opened/closed
-            state: match w.state.to_lowercase().as_str() {
-                "open" => "opened".to_string(),
-                other => other.to_string(),
-            },
+            state: normalize_state(&w.state),
             author: w.author,
             assignees,
             labels,
@@ -184,119 +177,108 @@ impl From<GqlWorkItem> for Issue {
     }
 }
 
-// ── Root issues query ──
-
 #[derive(Deserialize)]
-pub(crate) struct GqlRootIssues {
-    issues: GqlPage<Issue>,
+pub(crate) struct RootIssuesQuery {
+    issues: Page<Issue>,
 }
 
-impl Paged<Issue> for GqlRootIssues {
-    fn page(self) -> Option<GqlPage<Issue>> {
+impl Paged<Issue> for RootIssuesQuery {
+    fn page(self) -> Option<Page<Issue>> {
         Some(self.issues)
     }
 }
 
-// ── Merge requests ──
-
 #[derive(Deserialize)]
-pub(crate) struct GqlProjectMrs {
-    project: Option<GqlProject>,
+pub(crate) struct ProjectMrsQuery {
+    project: Option<Project>,
 }
 
 #[derive(Deserialize)]
-struct GqlProject {
+struct Project {
     #[serde(rename = "mergeRequests")]
-    merge_requests: GqlPage<MergeRequest>,
+    merge_requests: Page<MergeRequest>,
 }
 
-impl Paged<MergeRequest> for GqlProjectMrs {
-    fn page(self) -> Option<GqlPage<MergeRequest>> {
+impl Paged<MergeRequest> for ProjectMrsQuery {
+    fn page(self) -> Option<Page<MergeRequest>> {
         Some(self.project?.merge_requests)
     }
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlUserMrs {
-    user: Option<GqlUserMrConnection>,
+pub(crate) struct UserMrsQuery {
+    user: Option<UserMrConnection>,
 }
 
-/// One response shape for every `User` merge-request connection —
+/// One response shape for every merge-request connection a user has —
 /// `authoredMergeRequests`, `assignedMergeRequests` or
-/// `reviewRequestedMergeRequests` — whichever field the document selected wins.
+/// `reviewRequestedMergeRequests` — whichever the document selected wins.
 #[derive(Deserialize)]
-struct GqlUserMrConnection {
+struct UserMrConnection {
     #[serde(
         alias = "authoredMergeRequests",
         alias = "assignedMergeRequests",
         alias = "reviewRequestedMergeRequests"
     )]
-    mrs: GqlPage<MergeRequest>,
+    mrs: Page<MergeRequest>,
 }
 
-impl Paged<MergeRequest> for GqlUserMrs {
-    fn page(self) -> Option<GqlPage<MergeRequest>> {
+impl Paged<MergeRequest> for UserMrsQuery {
+    fn page(self) -> Option<Page<MergeRequest>> {
         Some(self.user?.mrs)
     }
 }
 
-// ── Iterations ──
-
 #[derive(Deserialize)]
-pub(crate) struct GqlGroupIterations {
-    group: Option<GqlGroup>,
+pub(crate) struct IterationsQuery {
+    group: Option<Group>,
 }
 
 #[derive(Deserialize)]
-struct GqlGroup {
-    iterations: GqlPage<Iteration>,
+struct Group {
+    iterations: Page<Iteration>,
 }
 
-impl Paged<Iteration> for GqlGroupIterations {
-    fn page(self) -> Option<GqlPage<Iteration>> {
+impl Paged<Iteration> for IterationsQuery {
+    fn page(self) -> Option<Page<Iteration>> {
         Some(self.group?.iterations)
     }
 }
 
-// ── Work item statuses ──
-
 #[derive(Deserialize)]
-pub(crate) struct GqlStatusesData {
-    pub namespace: Option<GqlStatusNamespace>,
+pub(crate) struct StatusesQuery {
+    pub namespace: Option<StatusesNamespace>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlStatusNamespace {
+pub(crate) struct StatusesNamespace {
     #[serde(rename = "workItemTypes")]
-    pub work_item_types: GqlNodes<GqlWorkItemType>,
+    pub work_item_types: Nodes<WorkItemType>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlWorkItemType {
+pub(crate) struct WorkItemType {
     #[serde(rename = "widgetDefinitions")]
-    pub widget_definitions: Vec<GqlWidgetDefinition>,
+    pub widget_definitions: Vec<WorkItemWidgetDefinition>,
 }
 
-/// One widget definition. `allowedStatuses` comes from an inline fragment on
-/// the status widget alone, so it is absent on every other definition in the
-/// array.
 #[derive(Deserialize)]
-pub(crate) struct GqlWidgetDefinition {
+pub(crate) struct WorkItemWidgetDefinition {
     #[serde(default, rename = "allowedStatuses")]
-    pub allowed_statuses: Option<Vec<GqlAllowedStatus>>,
+    pub allowed_statuses: Option<Vec<WorkItemStatus>>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlAllowedStatus {
+pub(crate) struct WorkItemStatus {
     id: String,
     name: String,
     position: Option<i32>,
     category: Option<String>,
 }
 
-impl From<GqlAllowedStatus> for WorkItemStatus {
-    fn from(s: GqlAllowedStatus) -> Self {
-        WorkItemStatus {
+impl From<WorkItemStatus> for domain::WorkItemStatus {
+    fn from(s: WorkItemStatus) -> Self {
+        domain::WorkItemStatus {
             id: s.id,
             name: s.name,
             position: s.position,
@@ -305,39 +287,35 @@ impl From<GqlAllowedStatus> for WorkItemStatus {
     }
 }
 
-// ── Work item activity notes ──
-
 #[derive(Deserialize)]
-pub(crate) struct GqlWorkItemNotes {
-    pub workspace: Option<GqlNotesNamespace>,
+pub(crate) struct NotesQuery {
+    pub workspace: Option<NotesNamespace>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlNotesNamespace {
+pub(crate) struct NotesNamespace {
     #[serde(rename = "workItem")]
-    pub work_item: Option<GqlNotesWorkItem>,
+    pub work_item: Option<NotesWorkItem>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlNotesWorkItem {
-    pub widgets: Vec<GqlNotesWidget>,
+pub(crate) struct NotesWorkItem {
+    pub widgets: Vec<NotesWidget>,
 }
 
-/// A notes widget. `discussions` comes from an inline fragment, so it is absent
-/// on any other widget the array happens to carry.
 #[derive(Deserialize)]
-pub(crate) struct GqlNotesWidget {
+pub(crate) struct NotesWidget {
     #[serde(default)]
-    pub discussions: Option<GqlNodes<GqlNoteDiscussion>>,
+    pub discussions: Option<Nodes<Discussion>>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlNoteDiscussion {
-    pub notes: GqlNodes<GqlSystemNote>,
+pub(crate) struct Discussion {
+    pub notes: Nodes<Note>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GqlSystemNote {
+pub(crate) struct Note {
     pub system: bool,
     #[serde(rename = "systemNoteIconName")]
     pub icon: Option<String>,

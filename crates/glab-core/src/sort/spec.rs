@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::domain::{Issue, MergeRequest};
+use crate::domain::{Issue, Item, MergeRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, IntoStaticStr, VariantArray};
 

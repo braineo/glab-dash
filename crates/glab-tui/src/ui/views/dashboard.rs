@@ -12,7 +12,7 @@ use crate::keybindings::KeyAction;
 use crate::ui::styles;
 use crate::ui::views::list_model::{FilterBarAction, ItemList, UserFilter};
 use glab_config::Config;
-use glab_core::domain::{Issue, Iteration, MergeRequest, WorkItemStatus};
+use glab_core::domain::{Issue, Item, Iteration, MergeRequest, WorkItemStatus};
 use glab_core::kanban::KanbanColumn;
 use glab_core::sort;
 use glab_core::sort::label_order::LabelOrders;
@@ -295,6 +295,11 @@ impl IterationBoardState {
         label_orders: &LabelOrders,
         me: &str,
     ) {
+        let anchors: Vec<_> = self
+            .columns
+            .iter()
+            .map(|col| col.list.anchor(issues))
+            .collect();
         for col in &mut self.columns {
             col.list.indices.clear();
         }
@@ -322,7 +327,7 @@ impl IterationBoardState {
         }
 
         // Apply shared filter conditions, fuzzy filter, and sort to each column
-        for col in &mut self.columns {
+        for (col, anchor) in self.columns.iter_mut().zip(&anchors) {
             col.list.indices.retain(|&i| {
                 let item = &issues[i];
                 if !glab_core::filter::condition::matches_issue(item, &self.filter.conditions, me) {
@@ -345,7 +350,7 @@ impl IterationBoardState {
                 &self.filter.sort_specs,
                 label_orders,
             );
-            col.list.clamp_selection();
+            col.list.restore(issues, anchor.as_deref());
         }
     }
 
@@ -1059,7 +1064,7 @@ fn render_stats_summary(
         .filter(|i| !config.is_tracking_project(i.project_path()))
         .count();
     let unassigned_issues = issues.iter().filter(|i| i.assignees.is_empty()).count();
-    let open_mrs = mrs.iter().filter(|m| m.state == "opened").count();
+    let open_mrs = mrs.iter().filter(|m| m.is_open()).count();
     let draft_mrs = mrs.iter().filter(|m| m.draft).count();
     let my_review_mrs = mrs
         .iter()
@@ -1248,18 +1253,12 @@ pub fn compute_health(
     // Collect iteration issues
     let iter_issues: Vec<&Issue> = issues
         .iter()
-        .filter(|i| i.iteration.as_ref().is_some_and(|it| it.id == *current_id))
+        .filter(|i| i.in_iteration(current_id))
         .collect();
 
     let total_issues = iter_issues.len();
 
-    // Determine "done" via status category or state
-    let is_done = |ti: &Issue| -> bool {
-        ti.status_category()
-            .map_or(ti.state == "closed", |cat| cat == "done")
-    };
-
-    let done_issues = iter_issues.iter().filter(|i| is_done(i)).count();
+    let done_issues = iter_issues.iter().filter(|i| i.is_done()).count();
 
     // Burn rate — precision loss is fine for small counts
     #[allow(clippy::cast_precision_loss)]
@@ -1289,11 +1288,7 @@ pub fn compute_health(
     let mut unplanned_work = ItemList::<Issue>::default();
     if let Some(threshold) = unplanned_threshold {
         for (i, item) in issues.iter().enumerate() {
-            let in_iter = item
-                .iteration
-                .as_ref()
-                .is_some_and(|it| it.id == *current_id);
-            if in_iter
+            if item.in_iteration(current_id)
                 && let Some(added_at) = unplanned_work_cache.get(&item.id)
                 && *added_at > threshold
             {
@@ -1312,16 +1307,13 @@ pub fn compute_health(
     });
     unplanned_work.clamp_selection();
 
-    // Shadow work: closed issues updated during iteration but not in it (indices into `shadow_work_cache`).
-    // Exclude "canceled" category (duplicates, won't do, etc.) — only real completed work.
-    let is_canceled =
-        |ti: &Issue| -> bool { ti.status_category().is_some_and(|cat| cat == "canceled") };
-
-    // Shadow work: DB already filters by closed_at range and excludes current iteration.
-    // Here we just exclude canceled issues (status category check needs Rust).
+    // Shadow work: closed issues updated during the iteration but not in it
+    // (indices into `shadow_work_cache`).  The DB already filters by closed_at
+    // range and excludes the current iteration; what is left is dropping the
+    // canceled ones — a duplicate or a won't-do is not work that got done.
     let mut shadow_work = ItemList::<Issue>::default();
     for (i, ti) in shadow_work_cache.iter().enumerate() {
-        if !is_canceled(ti) {
+        if !ti.is_canceled() {
             shadow_work.indices.push(i);
         }
     }
@@ -1334,21 +1326,15 @@ pub fn compute_health(
     });
     shadow_work.clamp_selection();
 
-    // At risk: unfinished iteration issues not updated in 5+ days (indices into `issues`).
-    // GitLab status categories are: triage, to_do, in_progress, done, canceled.
+    // At risk: unfinished iteration issues not updated in 5+ days (indices into
+    // `issues`).
     let stale_threshold = Utc::now() - chrono::Duration::days(5);
-    let is_active_status = |ti: &Issue| -> bool {
-        ti.status_category()
-            .is_some_and(|cat| matches!(cat, "to_do" | "in_progress"))
-    };
-
     let mut at_risk = ItemList::<Issue>::default();
     for (i, item) in issues.iter().enumerate() {
-        let in_iter = item
-            .iteration
-            .as_ref()
-            .is_some_and(|it| it.id == *current_id);
-        if in_iter && is_active_status(item) && item.updated_at < stale_threshold && !is_done(item)
+        if item.in_iteration(current_id)
+            && item.is_active()
+            && item.updated_at < stale_threshold
+            && !item.is_done()
         {
             at_risk.indices.push(i);
         }

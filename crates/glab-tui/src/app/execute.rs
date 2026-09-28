@@ -1,5 +1,9 @@
 //! TEA execute phase: drain pending Cmds and perform I/O side-effects.
 
+use anyhow::Result;
+use glab_api::GitLabClient;
+use glab_core::domain::ItemKind;
+
 use crate::cmd::Cmd;
 
 use super::{App, AsyncMsg, FetchState, ViewState};
@@ -114,7 +118,7 @@ impl App {
                 let tx = self.ctx.async_tx.clone();
                 tokio::spawn(async move {
                     let result = client.close_mr(&project, &iid).await;
-                    let _ = tx.send(AsyncMsg::MrUpdated(result, project));
+                    let _ = tx.send(AsyncMsg::MrUpdated(result));
                 });
             }
             Cmd::SpawnApproveMr { project, iid } => {
@@ -153,6 +157,41 @@ impl App {
                     let _ = tx.send(AsyncMsg::IterationUpdated(result, issue_id, old_iteration));
                 });
             }
+            // GitLab owns the link ids, so a write re-reads rather than
+            // patching — which also picks up anyone else's change.
+            Cmd::FetchRelated { kind, gid } => {
+                self.refresh_related(vec![(kind, gid)], |_, _| async { Ok(()) });
+            }
+            Cmd::AddLink {
+                gid,
+                target_gid,
+                relation,
+            } => {
+                self.refresh_related(vec![(ItemKind::Issue, gid)], move |client, gid| async move {
+                    client.add_link(&gid, &target_gid, relation).await
+                });
+            }
+            // The line lands in the merge request, but the issue's own list is
+            // GitLab's reading of that same line, so both sides re-read.
+            Cmd::MentionInMr {
+                gid,
+                target_gid,
+                relation,
+            } => {
+                let reads = vec![
+                    (ItemKind::MergeRequest, gid),
+                    (ItemKind::Issue, target_gid.clone()),
+                ];
+                self.refresh_related(reads, move |client, mr_gid| async move {
+                    client.mention_in_mr(&mr_gid, &target_gid, relation).await
+                });
+            }
+            Cmd::RemoveLink { gid, target_gid } => {
+                self.refresh_related(
+                    vec![(ItemKind::Issue, gid)],
+                    move |client, gid| async move { client.unlink(&gid, &target_gid).await },
+                );
+            }
             Cmd::SpawnSetStatus {
                 project,
                 issue_id,
@@ -171,5 +210,30 @@ impl App {
                 });
             }
         }
+    }
+
+    /// Run `write` against the first gid in `reads`, then re-read the related
+    /// list of every item in `reads`: one write can change both sides of a
+    /// pair.  A read alone passes a `write` that does nothing.
+    fn refresh_related<F, Fut>(&self, reads: Vec<(ItemKind, String)>, write: F)
+    where
+        F: FnOnce(GitLabClient, String) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<()>> + Send,
+    {
+        let client = self.ctx.client.clone();
+        let tx = self.ctx.async_tx.clone();
+        tokio::spawn(async move {
+            let Some((_, written)) = reads.first().cloned() else {
+                return;
+            };
+            if let Err(e) = write(client.clone(), written.clone()).await {
+                let _ = tx.send(AsyncMsg::RelatedLoaded(Err(e), written));
+                return;
+            }
+            for (kind, gid) in reads {
+                let result = client.list_related(kind, &gid).await;
+                let _ = tx.send(AsyncMsg::RelatedLoaded(result, gid));
+            }
+        });
     }
 }

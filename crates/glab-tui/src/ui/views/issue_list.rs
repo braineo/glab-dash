@@ -9,7 +9,7 @@ use crate::cmd::{Cmd, Effects, EventResult};
 use crate::keybindings::KeyAction;
 use crate::ui::views::list_model::{self, FilterBarAction, ItemList, UserFilter};
 use crate::ui::{components, styles};
-use glab_core::domain::Issue;
+use glab_core::domain::{Issue, Item};
 use glab_core::filter::matches_issue;
 use glab_core::sort;
 use glab_core::sort::label_order::LabelOrders;
@@ -83,6 +83,7 @@ impl IssueListState {
     // ── Filtering ───────────────────────────────────────────────────
 
     pub fn apply_filters(&mut self, issues: &[Issue], me: &str, label_orders: &LabelOrders) {
+        let anchor = self.list.anchor(issues);
         self.list.indices = issues
             .iter()
             .enumerate()
@@ -109,7 +110,7 @@ impl IssueListState {
             label_orders,
         );
 
-        self.list.clamp_selection();
+        self.list.restore(issues, anchor.as_deref());
     }
 
     pub fn selected_issue<'a>(&self, issues: &'a [Issue]) -> Option<&'a Issue> {
@@ -212,7 +213,7 @@ pub fn render(
                 Cell::from(Span::styled(age, Style::default().fg(styles::text_dim()))),
             ]);
             let is_selected = selected_idx == Some(row_idx);
-            let is_closed = item.state == "closed";
+            let is_closed = !item.is_open();
             if is_selected {
                 row.style(styles::selected_style())
             } else if is_closed {

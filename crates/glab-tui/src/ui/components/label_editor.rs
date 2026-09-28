@@ -251,29 +251,25 @@ fn select_pinned(
         .map(|(i, _)| i)
         .collect();
 
-    // Build effective frequency: explicit usage + issue occurrence for cold start
-    let effective_usage = if label_usage.is_empty() {
-        // Cold start: count occurrences across open issues
-        let mut counts: HashMap<&str, u32> = HashMap::new();
-        for labels in issue_labels {
-            for label in labels {
-                *counts.entry(label.as_str()).or_insert(0) += 1;
-            }
+    // Effective frequency: how often the label appears on open issues, plus
+    // the times the user applied it themselves.  Both count — explicit usage
+    // alone only ever names labels already on this item.
+    let mut effective_usage: HashMap<&str, u32> = HashMap::new();
+    for labels in issue_labels {
+        for label in labels {
+            *effective_usage.entry(label.as_str()).or_insert(0) += 1;
         }
-        all_labels
-            .iter()
-            .map(|l| (l.clone(), counts.get(l.as_str()).copied().unwrap_or(0)))
-            .collect::<HashMap<String, u32>>()
-    } else {
-        label_usage.clone()
-    };
+    }
+    for (name, count) in label_usage {
+        *effective_usage.entry(name.as_str()).or_insert(0) += count;
+    }
 
     // Sort remaining by usage count descending
     let mut by_usage: Vec<(usize, u32)> = all_labels
         .iter()
         .enumerate()
         .filter(|(i, _)| !pinned.contains(i))
-        .map(|(i, name)| (i, effective_usage.get(name).copied().unwrap_or(0)))
+        .map(|(i, name)| (i, effective_usage.get(name.as_str()).copied().unwrap_or(0)))
         .filter(|(_, count)| *count > 0)
         .collect();
     by_usage.sort_by_key(|item| std::cmp::Reverse(item.1));
@@ -624,6 +620,30 @@ mod tests {
             }
             _ => panic!("Expected Confirmed"),
         }
+    }
+
+    #[test]
+    fn pins_frequent_labels_alongside_explicit_usage() {
+        let all: Vec<String> = ["A", "B", "C", "D"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        let current = vec!["A".to_string()];
+        // The user has applied "A" before; "C" is common across open issues.
+        let usage = HashMap::from([("A".to_string(), 5)]);
+        let issue_labels = vec![vec!["C".to_string()], vec!["C".to_string()]];
+
+        let state = LabelEditorState::new(all, &current, &usage, &issue_labels, 20);
+        let pinned: Vec<&str> = state
+            .pinned
+            .iter()
+            .map(|&i| state.all_labels[i].as_str())
+            .collect();
+        assert!(pinned.contains(&"A"), "current label stays pinned");
+        assert!(
+            pinned.contains(&"C"),
+            "frequent label pinned despite usage map"
+        );
     }
 
     #[test]

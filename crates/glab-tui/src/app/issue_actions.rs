@@ -1,4 +1,5 @@
-//! Key handling for focused issues.
+//! What a focused issue answers to differently from a merge request; the rest
+//! is in [`item_actions`](super::item_actions).
 //!
 //! `Issue` lives in `glab-core`, so the methods that take one are hung off it
 //! with the [`IssueActions`] extension trait; the chord and confirm builders,
@@ -8,16 +9,15 @@
 //! with disjoint borrows: `&self` + `&AppData` (both immutable, from the
 //! same struct), `&AppCtx` (immutable infra), `&mut UiState` (mutable UI).
 
-use glab_api::Issuable;
-
 use crate::cmd::{Cmd, EventResult};
 use crate::keybindings::KeyAction;
-use crate::ui::components::{
-    chord_popup, conversation::draft_new_thread, input::CommentTarget, label_editor,
+use crate::ui::components::chord_popup;
+use glab_core::domain::{
+    Issue, Item, Iteration, ProjectLabel, StatusCategory, User, WorkItemStatus,
 };
-use glab_core::domain::{Issue, Iteration, ProjectLabel, User};
 
-use super::{AppCtx, AppData, Overlay, UiState, View};
+use super::item_actions;
+use super::{AppCtx, AppData, Overlay, UiState};
 
 /// Issue actions that need the app's context, ui and data. Implemented for
 /// `Issue`, which this crate does not own.
@@ -55,8 +55,6 @@ pub trait IssueActions {
     );
     /// Assign the issue to `username`, optimistically updating in place.
     fn update_assignee(&mut self, username: &str, ctx: &AppCtx, ui: &mut UiState);
-    /// Post `body` as a new thread, a reply, or a rewrite of an existing note.
-    fn submit_comment(&self, body: &str, target: CommentTarget, ctx: &AppCtx, ui: &mut UiState);
 }
 
 impl IssueActions for Issue {
@@ -98,50 +96,10 @@ impl IssueActions for Issue {
             KeyAction::ResolveThread => {
                 ui.error = Some("GitLab does not support resolving issue threads".to_string());
             }
-            KeyAction::EditLabels => {
-                let label_names: Vec<String> = data.labels.iter().map(|l| l.name.clone()).collect();
-                let issue_labels: Vec<Vec<String>> =
-                    data.issues.iter().map(|i| i.labels.clone()).collect();
-                ui.overlay = Overlay::LabelEditor {
-                    state: label_editor::LabelEditorState::new(
-                        label_names,
-                        &self.labels,
-                        &data.label_usage,
-                        &issue_labels,
-                        20,
-                    ),
-                };
-            }
-            KeyAction::EditAssignee => {
-                let members = ctx.config.all_members();
-                let is_detail = matches!(ui.view, View::IssueDetail);
-                if is_detail {
-                    ui.overlay = Overlay::Picker {
-                        state: crate::ui::components::picker::PickerState::new(
-                            "Assignee", members, false,
-                        ),
-                        on_complete: Box::new(|values, app| {
-                            if let Some(username) = values.first() {
-                                app.dispatch_update_assignee(username);
-                            }
-                        }),
-                    };
-                } else {
-                    ui.overlay = Overlay::Chord {
-                        state: chord_popup::ChordState::new_for_names("Set Assignee", members),
-                        on_complete: Box::new(|value, app| {
-                            app.dispatch_update_assignee(&value);
-                        }),
-                    };
-                }
-            }
-            KeyAction::Comment => {
-                ui.overlay = draft_new_thread();
-            }
             KeyAction::MoveIteration => {
                 show_iteration_chord(&self.id, data, ui);
             }
-            _ => return EventResult::Bubble,
+            _ => return item_actions::handle_key(action, self, ctx, data, ui),
         }
         EventResult::Consumed
     }
@@ -228,41 +186,6 @@ impl IssueActions for Issue {
         });
         ui.dirty.issues = true;
     }
-
-    /// Submit a comment, a reply, or an edit.
-    fn submit_comment(&self, body: &str, target: CommentTarget, ctx: &AppCtx, ui: &mut UiState) {
-        let client = ctx.client.clone();
-        let tx = ctx.async_tx.clone();
-        let body = body.to_string();
-        let project = self.project_path().to_string();
-        let iid = self.iid.clone();
-
-        ui.loading = true;
-        tokio::spawn(async move {
-            let create_result = match &target {
-                CommentTarget::Reply(disc_id) => client
-                    .reply_to_discussion(Issuable::Issue, &project, &iid, disc_id, &body)
-                    .await
-                    .map(|_| ()),
-                CommentTarget::NewThread => client
-                    .create_thread(Issuable::Issue, &project, &iid, &body)
-                    .await
-                    .map(|_| ()),
-                CommentTarget::Edit(note_id) => client
-                    .update_note(Issuable::Issue, &project, &iid, *note_id, &body)
-                    .await
-                    .map(|_| ()),
-            };
-            if let Err(e) = create_result {
-                let _ = tx.send(super::AsyncMsg::ActionDone(Err(e)));
-                return;
-            }
-            let discussions = client
-                .list_discussions(Issuable::Issue, &project, &iid)
-                .await;
-            let _ = tx.send(super::AsyncMsg::DiscussionsLoaded(discussions));
-        });
-    }
 }
 
 /// Open status chord from cached statuses, or trigger async fetch.
@@ -302,23 +225,23 @@ pub fn build_status_chord(
     issue_id: &str,
     iid: &str,
     close_only: bool,
-    statuses: &[glab_core::domain::WorkItemStatus],
+    statuses: &[WorkItemStatus],
     data: &AppData,
     ui: &mut UiState,
 ) {
     let iid_owned = iid.to_string();
     let issue_id_owned = issue_id.to_string();
-    let is_duplicate =
-        |s: &glab_core::domain::WorkItemStatus| s.name.to_lowercase().contains("duplicate");
+    let is_duplicate = |s: &WorkItemStatus| s.name.to_lowercase().contains("duplicate");
 
+    // Done first: closing an issue is what this chord is opened for most.
     let mut sorted_indices: Vec<usize> = (0..statuses.len())
         .filter(|&i| !is_duplicate(&statuses[i]))
         .collect();
-    sorted_indices.sort_by_key(|&i| match statuses[i].category.as_deref() {
-        Some("done") => 0,
-        Some("to_do" | "in_progress") => 1,
-        Some("canceled") => 2,
-        _ => 3,
+    sorted_indices.sort_by_key(|&i| match statuses[i].category() {
+        StatusCategory::Done => 0,
+        StatusCategory::ToDo | StatusCategory::InProgress => 1,
+        StatusCategory::Canceled => 2,
+        StatusCategory::Triage | StatusCategory::Other => 3,
     });
     let sorted_names: Vec<String> = sorted_indices
         .iter()
@@ -335,17 +258,11 @@ pub fn build_status_chord(
     let project_owned = project.to_string();
 
     if close_only {
-        let is_close_category = |s: &glab_core::domain::WorkItemStatus| {
-            s.category
-                .as_deref()
-                .is_some_and(|c| matches!(c, "done" | "canceled"))
-        };
-
-        let mut close_items: Vec<(usize, &str)> = statuses
+        let mut close_items: Vec<(usize, StatusCategory)> = statuses
             .iter()
             .enumerate()
-            .filter(|(_, s)| is_close_category(s))
-            .map(|(i, s)| (i, s.category.as_deref().unwrap_or("")))
+            .map(|(i, s)| (i, s.category()))
+            .filter(|(_, category)| category.is_settled())
             .collect();
 
         if close_items.is_empty() {
@@ -358,11 +275,7 @@ pub fn build_status_chord(
             return;
         }
 
-        close_items.sort_by_key(|(_, cat)| match *cat {
-            "done" => 0,
-            "canceled" => 1,
-            _ => 2,
-        });
+        close_items.sort_by_key(|(_, category)| u8::from(category.is_canceled()));
 
         let options: Vec<(String, String)> = close_items
             .iter()

@@ -1,5 +1,6 @@
 //! Render the TUI: tab bar, main view, status bar, and overlays.
 
+use glab_core::domain::Item;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Widget;
@@ -72,10 +73,16 @@ impl App {
             }
             View::IssueDetail => {
                 if let Some(item) = self.current_detail_issue().cloned() {
+                    let related = self
+                        .data
+                        .related_by_gid
+                        .get(item.gid())
+                        .map_or(&[][..], Vec::as_slice);
                     issue_detail::render(
                         frame,
                         chunks[1],
                         &item,
+                        related,
                         &mut self.ui.views.issue_detail,
                         &ctx,
                     );
@@ -92,7 +99,19 @@ impl App {
             }
             View::MrDetail => {
                 if let Some(item) = self.current_detail_mr().cloned() {
-                    mr_detail::render(frame, chunks[1], &item, &mut self.ui.views.mr_detail, &ctx);
+                    let related = self
+                        .data
+                        .related_by_gid
+                        .get(item.gid())
+                        .map_or(&[][..], Vec::as_slice);
+                    mr_detail::render(
+                        frame,
+                        chunks[1],
+                        &item,
+                        related,
+                        &mut self.ui.views.mr_detail,
+                        &ctx,
+                    );
                 }
             }
             View::Planning => {

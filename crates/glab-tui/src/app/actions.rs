@@ -1,8 +1,12 @@
 //! Action methods: browser, labels, assignee, comment, status, detail navigation.
 
-use glab_core::domain::{Issue, MergeRequest, StatusValue};
+use glab_core::domain::ItemKind;
+use glab_core::domain::{Issue, Item, MergeRequest, StatusValue};
+
+use crate::ui::components::related;
 
 use super::issue_actions::IssueActions;
+use super::item_actions;
 use super::mr_actions::MrActions;
 use super::{App, FocusedItem, Overlay, View};
 
@@ -111,64 +115,140 @@ impl App {
         }
     }
 
-    /// Dispatch comment submit to the focused issue or MR.
+    /// Both kinds take the same path; this only says which item.
     pub(super) fn dispatch_submit_comment(
         &mut self,
         body: &str,
         target: crate::ui::components::input::CommentTarget,
     ) {
-        match self.ui.focused.clone() {
-            Some(FocusedItem::Issue { id, .. }) => {
-                if let Some(issue) = self.data.issues.iter().find(|i| i.id == id) {
-                    issue.submit_comment(body, target, &self.ctx, &mut self.ui);
-                }
-            }
-            Some(FocusedItem::Mr { project, iid }) => {
-                if let Some(mr) = self
-                    .data
-                    .mrs
-                    .iter()
-                    .find(|m| m.iid == iid && m.project_path() == project)
-                {
-                    mr.submit_comment(body, target, &self.ctx, &mut self.ui);
-                }
-            }
-            None => {}
+        if let Some(focused) = self.ui.focused.clone() {
+            item_actions::submit_comment(
+                &focused.item_ref(),
+                body,
+                target,
+                &self.ctx,
+                &mut self.ui,
+            );
         }
     }
 
     /// Look up the issue shown in the detail view by its stored gid.
     pub(super) fn current_detail_issue(&self) -> Option<&Issue> {
-        super::issue_by_id(&self.data, &self.ui.views.issue_detail.id)
+        self.ui.views.issue_detail.issue.as_ref()
     }
 
     /// Look up the MR shown in the detail view by its stored (project, iid).
     pub(super) fn current_detail_mr(&self) -> Option<&MergeRequest> {
-        let d = &self.ui.views.mr_detail;
-        if d.project.is_empty() {
-            return None;
-        }
-        self.data
-            .mrs
-            .iter()
-            .find(|m| m.iid == d.iid && m.project_path() == d.project)
+        self.ui.views.mr_detail.mr.as_ref()
     }
 
     pub(super) fn action_open_detail(&mut self) {
         match self.ui.focused.clone() {
-            Some(FocusedItem::Issue { id, project, iid }) => {
-                self.ui.views.issue_detail.open(&id, &project, &iid);
-                self.fetch_notes_for_issue(&project, &iid);
-                self.ui.view_stack.push(self.ui.view);
-                self.ui.view = View::IssueDetail;
+            Some(FocusedItem::Issue { id, .. }) => {
+                let Some(issue) = super::issue_by_id(&self.data, &id).cloned() else {
+                    return;
+                };
+                self.open_issue_detail(issue);
+                self.enter_detail(View::IssueDetail);
             }
             Some(FocusedItem::Mr { project, iid }) => {
-                self.ui.views.mr_detail.open(&project, &iid);
-                self.fetch_notes_for_mr(&project, &iid);
-                self.ui.view_stack.push(self.ui.view);
-                self.ui.view = View::MrDetail;
+                let Some(mr) = self
+                    .data
+                    .mrs
+                    .iter()
+                    .find(|m| m.iid == iid && m.project_path() == project)
+                    .cloned()
+                else {
+                    return;
+                };
+                self.open_mr_detail(mr);
+                self.enter_detail(View::MrDetail);
             }
             None => {}
+        }
+        self.ui.dirty.selection = true;
+    }
+
+    /// Does not switch the view: the caller decides what to stack.
+    pub(super) fn open_issue_detail(&mut self, issue: Issue) {
+        let item = issue.item_ref();
+        let gid = issue.gid().to_string();
+        self.ui.views.issue_detail.open(issue);
+        self.fetch_notes_for_issue(&item.project, &item.iid);
+        self.ui.pending_cmds.push(crate::cmd::Cmd::FetchRelated {
+            kind: ItemKind::Issue,
+            gid,
+        });
+        self.ui.dirty.selection = true;
+    }
+
+    /// Does not switch the view: the caller decides what to stack.
+    pub(super) fn open_mr_detail(&mut self, mr: MergeRequest) {
+        let item = mr.item_ref();
+        let gid = mr.gid().to_string();
+        self.ui.views.mr_detail.open(mr);
+        self.fetch_notes_for_mr(&item.project, &item.iid);
+        self.ui.pending_cmds.push(crate::cmd::Cmd::FetchRelated {
+            kind: ItemKind::MergeRequest,
+            gid,
+        });
+        self.ui.dirty.selection = true;
+    }
+
+    /// A fetched item opens in the detail view; one outside the team's scope
+    /// has no local copy to render, so it opens in the browser.
+    ///
+    /// ponytail: a chain of blockers cannot be walked back item by item; give
+    /// the detail view its own stack if that bites.
+    pub(super) fn action_open_related(&mut self) {
+        let Some(target) = self.related_at_cursor() else {
+            return;
+        };
+        let reference = target.item.reference();
+        match target.item.kind {
+            ItemKind::Issue => {
+                let Some(issue) = self.data.issues.iter().find(|i| i.reference == reference) else {
+                    let _ = open::that_detached(&target.web_url);
+                    return;
+                };
+                let issue = issue.clone();
+                self.open_issue_detail(issue);
+                self.enter_detail(View::IssueDetail);
+            }
+            ItemKind::MergeRequest => {
+                let Some(mr) = self.data.mrs.iter().find(|m| m.reference == reference) else {
+                    let _ = open::that_detached(&target.web_url);
+                    return;
+                };
+                let mr = mr.clone();
+                self.open_mr_detail(mr);
+                self.enter_detail(View::MrDetail);
+            }
+        }
+    }
+
+    /// Whichever detail view is open, the relation its cursor sits on.
+    fn related_at_cursor(&self) -> Option<glab_core::domain::RelatedItem> {
+        let (gid, body) = match self.ui.view {
+            View::IssueDetail => (
+                self.current_detail_issue()?.gid(),
+                &self.ui.views.issue_detail.body,
+            ),
+            View::MrDetail => (
+                self.current_detail_mr()?.gid(),
+                &self.ui.views.mr_detail.body,
+            ),
+            _ => return None,
+        };
+        related::at_cursor(self.data.related_by_gid.get(gid)?, body).cloned()
+    }
+
+    /// Crossing from one kind of detail to the other stacks what it left, so
+    /// Esc comes back to it; following a link within one kind replaces it.
+    fn enter_detail(&mut self, view: View) {
+        if self.ui.view != view {
+            self.ui.view_stack.push(self.ui.view);
+            self.ui.view = view;
         }
         self.ui.dirty.selection = true;
     }

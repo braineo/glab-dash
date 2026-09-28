@@ -1,23 +1,17 @@
-//! The conversation on an issue or merge request — its description and every
-//! comment thread — as one flat list of rows a cursor walks.
+//! The comment threads on an issue or merge request, as rows in a
+//! [`DetailBody`].
 //!
-//! Rows are the unit, not notes: a pasted log is taller than the pane and has to
-//! scroll, so bodies are wrapped to the pane width and each visual row becomes
-//! its own [`Line`].  Every row records the thread it belongs to, so the key
-//! that replies or resolves reads the thread straight off the row under the
-//! cursor rather than asking the reader to pick one out of a list.
-//!
-//! Chrome holds the left two columns on every row, wrapped rows included: the
-//! cursor bar, then the thread's rail.  A reply is inset past its root's rail
-//! but keeps it, so a thread reads as one connected block however deep the
-//! replies go and however far a body wraps.
+//! Every row records the thread and the note it belongs to, so the key that
+//! replies, edits or resolves reads its subject off the row under the cursor.
+//! A thread holds its rail down every row it owns; a reply is inset past it but
+//! keeps it, so the thread reads as one block.
 
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
@@ -26,48 +20,20 @@ use glab_core::domain::{Discussion, Note};
 use crate::app::Overlay;
 use crate::cmd::EventResult;
 use crate::keybindings::KeyAction;
+use crate::ui::components::detail_body::{self, DetailBody, Row};
 use crate::ui::components::input::{CommentInput, CommentTarget};
 use crate::ui::components::status_bar::format_span;
 use crate::ui::{markdown, styles};
 
-/// The cursor's own column, marking the row every key acts on.
-const CURSOR_BAR: &str = "\u{258C}";
-/// A thread's rail, held down the left of every row the thread owns.
+/// A thread's rail, heavier than the body's own spine.
 const RAIL: &str = "\u{258E}";
-/// The description's rail: thinner than a thread's, so the whole conversation
-/// shares one spine down the left without the description reading as a thread.
-const DESC_RAIL: &str = "\u{258F}";
 /// The elbow that opens a reply under the note it answers.  Exactly as wide as
 /// [`REPLY_INSET`], so a reply's own body lines up under its author row.
 const REPLY_ELBOW: &str = "\u{2570}\u{2500}";
-/// Columns the chrome claims before a root note's text: cursor, rail, gap.
-const ROOT_LEAD: usize = 3;
 /// Columns a reply is inset past its root.
 const REPLY_INSET: usize = 2;
-/// Rows a page key moves by.
-const PAGE: usize = 10;
 
-/// What a row belongs to, so the row under the cursor answers what a key acts
-/// on.  Chrome rows belong to nothing and no key touches them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RowKind {
-    /// A section rule or a spacer.
-    Chrome,
-    /// A row of the item's own description.
-    Description,
-    /// A row of the thread at this index into `discussions`, belonging to its
-    /// `note`th comment.  The row that names the thread's first author is its
-    /// `head`, and draws as a filled band — which is what divides one thread
-    /// from the next without spending a blank row on it.
-    Thread {
-        thread: usize,
-        note: usize,
-        head: bool,
-    },
-}
-
-/// The conversation's state: what was fetched, what the reader has folded away,
-/// and where the cursor sits.
+/// The threads on the open item, and what the reader has folded away.
 #[derive(Default)]
 pub struct Conversation {
     pub discussions: Vec<Discussion>,
@@ -76,42 +42,24 @@ pub struct Conversation {
     /// thread starts expanded and a resolved one starts collapsed, so an id in
     /// here means the reader asked for the opposite.
     folded: HashSet<String>,
-    /// The rows the last render built, parallel to `lines`.  Key handling reads
-    /// them, so they outlive the frame that produced them.
-    kinds: Vec<RowKind>,
-    /// Each row's styled content, starting at the rail — the cursor column is
-    /// added while drawing, since it depends on where the cursor is.
-    lines: Vec<Line<'static>>,
-    cursor: usize,
-    /// The first row drawn, moved only as far as keeping the cursor in view
-    /// demands.
-    offset: usize,
 }
 
 impl Conversation {
-    /// Handle a key aimed at the conversation: walking it, folding a thread,
-    /// and drafting a reply into the one the cursor is on.  Anything else —
-    /// resolving included, since that needs the API client — bubbles to the
-    /// focused item.  Both detail views answer to this identically, so it lives
-    /// here rather than once per view.
-    pub fn handle_key(&mut self, action: Option<KeyAction>, overlay: &mut Overlay) -> EventResult {
-        let Some(action) = action else {
-            return EventResult::Bubble;
-        };
+    /// Bubbles anything else, resolving included: that needs the API client.
+    pub fn handle_key(
+        &mut self,
+        action: KeyAction,
+        body: &mut DetailBody,
+        overlay: &mut Overlay,
+    ) -> EventResult {
         match action {
-            KeyAction::MoveDown => self.move_down(),
-            KeyAction::MoveUp => self.move_up(),
-            KeyAction::Top => self.move_top(),
-            KeyAction::Bottom => self.move_bottom(),
-            KeyAction::PageDown => self.page_down(),
-            KeyAction::PageUp => self.page_up(),
-            KeyAction::NextUnresolved => self.move_unresolved(true),
-            KeyAction::PrevUnresolved => self.move_unresolved(false),
-            KeyAction::ToggleThread => self.toggle_fold(),
-            KeyAction::ReplyThread => *overlay = draft_reply(self),
+            KeyAction::NextUnresolved => self.jump_unresolved(body, true),
+            KeyAction::PrevUnresolved => self.jump_unresolved(body, false),
+            KeyAction::ToggleThread => self.toggle_fold(body),
+            KeyAction::ReplyThread => *overlay = draft_reply(self, body),
             KeyAction::NewThread => *overlay = draft_new_thread(),
             KeyAction::EditComment => {
-                if let Some(draft) = draft_edit(self) {
+                if let Some(draft) = draft_edit(self, body) {
                     *overlay = draft;
                 }
             }
@@ -124,115 +72,51 @@ impl Conversation {
         self.discussions.clear();
         self.loading = false;
         self.folded.clear();
-        self.kinds.clear();
-        self.lines.clear();
-        self.cursor = 0;
-        self.offset = 0;
     }
 
-    /// Take a freshly fetched set of threads, keeping the cursor where it was
-    /// so a reply landing does not throw the reader back to the top.
+    /// The cursor belongs to the body, so a reply landing leaves it alone.
     pub fn set_discussions(&mut self, discussions: Vec<Discussion>) {
         self.discussions = discussions;
         self.loading = false;
     }
 
-    pub fn move_up(&mut self) {
-        if let Some(row) = self.next_stop(self.cursor, false) {
-            self.cursor = row;
-        }
+    /// Everyone who has spoken on this item, for `@` completion — a thread
+    /// pulls in people who are on no team and so are in no config.
+    pub fn participants(&self) -> impl Iterator<Item = &str> {
+        self.discussions
+            .iter()
+            .flat_map(|d| d.comments().map(|n| n.author.username.as_str()))
     }
 
-    pub fn move_down(&mut self) {
-        if let Some(row) = self.next_stop(self.cursor, true) {
-            self.cursor = row;
-        }
+    /// `None` on every row that belongs to no thread.
+    pub fn thread_at_cursor(&self, body: &DetailBody) -> Option<&Discussion> {
+        let Row::Thread { thread, .. } = body.cursor_row() else {
+            return None;
+        };
+        self.discussions.get(thread)
     }
 
-    pub fn move_top(&mut self) {
-        self.cursor = self.settle(0, true);
-    }
-
-    pub fn move_bottom(&mut self) {
-        self.cursor = self.settle(self.kinds.len().saturating_sub(1), false);
-    }
-
-    pub fn page_up(&mut self) {
-        self.cursor = self.settle(self.cursor.saturating_sub(PAGE), false);
-    }
-
-    pub fn page_down(&mut self) {
-        let target = (self.cursor + PAGE).min(self.kinds.len().saturating_sub(1));
-        self.cursor = self.settle(target, true);
+    /// The note the cursor is in, wrapped body rows included.
+    pub fn note_at_cursor(&self, body: &DetailBody) -> Option<&Note> {
+        let Row::Thread { thread, note, .. } = body.cursor_row() else {
+            return None;
+        };
+        self.discussions.get(thread)?.comments().nth(note)
     }
 
     /// Jump to the row opening the next unresolved thread in `dir`, staying put
     /// when there is none that way.  On an issue nothing is resolvable, so every
     /// thread counts and this walks thread to thread.
-    pub fn move_unresolved(&mut self, down: bool) {
-        let open = |row: &usize| {
-            matches!(self.kinds[*row], RowKind::Thread { thread, head: true, .. }
+    fn jump_unresolved(&self, body: &mut DetailBody, down: bool) {
+        body.jump(down, |row| {
+            matches!(row, Row::Thread { thread, head: true, .. }
                 if !self.discussions[thread].resolved())
-        };
-        let found = if down {
-            (self.cursor + 1..self.kinds.len()).find(open)
-        } else {
-            (0..self.cursor).rev().find(open)
-        };
-        if let Some(row) = found {
-            self.cursor = row;
-        }
-    }
-
-    /// The next row past `from` in `dir` that a key can act on, or `None` at the
-    /// end.  Chrome — a section rule — is stepped over rather than landed on, so
-    /// the cursor is never parked somewhere reply has nothing to reply to.
-    fn next_stop(&self, from: usize, down: bool) -> Option<usize> {
-        if down {
-            (from + 1..self.kinds.len()).find(|&r| self.kinds[r] != RowKind::Chrome)
-        } else {
-            (0..from).rev().find(|&r| self.kinds[r] != RowKind::Chrome)
-        }
-    }
-
-    /// `target` itself when a key can act on it, else the nearest row that one
-    /// can — searching `dir` first, then back the other way, so a jump always
-    /// lands somewhere addressable.
-    fn settle(&self, target: usize, down: bool) -> usize {
-        if self
-            .kinds
-            .get(target)
-            .is_some_and(|k| *k != RowKind::Chrome)
-        {
-            return target;
-        }
-        self.next_stop(target, down)
-            .or_else(|| self.next_stop(target, !down))
-            .unwrap_or(target)
-    }
-
-    /// The thread the cursor is on, whether on the row naming its first note, a
-    /// body row, or a reply.  `None` on the description and on chrome.
-    pub fn thread_at_cursor(&self) -> Option<&Discussion> {
-        match self.kinds.get(self.cursor)? {
-            RowKind::Thread { thread, .. } => self.discussions.get(*thread),
-            RowKind::Chrome | RowKind::Description => None,
-        }
-    }
-
-    /// The note the cursor is on — a thread's first comment or one of its
-    /// replies, whether the cursor sits on the row naming its author or
-    /// anywhere in its body.  `None` on the description and on chrome.
-    pub fn note_at_cursor(&self) -> Option<&Note> {
-        let RowKind::Thread { thread, note, .. } = self.kinds.get(self.cursor)? else {
-            return None;
-        };
-        self.discussions.get(*thread)?.comments().nth(*note)
+        });
     }
 
     /// Fold the thread under the cursor away, or open it back up.
-    pub fn toggle_fold(&mut self) {
-        if let Some(id) = self.thread_at_cursor().map(|d| d.id.clone())
+    fn toggle_fold(&mut self, body: &DetailBody) {
+        if let Some(id) = self.thread_at_cursor(body).map(|d| d.id.clone())
             && !self.folded.remove(&id)
         {
             self.folded.insert(id);
@@ -244,206 +128,129 @@ impl Conversation {
     fn is_folded(&self, disc: &Discussion) -> bool {
         disc.resolved() != self.folded.contains(&disc.id)
     }
+}
 
-    /// Rebuild every row for a pane `width` columns wide.
-    ///
-    /// Run on each draw rather than cached against a fingerprint of the item and
-    /// its threads: a conversation is tens of small bodies, so re-parsing them
-    /// costs well under a millisecond, and nothing can go stale between a key
-    /// press and the frame that answers it.  Worth caching only if a very long
-    /// conversation ever shows up in a profile.
-    fn build(&mut self, description: Option<&str>, width: usize) {
-        self.kinds.clear();
-        self.lines.clear();
+/// The row naming the first note of the thread the cursor is in.
+fn head_row_of_cursor(body: &DetailBody) -> Option<usize> {
+    let Row::Thread { thread, .. } = body.cursor_row() else {
+        return None;
+    };
+    (0..=body.cursor()).rev().find(|&r| {
+        matches!(
+            body.rows().get(r),
+            Some(Row::Thread { thread: t, head: true, .. }) if *t == thread
+        )
+    })
+}
 
-        if let Some(desc) = description.map(str::trim).filter(|d| !d.is_empty()) {
-            self.push_section("DESCRIPTION", None, width);
-            let body = markdown::render(desc, "", width.saturating_sub(ROOT_LEAD));
-            let rail = Span::styled(DESC_RAIL, Style::default().fg(styles::border()));
-            for line in trim_blanks(body) {
-                self.push(
-                    RowKind::Description,
-                    indented(std::slice::from_ref(&rail), line),
-                );
-            }
-        }
+/// Every thread holding something a reader is meant to see.
+pub fn push(body: &mut DetailBody, conv: &Conversation, width: usize) {
+    let threads: Vec<usize> = (0..conv.discussions.len())
+        .filter(|&i| conv.discussions[i].comments().next().is_some())
+        .collect();
 
-        let threads: Vec<usize> = (0..self.discussions.len())
-            .filter(|&i| self.discussions[i].comments().next().is_some())
-            .collect();
-        let unresolved = threads
-            .iter()
-            .filter(|&&i| self.discussions[i].resolvable() && !self.discussions[i].resolved())
-            .count();
+    if conv.loading {
+        body.section("CONVERSATION", Some("loading".to_string()), width);
+        return;
+    }
+    if threads.is_empty() {
+        body.section("CONVERSATION", Some("no comments yet".to_string()), width);
+        return;
+    }
 
-        if self.loading {
-            self.push_section("CONVERSATION", Some("loading".to_string()), width);
-            return;
-        }
-        if threads.is_empty() {
-            self.push_section("CONVERSATION", Some("no comments yet".to_string()), width);
-            return;
-        }
+    let unresolved = threads
+        .iter()
+        .filter(|&&i| conv.discussions[i].resolvable() && !conv.discussions[i].resolved())
+        .count();
+    let count = threads.len();
+    let open = if unresolved > 0 {
+        format!(" \u{00B7} {unresolved} unresolved")
+    } else {
+        String::new()
+    };
+    let tally = format!("{count} thread{}{open}", detail_body::plural(count));
+    body.section("CONVERSATION", Some(tally), width);
 
-        let count = threads.len();
-        let open = if unresolved > 0 {
-            format!(" \u{00B7} {unresolved} unresolved")
+    for &i in &threads {
+        push_thread(body, conv, i, width);
+    }
+}
+
+/// The row naming the first note, its body, then each reply inset under it.  A
+/// folded thread stops after the first row.
+fn push_thread(body: &mut DetailBody, conv: &Conversation, index: usize, width: usize) {
+    let disc = &conv.discussions[index];
+    let comments: Vec<&Note> = disc.comments().collect();
+    let Some((root, replies)) = comments.split_first() else {
+        return;
+    };
+    let resolved = disc.resolved();
+    let folded = conv.is_folded(disc);
+    // The rail carries the thread's state.
+    let rail = Span::styled(
+        RAIL,
+        Style::default().fg(if resolved {
+            styles::green()
         } else {
-            String::new()
-        };
-        let tally = format!("{count} thread{}{open}", plural(count));
-        self.push_section("CONVERSATION", Some(tally), width);
+            styles::border_active()
+        }),
+    );
 
-        for &i in &threads {
-            self.push_thread(i, width);
-        }
-    }
-
-    /// Push a section rule: a chip naming the section, an optional tally, and a
-    /// rule run out to the pane edge so the eye has a hard edge to rest on
-    /// without spending a blank row on it.
-    fn push_section(&mut self, title: &str, tally: Option<String>, width: usize) {
-        let mut spans = vec![
-            Span::raw(" "),
-            Span::styled(
-                format!(" {title} "),
-                Style::default()
-                    .fg(styles::cyan())
-                    .bg(styles::overlay())
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ];
-        if let Some(tally) = tally {
-            spans.push(Span::styled(
-                format!(" {tally} "),
-                Style::default().fg(styles::text_dim()),
-            ));
-        }
-        let used: usize = spans.iter().map(Span::width).sum();
-        spans.push(Span::styled(
-            "\u{2500}".repeat(width.saturating_sub(used + 1)),
-            Style::default().fg(styles::border()),
+    let mut head = head_spans(root, resolved);
+    if folded && !replies.is_empty() {
+        head.push(Span::styled(
+            format!("  {} {} more", styles::ICON_ARROW, replies.len()),
+            Style::default().fg(styles::text_dim()),
         ));
-        self.push(RowKind::Chrome, Line::from(spans));
+    }
+    let head_row = Row::Thread {
+        thread: index,
+        note: 0,
+        head: true,
+    };
+    // Each row carries its note's index, so `e` edits the right one.
+    let body_row = |note: usize| Row::Thread {
+        thread: index,
+        note,
+        head: false,
+    };
+    body.push(
+        head_row,
+        detail_body::indented(std::slice::from_ref(&rail), Line::from(head)),
+    );
+    if folded {
+        return;
     }
 
-    /// Push one thread: the row naming its first note, that note's body, then
-    /// each reply inset under it.  A folded thread stops after the first row.
-    fn push_thread(&mut self, index: usize, width: usize) {
-        let disc = &self.discussions[index];
-        let comments: Vec<&Note> = disc.comments().collect();
-        let Some((root, replies)) = comments.split_first() else {
-            return;
-        };
-        let resolved = disc.resolved();
-        let folded = self.is_folded(disc);
-        // The rail carries the thread's state: settled, or still live.
-        let rail = Span::styled(
-            RAIL,
-            Style::default().fg(if resolved {
-                styles::green()
-            } else {
-                styles::border_active()
-            }),
+    // Bodies render into the room the chrome leaves, then take it on every
+    // row they wrapped onto.
+    let render_body = |note: &Note, inset: usize| {
+        detail_body::trim_blanks(markdown::render(
+            note.body.trim_end(),
+            "",
+            width.saturating_sub(detail_body::LEAD + inset),
+        ))
+    };
+    for line in render_body(root, 0) {
+        body.push(
+            body_row(0),
+            detail_body::indented(std::slice::from_ref(&rail), line),
         );
-
-        let mut head = head_spans(root, resolved);
-        if folded && !replies.is_empty() {
-            head.push(Span::styled(
-                format!("  {} {} more", styles::ICON_ARROW, replies.len()),
-                Style::default().fg(styles::text_dim()),
-            ));
-        }
-        let head_kind = RowKind::Thread {
-            thread: index,
-            note: 0,
-            head: true,
-        };
-        // Every row a note owns carries its index, so the key that edits one
-        // knows which note the cursor is in and not merely which thread.
-        let body_kind = |note: usize| RowKind::Thread {
-            thread: index,
-            note,
-            head: false,
-        };
-        // Collected rather than pushed straight through `push`, which wants all
-        // of `self` while `disc` still holds a borrow of its threads.
-        let mut rows = vec![(
-            head_kind,
-            indented(std::slice::from_ref(&rail), Line::from(head)),
-        )];
-        if folded {
-            self.extend(rows);
-            return;
-        }
-
-        // Bodies render into the room the chrome leaves, then take the chrome on
-        // every row they wrapped onto.
-        let body = |note: &Note, inset: usize| {
-            trim_blanks(markdown::render(
-                note.body.trim_end(),
-                "",
-                width.saturating_sub(ROOT_LEAD + inset),
-            ))
-        };
-        for line in body(root, 0) {
-            rows.push((body_kind(0), indented(std::slice::from_ref(&rail), line)));
-        }
-        for (i, reply) in replies.iter().enumerate() {
-            let kind = body_kind(i + 1);
-            let elbow = Span::styled(REPLY_ELBOW, Style::default().fg(styles::text_dim()));
-            rows.push((
-                kind,
-                indented(&[rail.clone(), elbow], Line::from(head_spans(reply, false))),
-            ));
-            let inset = Span::raw(" ".repeat(REPLY_INSET));
-            for line in body(reply, REPLY_INSET) {
-                rows.push((kind, indented(&[rail.clone(), inset.clone()], line)));
-            }
-        }
-        self.extend(rows);
     }
-
-    fn push(&mut self, kind: RowKind, line: Line<'static>) {
-        self.kinds.push(kind);
-        self.lines.push(line);
-    }
-
-    fn extend(&mut self, rows: Vec<(RowKind, Line<'static>)>) {
-        for (kind, line) in rows {
-            self.push(kind, line);
+    for (i, reply) in replies.iter().enumerate() {
+        let row = body_row(i + 1);
+        let elbow = Span::styled(REPLY_ELBOW, Style::default().fg(styles::text_dim()));
+        body.push(
+            row,
+            detail_body::indented(&[rail.clone(), elbow], Line::from(head_spans(reply, false))),
+        );
+        let inset = Span::raw(" ".repeat(REPLY_INSET));
+        for line in render_body(reply, REPLY_INSET) {
+            body.push(
+                row,
+                detail_body::indented(&[rail.clone(), inset.clone()], line),
+            );
         }
-    }
-
-    /// Move `offset` no further than keeping the cursor inside a pane `height`
-    /// rows tall, so the view stays put while the cursor roams within it.
-    fn scroll_into_view(&mut self, height: usize) {
-        if height == 0 {
-            return;
-        }
-        self.cursor = self.cursor.min(self.kinds.len().saturating_sub(1));
-        if self.cursor < self.offset {
-            self.offset = self.cursor;
-        } else if self.cursor >= self.offset + height {
-            self.offset = self.cursor + 1 - height;
-        }
-        // Never leave dead space below the last row: folding a thread away can
-        // otherwise strand the view past the end of what is left.
-        self.offset = self.offset.min(self.kinds.len().saturating_sub(height));
-    }
-
-    /// The row naming the first note of the thread the cursor is in.
-    fn head_row_of_cursor(&self) -> Option<usize> {
-        let RowKind::Thread { thread, .. } = self.kinds.get(self.cursor)? else {
-            return None;
-        };
-        let thread = *thread;
-        (0..=self.cursor).rev().find(|&r| {
-            matches!(
-                self.kinds.get(r),
-                Some(RowKind::Thread { thread: t, head: true, .. }) if *t == thread
-            )
-        })
     }
 }
 
@@ -451,11 +258,10 @@ impl Conversation {
 ///
 /// A standalone comment takes a reply as readily as a thread does — GitLab turns
 /// it into one when the first reply lands.  Only with the cursor off every
-/// thread entirely, which means on the description, does this fall back to
-/// drafting a new thread.
-pub fn draft_reply(state: &Conversation) -> Overlay {
-    let target = state
-        .thread_at_cursor()
+/// thread entirely does this fall back to drafting a new one.
+pub fn draft_reply(conv: &Conversation, body: &DetailBody) -> Overlay {
+    let target = conv
+        .thread_at_cursor(body)
         .map_or(CommentTarget::NewThread, |d| {
             CommentTarget::Reply(d.id.clone())
         });
@@ -467,12 +273,10 @@ pub fn draft_reply(state: &Conversation) -> Overlay {
 }
 
 /// The overlay that rewrites the note under the cursor, opened with its current
-/// text.  `None` with the cursor on the description or on chrome, where there is
-/// no note to edit.  Whether the reader may edit that note is GitLab's call —
-/// a maintainer edits anyone's — so this offers the draft and lets the API
-/// refuse it.
-pub fn draft_edit(state: &Conversation) -> Option<Overlay> {
-    let note = state.note_at_cursor()?;
+/// text.  Whether the reader may edit it is GitLab's call, so this offers the
+/// draft and lets the API refuse it.
+pub fn draft_edit(conv: &Conversation, body: &DetailBody) -> Option<Overlay> {
+    let note = conv.note_at_cursor(body)?;
     Some(Overlay::CommentInput {
         input: CommentInput::with_text(&note.body),
         autocomplete: Box::default(),
@@ -489,50 +293,23 @@ pub fn draft_new_thread() -> Overlay {
     }
 }
 
-/// Draw the conversation into `area`, rebuilding its rows for that width first.
-pub fn render(frame: &mut Frame, area: Rect, state: &mut Conversation, description: Option<&str>) {
-    let width = usize::from(area.width);
-    let height = usize::from(area.height);
-    state.build(description, width);
-    state.scroll_into_view(height);
-
-    let end = (state.offset + height).min(state.lines.len());
-    let rows: Vec<Line<'static>> = (state.offset..end)
-        .map(|row| {
-            let selected = row == state.cursor;
-            let mut spans = vec![Span::styled(
-                if selected { CURSOR_BAR } else { " " },
-                Style::default().fg(styles::orange()),
-            )];
-            spans.extend(state.lines[row].spans.clone());
-            let line = Line::from(spans);
-            // The cursor's tint wins over the band, so a selected head row still
-            // reads as selected.
-            match band(state.kinds[row], selected) {
-                Some(bg) => fill(line, width, Style::default().bg(bg)),
-                None => line,
-            }
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(rows), area);
-
-    // The thread's own first note has scrolled off, so the reader has lost what
-    // the replies under the cursor are answering: float it back over the top.
-    if let Some(head) = state.head_row_of_cursor()
-        && head < state.offset
-        && let Some(thread) = state.thread_at_cursor()
-        && let Some(root) = thread.comments().next()
-    {
-        floating_head(frame, area, root, thread.resolved());
-    }
-}
-
-/// Float the thread's opening note over the top of the pane, on the overlay
-/// background so it reads as sitting above the list rather than in it.
+/// Float the opening note of the cursor's thread over the pane once its row has
+/// scrolled off, so the reader still sees what the replies answer.
 ///
 /// Built from the note rather than from the row that renders it: the row carries
 /// the thread's rail, which inside the card would read as a second thread.
-fn floating_head(frame: &mut Frame, area: Rect, root: &Note, resolved: bool) {
+pub fn render_sticky_head(frame: &mut Frame, area: Rect, conv: &Conversation, body: &DetailBody) {
+    let scrolled_off = head_row_of_cursor(body).is_some_and(|head| head < body.offset());
+    if !scrolled_off {
+        return;
+    }
+    let Some(thread) = conv.thread_at_cursor(body) else {
+        return;
+    };
+    let Some(root) = thread.comments().next() else {
+        return;
+    };
+
     let card = Rect {
         height: area.height.min(2),
         ..area
@@ -549,7 +326,7 @@ fn floating_head(frame: &mut Frame, area: Rect, root: &Note, resolved: bool) {
         " \u{25B2} ",
         Style::default().fg(styles::border_active()),
     )];
-    spans.extend(head_spans(root, resolved));
+    spans.extend(head_spans(root, thread.resolved()));
     // The opening line of the body, so the card says what the thread is about
     // and not merely who started it.
     if let Some(opening) = root.body.lines().find(|l| !l.trim().is_empty()) {
@@ -558,7 +335,7 @@ fn floating_head(frame: &mut Frame, area: Rect, root: &Note, resolved: bool) {
             Style::default().fg(styles::overlay_text_dim()),
         ));
     }
-    let line = fill(
+    let line = detail_body::fill(
         Line::from(spans),
         usize::from(inner.width),
         Style::default().bg(styles::overlay()),
@@ -589,54 +366,9 @@ fn head_spans(note: &Note, resolved: bool) -> Vec<Span<'static>> {
     spans
 }
 
-/// Put `chrome` in the columns to the left of `line`, then a single gap.
-fn indented(chrome: &[Span<'static>], line: Line<'static>) -> Line<'static> {
-    let mut spans = chrome.to_vec();
-    spans.push(Span::raw(" "));
-    spans.extend(line.spans);
-    Line::from(spans)
-}
-
-/// The background a row fills its whole width with: the cursor's tint on the
-/// selected row, and a quieter band on the row that opens a thread.  The band is
-/// what separates one thread from the next, in place of the blank row a gap
-/// would cost — and it doubles as the thread's header.
-fn band(kind: RowKind, selected: bool) -> Option<Color> {
-    if selected {
-        return Some(styles::highlight());
-    }
-    matches!(kind, RowKind::Thread { head: true, .. }).then_some(styles::surface())
-}
-
-/// Pad `line` out to `width` columns and lay `style` under it, so its
-/// background reaches the pane edge instead of stopping at its text.  Spans that
-/// set a background of their own — a section chip, a code span — keep it.
-fn fill(line: Line<'static>, width: usize, style: Style) -> Line<'static> {
-    let used: usize = line.spans.iter().map(Span::width).sum();
-    let mut spans = line.spans;
-    spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
-    Line::from(spans).style(style)
-}
-
-/// Drop the blank rows a block-level renderer leaves after its last block, which
-/// would otherwise open a gap between every note.
-fn trim_blanks(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
-    while lines
-        .last()
-        .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
-    {
-        lines.pop();
-    }
-    lines
-}
-
 fn ago(at: DateTime<Utc>) -> String {
     let secs = Utc::now().signed_duration_since(at).num_seconds();
     format_span(u64::try_from(secs).unwrap_or(0))
-}
-
-fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
 }
 
 #[cfg(test)]
@@ -644,7 +376,9 @@ mod tests {
     use chrono::Utc;
     use glab_core::domain::{Discussion, Note, User};
 
-    use super::{CommentTarget, Conversation, Overlay, RowKind};
+    use super::{CommentTarget, Conversation, DetailBody, Overlay, Row};
+    use crate::keybindings::KeyAction;
+    use crate::ui::components::detail_body::band;
 
     fn user(name: &str) -> User {
         User {
@@ -677,10 +411,28 @@ mod tests {
         thread(id, vec![note])
     }
 
+    /// Filled the way a detail view fills one.
+    fn body(conv: &Conversation, description: Option<&str>, width: usize) -> DetailBody {
+        let mut body = DetailBody::default();
+        rebuild(&mut body, conv, description, width);
+        body
+    }
+
+    fn rebuild(
+        body: &mut DetailBody,
+        conv: &Conversation,
+        description: Option<&str>,
+        width: usize,
+    ) {
+        body.begin();
+        body.description(description, width);
+        super::push(body, conv, width);
+    }
+
     /// The thread a drafted reply is addressed to, or `None` when it drafts a
     /// new one.
-    fn reply_target(state: &Conversation) -> Option<String> {
-        match super::draft_reply(state) {
+    fn reply_target(conv: &Conversation, body: &DetailBody) -> Option<String> {
+        match super::draft_reply(conv, body) {
             Overlay::CommentInput { target, .. } => match target {
                 CommentTarget::Reply(id) => Some(id),
                 CommentTarget::NewThread => None,
@@ -695,26 +447,24 @@ mod tests {
     /// the first reply lands, so there is nothing to refuse.
     #[test]
     fn reply_addresses_a_lone_comment_rather_than_starting_a_new_thread() {
-        let mut state = Conversation {
+        let conv = Conversation {
             discussions: vec![
                 standalone("d1", note("alice", "a single comment", false, false)),
                 thread("d2", vec![note("bob", "in a thread", false, false)]),
             ],
             ..Conversation::default()
         };
-        state.build(Some("the description"), 60);
+        let mut body = body(&conv, Some("the description"), 60);
 
-        for (thread, id) in [(0usize, "d1"), (1, "d2")] {
-            let rows: Vec<usize> = (0..state.kinds.len())
-                .filter(
-                    |&r| matches!(state.kinds[r], RowKind::Thread { thread: t, .. } if t == thread),
-                )
+        for (index, id) in [(0usize, "d1"), (1, "d2")] {
+            let rows: Vec<usize> = (0..body.rows().len())
+                .filter(|&r| matches!(body.rows()[r], Row::Thread { thread: t, .. } if t == index))
                 .collect();
-            assert!(!rows.is_empty(), "thread {thread} has no rows");
+            assert!(!rows.is_empty(), "thread {index} has no rows");
             for row in rows {
-                state.cursor = row;
+                body.set_cursor(row);
                 assert_eq!(
-                    reply_target(&state).as_deref(),
+                    reply_target(&conv, &body).as_deref(),
                     Some(id),
                     "row {row} should reply into {id}"
                 );
@@ -722,12 +472,13 @@ mod tests {
         }
 
         // Only the description, which is no thread at all, drafts a new one.
-        state.cursor = state
-            .kinds
+        let description = body
+            .rows()
             .iter()
-            .position(|k| *k == RowKind::Description)
+            .position(|r| *r == Row::Description)
             .expect("the description has a row");
-        assert_eq!(reply_target(&state), None);
+        body.set_cursor(description);
+        assert_eq!(reply_target(&conv, &body), None);
     }
 
     /// Two threads, the second resolved, with a reply on the first.
@@ -747,38 +498,31 @@ mod tests {
         }
     }
 
-    /// The plain text of every row, chrome included.
-    fn rows(state: &Conversation) -> Vec<String> {
-        state
-            .lines
-            .iter()
-            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
-            .collect()
-    }
-
     #[test]
     fn every_row_of_a_thread_answers_with_that_thread() {
-        let mut state = conversation();
-        state.build(None, 60);
-        let threads: Vec<Option<&str>> = (0..state.kinds.len())
-            .map(|row| match state.kinds[row] {
-                RowKind::Thread { thread, .. } => Some(state.discussions[thread].id.as_str()),
-                RowKind::Chrome | RowKind::Description => None,
+        let conv = conversation();
+        let mut body = body(&conv, None, 60);
+        let threads: Vec<Option<&str>> = body
+            .rows()
+            .iter()
+            .map(|row| match row {
+                Row::Thread { thread, .. } => Some(conv.discussions[*thread].id.as_str()),
+                Row::Chrome | Row::Description | Row::Related(_) => None,
             })
             .collect();
         assert!(
             threads.iter().filter(|t| **t == Some("d1")).count() >= 4,
             "{:?} in {:?}",
             threads,
-            rows(&state)
+            body.text()
         );
         for (row, expected) in threads.iter().enumerate() {
-            state.cursor = row;
+            body.set_cursor(row);
             assert_eq!(
-                state.thread_at_cursor().map(|d| d.id.as_str()),
+                conv.thread_at_cursor(&body).map(|d| d.id.as_str()),
                 *expected,
                 "row {row}: {:?}",
-                rows(&state)[row]
+                body.text()[row]
             );
         }
     }
@@ -788,7 +532,7 @@ mod tests {
     /// cursor is in rather than whichever one opened the thread.
     #[test]
     fn every_row_of_a_note_answers_with_that_note() {
-        let mut state = Conversation {
+        let conv = Conversation {
             discussions: vec![thread(
                 "d1",
                 vec![
@@ -809,22 +553,22 @@ mod tests {
             )],
             ..Conversation::default()
         };
-        state.build(None, 36);
-        let rows = rows(&state);
+        let mut body = body(&conv, None, 36);
+        let text = body.text();
         let row_with = |needle: &str| {
-            rows.iter()
+            text.iter()
                 .position(|r| r.contains(needle))
-                .unwrap_or_else(|| panic!("no row holds {needle:?}: {rows:?}"))
+                .unwrap_or_else(|| panic!("no row holds {needle:?}: {text:?}"))
         };
 
         // The root's wrapped tail names nobody, and still answers with the root.
-        state.cursor = row_with("second row");
-        assert_eq!(state.note_at_cursor().map(|n| n.id), Some(10));
+        body.set_cursor(row_with("second row"));
+        assert_eq!(conv.note_at_cursor(&body).map(|n| n.id), Some(10));
 
         // And the draft `e` opens on the reply is addressed to the reply,
         // holding its text rather than the root's.
-        state.cursor = row_with("a reply");
-        match super::draft_edit(&state) {
+        body.set_cursor(row_with("a reply"));
+        match super::draft_edit(&conv, &body) {
             Some(Overlay::CommentInput { input, target, .. }) => {
                 assert_eq!(target, CommentTarget::Edit(11));
                 assert_eq!(input.text(), "a reply");
@@ -837,7 +581,7 @@ mod tests {
     /// and every row of a wrapped body keeps it too.
     #[test]
     fn a_reply_is_inset_but_keeps_the_rail() {
-        let mut state = Conversation {
+        let conv = Conversation {
             discussions: vec![thread(
                 "d1",
                 vec![
@@ -852,18 +596,19 @@ mod tests {
             )],
             ..Conversation::default()
         };
-        state.build(None, 36);
-        let body: Vec<String> = rows(&state)
+        let body = body(&conv, None, 36);
+        let rows: Vec<String> = body
+            .text()
             .into_iter()
             .filter(|r| r.contains("wrap") || r.contains("second") || r.contains("@bob"))
             .collect();
-        assert!(body.len() >= 2, "{body:?} should have wrapped");
-        for row in &body {
+        assert!(rows.len() >= 2, "{rows:?} should have wrapped");
+        for row in &rows {
             assert!(row.starts_with(super::RAIL), "{row:?} lost the rail");
         }
         assert!(
-            body[0].contains(super::REPLY_ELBOW),
-            "{body:?} lost the elbow"
+            rows[0].contains(super::REPLY_ELBOW),
+            "{rows:?} lost the elbow"
         );
     }
 
@@ -871,25 +616,26 @@ mod tests {
     /// the bottom of the pane, rather than stranding it past the end.
     #[test]
     fn folding_a_thread_away_does_not_strand_the_view_past_the_end() {
-        let mut state = conversation();
-        state.build(None, 60);
-        state.move_bottom();
-        state.scroll_into_view(4);
-        assert_eq!(state.offset, state.kinds.len() - 4);
+        let mut conv = conversation();
+        let mut body = body(&conv, None, 60);
+        body.handle_key(KeyAction::Bottom);
+        body.scroll_into_view(4);
+        assert_eq!(body.offset(), body.rows().len() - 4);
 
-        state.cursor = state
-            .kinds
+        let open = body
+            .rows()
             .iter()
-            .position(|k| matches!(k, RowKind::Thread { thread: 0, .. }))
+            .position(|r| matches!(r, Row::Thread { thread: 0, .. }))
             .expect("the open thread has a row");
-        state.toggle_fold();
-        state.build(None, 60);
-        state.scroll_into_view(4);
+        body.set_cursor(open);
+        conv.toggle_fold(&body);
+        rebuild(&mut body, &conv, None, 60);
+        body.scroll_into_view(4);
         assert!(
-            state.offset + 4 <= state.kinds.len().max(4),
+            body.offset() + 4 <= body.rows().len().max(4),
             "offset {} strands {} rows",
-            state.offset,
-            state.kinds.len()
+            body.offset(),
+            body.rows().len()
         );
     }
 
@@ -897,41 +643,42 @@ mod tests {
     /// it, and closes an open one.
     #[test]
     fn a_resolved_thread_starts_folded_and_the_key_flips_either_way() {
-        let mut state = conversation();
-        state.build(None, 60);
+        let mut conv = conversation();
+        let mut body = body(&conv, None, 60);
         assert!(
-            !rows(&state).iter().any(|r| r.contains("raised the quota")),
+            !body.text().iter().any(|r| r.contains("raised the quota")),
             "{:?}",
-            rows(&state)
+            body.text()
         );
 
         // Land on the resolved thread's only row and open it.
-        let resolved = state
-            .kinds
+        let resolved = body
+            .rows()
             .iter()
-            .position(|k| matches!(k, RowKind::Thread { thread: 1, .. }))
+            .position(|r| matches!(r, Row::Thread { thread: 1, .. }))
             .expect("the resolved thread has a row");
-        state.cursor = resolved;
-        state.toggle_fold();
-        state.build(None, 60);
+        body.set_cursor(resolved);
+        conv.toggle_fold(&body);
+        rebuild(&mut body, &conv, None, 60);
         assert!(
-            rows(&state).iter().any(|r| r.contains("raised the quota")),
+            body.text().iter().any(|r| r.contains("raised the quota")),
             "{:?}",
-            rows(&state)
+            body.text()
         );
 
         // The same key folds the open thread away.
-        state.cursor = state
-            .kinds
+        let open = body
+            .rows()
             .iter()
-            .position(|k| matches!(k, RowKind::Thread { thread: 0, .. }))
+            .position(|r| matches!(r, Row::Thread { thread: 0, .. }))
             .expect("the open thread has a row");
-        state.toggle_fold();
-        state.build(None, 60);
+        body.set_cursor(open);
+        conv.toggle_fold(&body);
+        rebuild(&mut body, &conv, None, 60);
         assert!(
-            !rows(&state).iter().any(|r| r.contains("layer cache")),
+            !body.text().iter().any(|r| r.contains("layer cache")),
             "{:?}",
-            rows(&state)
+            body.text()
         );
     }
 
@@ -939,70 +686,33 @@ mod tests {
     /// walking back to where the thread's rows start.
     #[test]
     fn the_head_row_of_the_cursor_opens_its_thread() {
-        let mut state = conversation();
-        state.build(None, 60);
-        let first = state
-            .kinds
+        let conv = conversation();
+        let mut body = body(&conv, None, 60);
+        let first = body
+            .rows()
             .iter()
-            .position(|k| matches!(k, RowKind::Thread { thread: 0, .. }))
+            .position(|r| matches!(r, Row::Thread { thread: 0, .. }))
             .expect("the thread has rows");
-        let last = state
-            .kinds
+        let last = body
+            .rows()
             .iter()
-            .rposition(|k| matches!(k, RowKind::Thread { thread: 0, .. }))
+            .rposition(|r| matches!(r, Row::Thread { thread: 0, .. }))
             .expect("the thread has rows");
         assert!(last > first);
         for row in first..=last {
-            state.cursor = row;
-            assert_eq!(state.head_row_of_cursor(), Some(first), "row {row}");
+            body.set_cursor(row);
+            assert_eq!(super::head_row_of_cursor(&body), Some(first), "row {row}");
         }
         // Chrome belongs to no thread, so there is nothing to float.
-        state.cursor = 0;
-        assert_eq!(state.head_row_of_cursor(), None);
-    }
-
-    /// The cursor never parks on a section rule, so reply always has something
-    /// to reply to: stepping onto one carries straight through it.
-    #[test]
-    fn the_cursor_steps_over_rows_no_key_can_act_on() {
-        let mut state = conversation();
-        state.build(Some("a description"), 60);
-        assert!(
-            state.kinds.contains(&RowKind::Chrome),
-            "the fixture should have section rules to step over"
-        );
-
-        state.move_top();
-        let mut seen = vec![state.cursor];
-        for _ in 0..state.kinds.len() {
-            state.move_down();
-            seen.push(state.cursor);
-        }
-        for row in seen {
-            assert_ne!(
-                state.kinds[row],
-                RowKind::Chrome,
-                "landed on chrome at row {row}"
-            );
-        }
-
-        state.move_bottom();
-        assert_ne!(state.kinds[state.cursor], RowKind::Chrome);
-        for _ in 0..state.kinds.len() {
-            state.move_up();
-            assert_ne!(state.kinds[state.cursor], RowKind::Chrome);
-        }
-        state.page_down();
-        assert_ne!(state.kinds[state.cursor], RowKind::Chrome);
-        state.page_up();
-        assert_ne!(state.kinds[state.cursor], RowKind::Chrome);
+        body.set_cursor(0);
+        assert_eq!(super::head_row_of_cursor(&body), None);
     }
 
     /// `J` and `K` land on the row opening a thread and pass over a resolved
     /// one, so they walk what still needs an answer.
     #[test]
     fn unresolved_jumps_skip_a_settled_thread() {
-        let mut state = Conversation {
+        let conv = Conversation {
             discussions: vec![
                 thread("open-1", vec![note("alice", "why?", true, false)]),
                 thread("settled", vec![note("bob", "fixed", true, true)]),
@@ -1010,28 +720,28 @@ mod tests {
             ],
             ..Conversation::default()
         };
-        state.build(None, 60);
+        let mut body = body(&conv, None, 60);
 
-        state.move_top();
+        body.handle_key(KeyAction::Top);
         assert_eq!(
-            state.thread_at_cursor().map(|d| d.id.as_str()),
+            conv.thread_at_cursor(&body).map(|d| d.id.as_str()),
             Some("open-1")
         );
-        state.move_unresolved(true);
+        conv.jump_unresolved(&mut body, true);
         assert_eq!(
-            state.thread_at_cursor().map(|d| d.id.as_str()),
+            conv.thread_at_cursor(&body).map(|d| d.id.as_str()),
             Some("open-2"),
             "J should pass over the resolved thread"
         );
-        state.move_unresolved(true);
+        conv.jump_unresolved(&mut body, true);
         assert_eq!(
-            state.thread_at_cursor().map(|d| d.id.as_str()),
+            conv.thread_at_cursor(&body).map(|d| d.id.as_str()),
             Some("open-2"),
             "with none left, J stays put"
         );
-        state.move_unresolved(false);
+        conv.jump_unresolved(&mut body, false);
         assert_eq!(
-            state.thread_at_cursor().map(|d| d.id.as_str()),
+            conv.thread_at_cursor(&body).map(|d| d.id.as_str()),
             Some("open-1")
         );
     }
@@ -1040,16 +750,16 @@ mod tests {
     /// the band on the row naming the author is what divides them.
     #[test]
     fn threads_are_divided_by_a_band_not_a_blank_row() {
-        let mut state = conversation();
-        state.build(None, 60);
-        let first_of_second = state
-            .kinds
+        let conv = conversation();
+        let body = body(&conv, None, 60);
+        let first_of_second = body
+            .rows()
             .iter()
-            .position(|k| matches!(k, RowKind::Thread { thread: 1, .. }))
+            .position(|r| matches!(r, Row::Thread { thread: 1, .. }))
             .expect("the second thread has rows");
         assert_eq!(
-            state.kinds[first_of_second],
-            RowKind::Thread {
+            body.rows()[first_of_second],
+            Row::Thread {
                 thread: 1,
                 note: 0,
                 head: true
@@ -1058,19 +768,19 @@ mod tests {
         // The row before it belongs to the first thread, not to a spacer.
         assert!(
             matches!(
-                state.kinds[first_of_second - 1],
-                RowKind::Thread { thread: 0, .. }
+                body.rows()[first_of_second - 1],
+                Row::Thread { thread: 0, .. }
             ),
             "{:?} sits between the threads",
-            state.kinds[first_of_second - 1]
+            body.rows()[first_of_second - 1]
         );
         assert_eq!(
-            super::band(state.kinds[first_of_second], false),
+            band(body.rows()[first_of_second], false),
             Some(crate::ui::styles::surface())
         );
         assert_eq!(
-            super::band(
-                RowKind::Thread {
+            band(
+                Row::Thread {
                     thread: 1,
                     note: 0,
                     head: false
@@ -1085,7 +795,7 @@ mod tests {
     /// author is the separator, so a conversation stays dense.
     #[test]
     fn notes_do_not_leave_blank_rows_behind_them() {
-        let mut state = Conversation {
+        let conv = Conversation {
             discussions: vec![thread(
                 "d1",
                 vec![
@@ -1095,17 +805,19 @@ mod tests {
             )],
             ..Conversation::default()
         };
-        state.build(None, 60);
-        let thread_rows: Vec<String> = rows(&state)
+        let body = body(&conv, None, 60);
+        let thread_rows: Vec<String> = body
+            .text()
             .into_iter()
-            .zip(&state.kinds)
-            .filter(|(_, k)| matches!(k, RowKind::Thread { .. }))
-            .map(|(r, _)| r)
+            .zip(body.rows())
+            .filter(|(_, row)| matches!(row, Row::Thread { .. }))
+            .map(|(text, _)| text)
             .collect();
-        assert_eq!(
-            thread_rows.last().map(String::as_str),
-            Some(format!("{}   reply", super::RAIL).as_str()),
-            "{thread_rows:?}"
+        assert!(
+            !thread_rows
+                .last()
+                .is_some_and(|r| r.trim_start_matches(super::RAIL).trim().is_empty()),
+            "{thread_rows:?} ends on a blank row"
         );
     }
 }
