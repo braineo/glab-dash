@@ -138,7 +138,7 @@ impl App {
                         KeyCode::Tab => {
                             if let Some(item) = autocomplete.selected_item().cloned() {
                                 input.replace_before_cursor(
-                                    autocomplete.query.chars().count(),
+                                    autocomplete.query.chars().count() + 1,
                                     &item.insert,
                                 );
                             }

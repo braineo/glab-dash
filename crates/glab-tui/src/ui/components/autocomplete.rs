@@ -21,6 +21,7 @@ pub enum CompletionKind {
 #[derive(Debug, Clone)]
 pub struct CompletionItem {
     pub label: String,
+    /// Replaces the trigger character along with the query.
     pub insert: String,
 }
 
@@ -82,21 +83,21 @@ impl AutocompleteState {
                     .iter()
                     .map(|m| CompletionItem {
                         label: m.clone(),
-                        insert: m.clone(),
+                        insert: format!("@{m}"),
                     })
                     .collect(),
                 CompletionKind::Issue => issues
                     .iter()
                     .map(|ti| CompletionItem {
                         label: format!("{} {}", ti.iid, ti.title),
-                        insert: ti.iid.clone(),
+                        insert: ti.reference.clone(),
                     })
                     .collect(),
                 CompletionKind::MergeRequest => mrs
                     .iter()
                     .map(|tm| CompletionItem {
                         label: format!("{} {}", tm.iid, tm.title),
-                        insert: tm.iid.clone(),
+                        insert: tm.reference.clone(),
                     })
                     .collect(),
             };

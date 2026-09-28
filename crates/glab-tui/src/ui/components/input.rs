@@ -207,18 +207,19 @@ impl CommentInput {
         pos
     }
 
-    /// Replace the `query_chars` characters before the cursor with `insert`,
-    /// then append a space. Used to accept an autocomplete suggestion.
-    pub fn replace_before_cursor(&mut self, query_chars: usize, insert: &str) {
-        for _ in 0..query_chars {
+    /// Replace the `chars` characters before the cursor with `insert`, then
+    /// append a space. Used to accept an autocomplete suggestion; `chars`
+    /// counts the trigger character along with the query.
+    pub fn replace_before_cursor(&mut self, chars: usize, insert: &str) {
+        for _ in 0..chars {
             self.textarea.delete_char();
         }
         self.textarea.insert_str(format!("{insert} "));
         self.refresh_highlights();
     }
 
-    /// Paint `@user`, `#123` and `!456` references so you can see what will
-    /// resolve before submitting. Reruns after each key to follow the text.
+    /// Paint `@user` and `group/project#123` references so you can see what
+    /// will resolve before submitting. Reruns after each key to follow the text.
     fn refresh_highlights(&mut self) {
         let spans: Vec<((usize, usize), (usize, usize))> = self
             .textarea
@@ -281,10 +282,10 @@ fn escape_regex(query: &str) -> String {
     out
 }
 
-/// Byte spans of `@user` / `#123` / `!456` references within one line.
+/// Byte spans of `@user` / `group/project#123` references within one line.
 fn reference_spans(line: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
     line.split_whitespace().filter_map(|word| {
-        if word.strip_prefix(['@', '#', '!'])?.is_empty() {
+        if word.split_once(['@', '#', '!'])?.1.is_empty() {
             return None;
         }
         let start = word.as_ptr() as usize - line.as_ptr() as usize;
@@ -409,17 +410,22 @@ mod tests {
 
     #[test]
     fn references_are_spanned_and_bare_triggers_are_not() {
-        let line = "cc @john.doe about #42 and ! alone";
+        let line = "cc @john.doe about team/app#42 and ! alone";
         let spans: Vec<&str> = reference_spans(line).map(|(s, e)| &line[s..e]).collect();
-        assert_eq!(spans, ["@john.doe", "#42"]);
+        assert_eq!(spans, ["@john.doe", "team/app#42"]);
     }
 
     #[test]
     fn replace_before_cursor_swaps_query_for_completion() {
         let mut input = CommentInput::default();
         type_all(&mut input, "hi @jo");
-        input.replace_before_cursor(2, "john.doe");
+        input.replace_before_cursor(3, "@john.doe");
         assert_eq!(input.text(), "hi @john.doe ");
         assert_eq!(input.cursor_byte_pos(), input.text().len());
+
+        let mut input = CommentInput::default();
+        type_all(&mut input, "see #42");
+        input.replace_before_cursor(3, "team/app#42");
+        assert_eq!(input.text(), "see team/app#42 ");
     }
 }
