@@ -134,14 +134,11 @@ impl GitLabClient {
 /// `closing` wins the overlap: an item that settles the other also shows up in
 /// the wider collection as merely related.
 fn fold(closing: Vec<RelatedItem>, mentioning: Vec<RelatedItem>) -> Vec<RelatedItem> {
-    let closing_items: HashSet<&ItemRef> = closing.iter().map(|r| &r.item).collect();
-    let kept: Vec<RelatedItem> = mentioning
+    let closed: HashSet<ItemRef> = closing.iter().map(|r| r.item.clone()).collect();
+    closing
         .into_iter()
-        .filter(|r| !closing_items.contains(&r.item))
-        .collect();
-    let mut related = closing;
-    related.extend(kept);
-    related
+        .chain(mentioning.into_iter().filter(|r| !closed.contains(&r.item)))
+        .collect()
 }
 
 /// The line a merge request's description carries to name `reference`.  GitLab

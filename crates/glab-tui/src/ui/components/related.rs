@@ -3,8 +3,6 @@
 //!
 //! What a relation means, how it sorts and whether it can be dropped are the
 //! domain's answers; this spends them on icons, colors and keys.
-use std::collections::HashMap;
-
 use glab_core::domain::{Issue, Item, MergeRequest};
 use glab_core::domain::{ItemKind, RelatedItem, Relation};
 use ratatui::style::Style;
@@ -181,7 +179,7 @@ fn pick_relation(kind: ItemKind, gid: String) -> Overlay {
                     let rows = issue_rows(&app.data.issues, &gid);
                     pick_target(label, rows, move |picked| Cmd::AddLink {
                         gid: gid.clone(),
-                        target_gid: picked.gid,
+                        target_gid: picked,
                         relation,
                     })
                 }
@@ -193,7 +191,7 @@ fn pick_relation(kind: ItemKind, gid: String) -> Overlay {
                         ItemKind::MergeRequest => issue_rows(&app.data.issues, &gid),
                     };
                     pick_target(label, rows, move |picked| {
-                        mention(kind, gid.clone(), picked.gid, relation)
+                        mention(kind, gid.clone(), picked, relation)
                     })
                 }
             };
@@ -219,7 +217,6 @@ fn mention(kind: ItemKind, view_gid: String, picked: String, relation: Relation)
 
 /// What the picker shows for one item, and the gid of the item that row is.
 /// They travel together so a pick never has to be read back out of its label.
-#[derive(Clone)]
 struct TargetRow {
     label: String,
     subtitle: String,
@@ -230,24 +227,23 @@ struct TargetRow {
 fn pick_target(
     label: &str,
     rows: Vec<TargetRow>,
-    cmd: impl Fn(TargetRow) -> Cmd + 'static,
+    cmd: impl Fn(String) -> Cmd + 'static,
 ) -> Overlay {
-    let mut labels = Vec::with_capacity(rows.len());
-    let mut subtitles = Vec::with_capacity(rows.len());
-    let mut by_label = HashMap::with_capacity(rows.len());
-    for row in rows {
-        labels.push(row.label.clone());
-        subtitles.push(row.subtitle.clone());
-        by_label.insert(row.label.clone(), row);
-    }
+    let (labels, subtitles): (Vec<String>, Vec<String>) = rows
+        .iter()
+        .map(|r| (r.label.clone(), r.subtitle.clone()))
+        .unzip();
     Overlay::Picker {
         state: PickerState::new(&format!("Link \u{2014} {label}"), labels, false)
             .with_subtitles(subtitles),
         on_complete: Box::new(move |values, app| {
-            let Some(picked) = values.first().and_then(|label| by_label.get(label)) else {
+            let Some(row) = values
+                .first()
+                .and_then(|l| rows.iter().find(|r| &r.label == l))
+            else {
                 return;
             };
-            app.ui.pending_cmds.push(cmd(picked.clone()));
+            app.ui.pending_cmds.push(cmd(row.gid.clone()));
         }),
     }
 }
@@ -395,16 +391,11 @@ mod tests {
 
     #[test]
     fn only_a_stored_link_between_two_issues_can_be_unlinked() {
+        let mut mr = related(Relation::RelatesTo, "gid://gitlab/MergeRequest/9", "9");
+        mr.item = ItemRef::merge_request("team/infra", "9");
         let items = vec![
             related(Relation::ClosedBy, "gid://gitlab/MergeRequest/11", "11"),
-            RelatedItem {
-                relation: Relation::RelatesTo,
-                gid: "gid://gitlab/MergeRequest/9".to_string(),
-                item: ItemRef::merge_request("team/infra", "9"),
-                title: "a related merge request".to_string(),
-                state: "opened".to_string(),
-                web_url: String::new(),
-            },
+            mr,
             related(Relation::RelatesTo, "gid://gitlab/WorkItem/7", "12"),
         ];
         let mut body = body(&items);

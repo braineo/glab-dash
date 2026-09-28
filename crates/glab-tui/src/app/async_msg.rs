@@ -337,21 +337,18 @@ impl App {
     /// closed items are dropped from it — so closing an issue updates its
     /// detail rather than emptying it.
     fn sync_detail_snapshots(&mut self) {
-        if let Some(id) = self
-            .ui
-            .views
-            .issue_detail
-            .issue
-            .as_ref()
-            .map(|i| i.id.clone())
-            && let Some(fresh) = self.data.issues.iter().find(|i| i.id == id).cloned()
-        {
-            self.ui.views.issue_detail.issue = Some(fresh);
-        }
-        if let Some(item) = self.ui.views.mr_detail.mr.as_ref().map(Item::item_ref)
-            && let Some(fresh) = self.data.mrs.iter().find(|m| m.item_ref() == item).cloned()
-        {
-            self.ui.views.mr_detail.mr = Some(fresh);
-        }
+        sync_snapshot(&mut self.ui.views.issue_detail.issue, &self.data.issues);
+        sync_snapshot(&mut self.ui.views.mr_detail.mr, &self.data.mrs);
+    }
+}
+
+/// Replace `snapshot` with the item of the same gid in `items`, leaving it
+/// alone when `items` no longer carries that item.
+fn sync_snapshot<T: Item + Clone>(snapshot: &mut Option<T>, items: &[T]) {
+    let Some(gid) = snapshot.as_ref().map(|s| s.gid().to_string()) else {
+        return;
+    };
+    if let Some(fresh) = items.iter().find(|i| i.gid() == gid) {
+        *snapshot = Some(fresh.clone());
     }
 }

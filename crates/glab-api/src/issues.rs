@@ -13,7 +13,7 @@ use strum::IntoStaticStr;
 use glab_core::domain::Issue;
 
 use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload, join_walks};
-use crate::wire::{root_issues, work_items};
+use crate::wire::{RootIssuesQuery, WorkItem, WorkItemsQuery};
 
 /// The selection the root `issues` query uses, deserialized straight into
 /// [`glab_core::domain::Issue`].
@@ -115,7 +115,7 @@ impl GitLabClient {
             let updated_after = updated_after.map(str::to_string);
             set.spawn(async move {
                 let issues = client
-                    .paginate::<Issue, work_items::Query>("listWorkItems", &query, |after| {
+                    .paginate::<Issue, WorkItemsQuery>("listWorkItems", &query, |after| {
                         serde_json::json!({
                             "path": namespace,
                             "state": state_value(state),
@@ -171,7 +171,7 @@ impl GitLabClient {
             let updated_after = updated_after.map(str::to_string);
             set.spawn(async move {
                 let issues = client
-                    .paginate::<Issue, root_issues::Query>("listAssignedIssues", &query, |after| {
+                    .paginate::<Issue, RootIssuesQuery>("listAssignedIssues", &query, |after| {
                         serde_json::json!({
                             "assigneeUsernames": [member],
                             "state": state_value(state),
@@ -200,7 +200,7 @@ impl GitLabClient {
         let work_item = get_mutation_payload(&json, "workItemUpdate")?
             .get("workItem")
             .context("missing workItem in mutation response")?;
-        let work_item: work_items::WorkItem = serde_json::from_value(work_item.clone())
+        let work_item: WorkItem = serde_json::from_value(work_item.clone())
             .context("failed to deserialize workItem from mutation response")?;
         Ok(Issue::from(work_item))
     }

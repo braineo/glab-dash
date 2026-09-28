@@ -69,17 +69,13 @@ pub async fn run() -> Result<()> {
     }
 
     tracing::info!("debug: fetching related items");
-    if let Some(issue) = tracking_issues.ok().as_ref().and_then(|i| i.first()) {
+    if let Ok([issue, ..]) = tracking_issues.as_deref() {
         let item = issue.item_ref();
         match client.list_related(item.kind, issue.gid()).await {
             Ok(related) => tracing::info!(
                 item = %item.reference(),
                 count = related.len(),
-                relations = %related
-                    .iter()
-                    .map(|r| format!("{} {}", r.relation.label(), r.item.reference()))
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                ?related,
                 "debug: related items ✓"
             ),
             Err(e) => tracing::error!(error = ?e, "debug: related items ✗"),

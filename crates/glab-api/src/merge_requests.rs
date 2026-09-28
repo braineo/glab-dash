@@ -13,7 +13,7 @@ use glab_core::domain::MergeRequest;
 use urlencoding::encode;
 
 use crate::client::{GitLabClient, PAGE_SIZE, document, get_mutation_payload, join_walks};
-use crate::wire::{project_mrs, user_mrs};
+use crate::wire::{ProjectMrsQuery, UserMrsQuery};
 
 /// The selection every merge-request query and mutation shares.
 const MR_FIELDS: &str = r"
@@ -105,19 +105,15 @@ impl GitLabClient {
             let updated_after = updated_after.map(str::to_string);
             set.spawn(async move {
                 let mrs = client
-                    .paginate::<MergeRequest, project_mrs::Query>(
-                        "listProjectMrs",
-                        &query,
-                        |after| {
-                            serde_json::json!({
-                                "projectPath": project,
-                                "state": state_value(state),
-                                "updatedAfter": updated_after,
-                                "after": after,
-                                "first": PAGE_SIZE,
-                            })
-                        },
-                    )
+                    .paginate::<MergeRequest, ProjectMrsQuery>("listProjectMrs", &query, |after| {
+                        serde_json::json!({
+                            "projectPath": project,
+                            "state": state_value(state),
+                            "updatedAfter": updated_after,
+                            "after": after,
+                            "first": PAGE_SIZE,
+                        })
+                    })
                     .await;
                 (idx, mrs)
             });
@@ -221,7 +217,7 @@ impl GitLabClient {
             MR_FIELDS,
         );
 
-        self.paginate::<MergeRequest, user_mrs::Query>("listUserMrs", &query, |after| {
+        self.paginate::<MergeRequest, UserMrsQuery>("listUserMrs", &query, |after| {
             serde_json::json!({
                 "username": member,
                 "state": state_value(state),
