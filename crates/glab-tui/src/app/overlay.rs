@@ -8,21 +8,41 @@ use crate::ui::views::filter_editor;
 use super::{App, Overlay, View};
 
 impl App {
-    /// The configured teams, plus whoever is already talking on the open item
-    /// — a reviewer from outside every team is still worth naming.
+    /// The configured teams, plus everyone attached to the open item — author,
+    /// reviewers, and whoever is already talking. Someone from outside every
+    /// team is still worth naming.
     fn comment_mention_pool(&self) -> Vec<String> {
-        let conversation = match self.ui.view {
-            View::IssueDetail => Some(&self.ui.views.issue_detail.conversation),
-            View::MrDetail => Some(&self.ui.views.mr_detail.conversation),
-            _ => None,
+        let views = &self.ui.views;
+        let (conversation, users) = match self.ui.view {
+            View::IssueDetail => (
+                Some(&views.issue_detail.conversation),
+                views
+                    .issue_detail
+                    .issue
+                    .iter()
+                    .flat_map(|i| i.author.iter())
+                    .collect::<Vec<_>>(),
+            ),
+            View::MrDetail => (
+                Some(&views.mr_detail.conversation),
+                views
+                    .mr_detail
+                    .mr
+                    .iter()
+                    .flat_map(|m| m.author.iter().chain(&m.reviewers))
+                    .collect(),
+            ),
+            _ => (None, Vec::new()),
         };
         let mut members = self.ctx.config.all_members();
+        members.extend(users.into_iter().map(|u| u.username.clone()));
         members.extend(
             conversation
                 .into_iter()
                 .flat_map(Conversation::participants)
                 .map(str::to_string),
         );
+
         members.sort();
         members.dedup();
         members
