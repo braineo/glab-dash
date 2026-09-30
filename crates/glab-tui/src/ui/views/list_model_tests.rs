@@ -342,18 +342,52 @@ fn a_list_with_no_cursor_yet_starts_at_the_top() {
 }
 
 #[test]
-fn a_rebuild_drops_a_stale_scroll_offset() {
-    let items = [Row("p#1"), Row("p#2"), Row("p#3")];
+fn a_rebuild_keeps_the_cursor_on_its_screen_row() {
+    let items: Vec<Row> = ["p#1", "p#2", "p#3", "p#4", "p#5"].map(Row).into();
     let mut list: ItemList<Row> = ItemList {
-        indices: vec![0, 1, 2],
+        indices: vec![0, 1, 2, 3, 4],
         ..Default::default()
     };
-    list.table_state.select(Some(2));
+    list.table_state.select(Some(3));
     *list.table_state.offset_mut() = 2;
 
-    // An offset of 2 would start the viewport past the only row left.
-    list.indices = vec![1];
-    list.restore(&items, Some("p#2"));
-    assert_eq!(list.table_state.offset(), 0);
-    assert_eq!(list.selected_item(&items).map(|r| r.0), Some("p#2"));
+    let anchor = list.anchor(&items);
+    list.restore(&items, anchor.as_deref());
+    assert_eq!(list.table_state.offset(), 2);
+    assert_eq!(list.table_state.selected(), Some(3));
+}
+
+#[test]
+fn a_search_from_deep_in_the_list_shows_every_match() {
+    let items: Vec<Row> = ["p#1", "p#2", "p#3", "p#4", "p#5"].map(Row).into();
+    let mut list: ItemList<Row> = ItemList {
+        indices: (0..5).collect(),
+        ..Default::default()
+    };
+    list.table_state.select(Some(4));
+    *list.table_state.offset_mut() = 3;
+
+    list.indices = vec![0, 1, 2];
+    list.restore(&items, None);
+    list.set_limit(2);
+    assert_eq!(list.table_state.offset(), 1);
+    assert_eq!(list.table_state.selected(), Some(2));
+}
+
+#[test]
+fn paging_moves_one_viewport() {
+    let mut list: ItemList<Row> = ItemList {
+        indices: (0..10).collect(),
+        ..Default::default()
+    };
+    list.table_state.select(Some(0));
+    list.set_limit(4);
+
+    assert_eq!(list.nav(KeyAction::PageDown), Some(true));
+    assert_eq!(list.table_state.selected(), Some(4));
+    list.nav(KeyAction::PageDown);
+    list.nav(KeyAction::PageDown);
+    assert_eq!(list.table_state.selected(), Some(9));
+    list.nav(KeyAction::PageUp);
+    assert_eq!(list.table_state.selected(), Some(5));
 }

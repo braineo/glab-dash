@@ -448,6 +448,7 @@ fn render_column(
 
     let table = Table::new(rows, widths).row_highlight_style(styles::selected_style());
 
+    state.columns[col_idx].list.set_limit(parts[1].height);
     frame.render_stateful_widget(
         table,
         parts[1],

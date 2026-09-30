@@ -231,6 +231,11 @@ pub fn render(
 
     let table_block = list_model::search_block("Issues", &state.filter);
 
+    // Header row plus its bottom margin.
+    state
+        .list
+        .set_limit(table_block.inner(chunks[1]).height.saturating_sub(2));
+
     let table = Table::new(rows, widths)
         .header(header)
         .highlight_symbol(styles::ICON_SELECTOR)

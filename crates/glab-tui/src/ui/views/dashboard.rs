@@ -618,6 +618,7 @@ fn render_board_column(
 
     let table = Table::new(rows, widths).row_highlight_style(styles::selected_style());
 
+    board.columns[col_idx].list.set_limit(inner.height);
     frame.render_stateful_widget(table, inner, &mut board.columns[col_idx].list.table_state);
 }
 
@@ -971,6 +972,7 @@ fn render_health_list(
         Table::new(rows, widths)
     };
 
+    health.active_list_mut().set_limit(area.height);
     frame.render_stateful_widget(table, area, &mut health.active_list_mut().table_state);
 }
 
@@ -1246,7 +1248,6 @@ pub fn compute_health(
             .unwrap_or(&issues[b].created_at);
         added_b.cmp(added_a)
     });
-    unplanned_work.clamp_selection();
 
     // The DB already filtered by closed_at range and excluded the current
     // iteration; what is left is dropping the canceled ones, which are not
@@ -1264,7 +1265,6 @@ pub fn compute_health(
         let closed_b = issue_b.closed_at.unwrap_or(issue_b.updated_at);
         closed_b.cmp(&closed_a)
     });
-    shadow_work.clamp_selection();
 
     let stale_threshold = Utc::now() - chrono::Duration::days(5);
     let mut at_risk = ItemList::<Issue>::default();
@@ -1282,17 +1282,16 @@ pub fn compute_health(
         let issue_b = &issues[b];
         issue_a.updated_at.cmp(&issue_b.updated_at)
     });
-    at_risk.clamp_selection();
 
     let active_tab = prev_health.map_or(HealthTab::default(), |h| {
         unplanned_work.table_state = h.unplanned_work.table_state;
         shadow_work.table_state = h.shadow_work.table_state;
         at_risk.table_state = h.at_risk.table_state;
-        unplanned_work.clamp_selection();
-        shadow_work.clamp_selection();
-        at_risk.clamp_selection();
         h.active_tab
     });
+    unplanned_work.clamp_selection();
+    shadow_work.clamp_selection();
+    at_risk.clamp_selection();
 
     IterationHealth {
         total_issues,

@@ -38,45 +38,11 @@ binding_group! {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum NavOp {
-    Next,
-    Prev,
-    First,
-    Last,
-    PageDown,
-    PageUp,
-}
-
-/// Concrete rather than generic over `T`, so a caller can hold one from any
-/// list without dynamic dispatch.
-pub struct ListCursor<'a> {
-    table_state: &'a mut TableState,
-    len: usize,
-}
-
-impl ListCursor<'_> {
-    pub fn apply(&mut self, op: NavOp) -> bool {
-        if self.len == 0 {
-            return false;
-        }
-        let cur = self.table_state.selected().unwrap_or(0);
-        let next = match op {
-            NavOp::Next => (cur + 1).min(self.len - 1),
-            NavOp::Prev => cur.saturating_sub(1),
-            NavOp::First => 0,
-            NavOp::Last => self.len - 1,
-            NavOp::PageDown => (cur + 20).min(self.len - 1),
-            NavOp::PageUp => cur.saturating_sub(20),
-        };
-        self.table_state.select(Some(next));
-        next != cur
-    }
-}
-
 pub struct ItemList<T> {
     pub table_state: TableState,
     pub indices: Vec<usize>,
+    /// Body rows at the last render; 0 until the first one.
+    limit: usize,
     _phantom: std::marker::PhantomData<fn() -> T>,
 }
 
@@ -85,19 +51,13 @@ impl<T> Default for ItemList<T> {
         Self {
             table_state: TableState::default(),
             indices: Vec::new(),
+            limit: 0,
             _phantom: std::marker::PhantomData,
         }
     }
 }
 
 impl<T> ItemList<T> {
-    pub fn cursor(&mut self) -> ListCursor<'_> {
-        ListCursor {
-            table_state: &mut self.table_state,
-            len: self.indices.len(),
-        }
-    }
-
     pub fn len(&self) -> usize {
         self.indices.len()
     }
@@ -117,25 +77,37 @@ impl<T> ItemList<T> {
     }
 
     pub fn nav(&mut self, action: KeyAction) -> Option<bool> {
-        let op = match action {
-            KeyAction::MoveDown => NavOp::Next,
-            KeyAction::MoveUp => NavOp::Prev,
-            KeyAction::Top => NavOp::First,
-            KeyAction::Bottom => NavOp::Last,
-            KeyAction::PageDown => NavOp::PageDown,
-            KeyAction::PageUp => NavOp::PageUp,
+        let cur = self.table_state.selected().unwrap_or(0);
+        let last = self.indices.len().saturating_sub(1);
+        let page = self.limit.max(1);
+        let next = match action {
+            KeyAction::MoveDown => (cur + 1).min(last),
+            KeyAction::MoveUp => cur.saturating_sub(1),
+            KeyAction::Top => 0,
+            KeyAction::Bottom => last,
+            KeyAction::PageDown => (cur + page).min(last),
+            KeyAction::PageUp => cur.saturating_sub(page),
             _ => return None,
         };
-        Some(self.cursor().apply(op))
+        if self.indices.is_empty() {
+            return Some(false);
+        }
+        self.table_state.select(Some(next));
+        Some(next != cur)
     }
 
-    /// Resets the scroll offset too: a shrunken list under a stale offset
-    /// makes ratatui clamp the viewport top there and render a near-empty
-    /// table.
+    /// Call before rendering, with the table's height minus block borders and
+    /// header. Ratatui only scrolls to keep the cursor visible and never
+    /// backfills: an offset near the end of a list that shrank would hide rows
+    /// above a blank tail.
+    pub fn set_limit(&mut self, rows: u16) {
+        self.limit = usize::from(rows);
+        let max = self.indices.len().saturating_sub(self.limit);
+        let offset = self.table_state.offset_mut();
+        *offset = (*offset).min(max);
+    }
+
     pub fn clamp_selection(&mut self) {
-        // ponytail: offset 0 parks a deep cursor at the viewport bottom;
-        // centering it would need the row height plumbed in here.
-        *self.table_state.offset_mut() = 0;
         if self.indices.is_empty() {
             self.table_state.select(None);
         } else if self.table_state.selected().is_none() {
